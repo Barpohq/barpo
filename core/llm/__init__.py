@@ -3,7 +3,7 @@
 Kelajakda platformaning "LLM Router" komponentiga aylanadi.
 """
 
-from bot.llm.client import (
+from core.llm.client import (
     AllModelsFailed,
     CostLimitExceeded,
     LLMClient,

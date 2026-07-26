@@ -1,13 +1,18 @@
 """OpenRouter klienti — barcha LLM chaqiruvlar uchun yagona kirish nuqtasi.
 
-Bu modul kelajakda platformaning "LLM Router" komponentiga aylanadi, shuning
-uchun boshqa modullarga bog'lanmagan: faqat config va db qatlamidan foydalanadi.
+Platformaning "LLM Router" komponenti: ikkala agent ham shu orqali
+model chaqiradi. Boshqa modullarga bog'lanmagan — faqat config va db.
 
 Xususiyatlari:
   - Model fallback zanjiri (asosiy model ishlamasa keyingisiga o'tadi)
   - Retry: exponential backoff, faqat vaqtinchalik xatolarda
   - Har chaqiruv `llm_calls` jadvaliga yoziladi (model, tokenlar, narx)
   - Kunlik xarajat limiti — oshsa CostLimitExceeded
+
+Eslatma: `cluster_id` parametri hali botga xos (yangilik klasteri).
+Uni generik `ref` ga umumlashtirish uchun ikkinchi haqiqiy ishlatuvchi
+kerak — monitor unga muhtoj emas, chaqiruvlarini `stage` bo'yicha
+topadi. Uchinchi agent paydo bo'lganda ko'riladi.
 """
 
 from __future__ import annotations
@@ -21,8 +26,7 @@ from typing import Any
 
 import httpx
 
-from bot.config import load_config
-from core.config import ModelsConfig, env_str
+from core.config import ModelsConfig, env_str, load_models
 from core.db import execute, query_one, utc_now
 from core.logging_setup import get_logger
 
@@ -137,7 +141,7 @@ class LLMClient:
     """OpenRouter orqali LLM chaqiruvlarini bajaradi."""
 
     def __init__(self, models: ModelsConfig | None = None) -> None:
-        self.models = models or load_config().models
+        self.models = models or load_models()
         self._api_key = env_str("OPENROUTER_API_KEY", required=True)
         self._client = httpx.Client(
             timeout=httpx.Timeout(self.models.limits.request_timeout),

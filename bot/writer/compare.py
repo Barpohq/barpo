@@ -18,9 +18,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bot.config import load_config
-from bot.llm import LLMClient, LLMError
 from bot.writer.prompts import SYSTEM_PROMPT, build_write_prompt, signature_length
 from bot.writer.validator import append_signature, count_bullets, validate_post
+from core.llm import LLMClient, LLMError
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)

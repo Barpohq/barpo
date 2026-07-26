@@ -201,8 +201,8 @@ class TestRankFlow:
         """LLMClient.complete ni tayyor javob bilan almashtirish."""
         import json
 
-        from bot.llm.client import LLMResponse
         from bot.rank import scorer
+        from core.llm.client import LLMResponse
 
         class FakeClient:
             def __init__(self, *a: Any, **kw: Any) -> None:
@@ -396,9 +396,9 @@ class TestRankFlow:
 
     def test_llm_failure_leaves_cluster_new(self, migrated_db, monkeypatch) -> None:
         """LLM ishlamasa klaster `new` bo'lib qoladi — keyingi siklda qayta urinadi."""
-        from bot.llm import LLMError
         from bot.rank import run_rank, scorer
         from core.db import query_one
+        from core.llm import LLMError
 
         cluster_id = self._seed_cluster()
 

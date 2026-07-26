@@ -372,8 +372,8 @@ class TestWriteFlow:
 
     def _mock_llm(self, monkeypatch: pytest.MonkeyPatch, responses: list[str]) -> dict[str, int]:
         """LLM javoblarini ketma-ket qaytaruvchi mock. Chaqiruvlar sonini qaytaradi."""
-        from bot.llm.client import LLMResponse
         from bot.writer import write as write_mod
+        from core.llm.client import LLMResponse
 
         state = {"calls": 0}
         queue = list(responses)

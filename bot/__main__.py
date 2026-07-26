@@ -247,8 +247,8 @@ def cmd_db_status() -> int:
 
 
 def cmd_llm_test(stage: str, prompt: str) -> int:
-    from bot.llm import AllModelsFailed, CostLimitExceeded, LLMClient
     from core import db
+    from core.llm import AllModelsFailed, CostLimitExceeded, LLMClient
 
     db.check_schema()
     cfg = load_config().models
@@ -278,8 +278,8 @@ def cmd_llm_test(stage: str, prompt: str) -> int:
 
 
 def cmd_cost(days: int) -> int:
-    from bot.llm import today_cost_usd
     from core import db
+    from core.llm import today_cost_usd
 
     db.check_schema()
     since = (datetime.now(UTC) - timedelta(days=days)).date().isoformat()
