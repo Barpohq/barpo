@@ -7,6 +7,7 @@ Buyruqlar:
     bot cost [--days N]     — LLM xarajatlari hisoboti
     bot collect             — manbalardan yangilik yig'ish
     bot dedup               — dublikatlarni klasterlash
+    bot rank                — klasterlarni LLM bilan baholash
     bot clusters list       — klasterlar ro'yxati
     bot clusters show <id>  — bitta klaster tafsiloti
     bot run                 — scheduler bilan doimiy rejim
@@ -21,6 +22,9 @@ from datetime import UTC, datetime, timedelta
 from bot import __version__
 from bot.config import ConfigError, load_config
 from bot.logging_setup import get_logger, setup_logging
+
+# Faqat parser yordam matni uchun — og'ir bog'liqlik tortmaydi
+from bot.rank.scorer import DEFAULT_BATCH_SIZE
 
 log = get_logger("bot.cli")
 
@@ -69,6 +73,21 @@ def build_parser() -> argparse.ArgumentParser:
     dedup_parser = sub.add_parser("dedup", help="Dublikatlarni klasterlash")
     dedup_parser.add_argument(
         "--window-days", type=int, default=7, help="Solishtirish oynasi (default: 7 kun)"
+    )
+
+    # ── rank ──
+    rank_parser = sub.add_parser("rank", help="Klasterlarni LLM bilan baholash")
+    rank_parser.add_argument(
+        "--limit", type=int, default=100, help="Maksimal nechta klaster (default: 100)"
+    )
+    rank_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help=f"Bir chaqiruvdagi klasterlar soni (default: {DEFAULT_BATCH_SIZE})",
+    )
+    rank_parser.add_argument(
+        "--dry-run", action="store_true", help="Baholaydi va ko'rsatadi, bazaga yozmaydi"
     )
 
     # ── clusters ──
@@ -252,6 +271,38 @@ def cmd_dedup(window_days: int) -> int:
     return 0
 
 
+def cmd_rank(limit: int, batch_size: int, dry_run: bool) -> int:
+    from bot import db
+    from bot.rank import run_rank
+
+    db.check_schema()
+    run_id = db.start_run("rank")
+    report = run_rank(limit=limit, batch_size=batch_size, dry_run=dry_run)
+    db.finish_run(
+        run_id,
+        items_in=report.processed,
+        items_out=report.ranked,
+        error_count=report.failed,
+        ok=not report.failed_batches,
+        note=report.summary(),
+    )
+
+    print()
+    print(f"Baholandi:  {report.processed}")
+    print(f"Qabul:      {report.ranked}")
+    print(f"Rad etildi: {report.rejected} (shundan {report.spam} spam)")
+    if report.failed:
+        print(f"Baholanmadi: {report.failed} — keyingi ishga tushishda qayta urinadi")
+    print(f"Xarajat:    ${report.cost_usd:.5f}")
+    if report.failed_batches:
+        print("\nXatolar:")
+        for problem in report.failed_batches:
+            print(f"  - {problem}")
+    if dry_run:
+        print("\n[dry-run] Bazaga hech narsa yozilmadi.")
+    return 0
+
+
 def cmd_clusters_list(limit: int, status: str | None) -> int:
     from bot import db
 
@@ -367,6 +418,8 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_collect(args.source)
             case "dedup":
                 return cmd_dedup(args.window_days)
+            case "rank":
+                return cmd_rank(args.limit, args.batch_size, args.dry_run)
             case "clusters" if args.clusters_command == "list":
                 return cmd_clusters_list(args.limit, args.status)
             case "clusters" if args.clusters_command == "show":

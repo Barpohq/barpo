@@ -1,6 +1,6 @@
 """Doimiy rejim — pipeline'ni jadval bo'yicha ishga tushirish.
 
-Faza 1 holati: collect → dedup. Rank/Writer/Publisher qo'shilganda shu
+Hozirgi holat: collect → dedup → rank. Writer/Publisher qo'shilganda shu
 yerga ulanadi.
 
 Har bosqich idempotent: qayta ishga tushirilsa qayerda qolgan bo'lsa
@@ -28,7 +28,7 @@ DEFAULT_INTERVAL_HOURS = 3
 
 
 def run_pipeline() -> None:
-    """Bitta to'liq sikl: yig'ish → klasterlash.
+    """Bitta to'liq sikl: yig'ish → klasterlash → baholash.
 
     Bu funksiya hech qachon exception tashlamasligi kerak — aks holda
     scheduler jobni o'chirib qo'yadi va bot jimgina o'lib qoladi.
@@ -54,6 +54,16 @@ def run_pipeline() -> None:
     except Exception as exc:  # noqa: BLE001
         log.exception("Dedup bosqichida xato")
         log_error("scheduler.dedup", str(exc), traceback=traceback.format_exc())
+        return
+
+    try:
+        from bot.rank import run_rank
+
+        rank_report = run_rank()
+        log.info("Rank: %s", rank_report.summary())
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Rank bosqichida xato")
+        log_error("scheduler.rank", str(exc), traceback=traceback.format_exc())
         return
 
     elapsed = (datetime.now(UTC) - started).total_seconds()

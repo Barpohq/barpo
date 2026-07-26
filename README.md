@@ -40,13 +40,21 @@ uv run bot db migrate
 # 4. LLM ulanishini tekshirish
 uv run bot llm test
 
-# 5. Bir marta yig'ish + dedup
+# 5. Bir marta yig'ish + dedup + baholash
 uv run bot collect
 uv run bot dedup
+uv run bot rank
 
 # 6. Klasterlarni ko'rish
 uv run bot clusters list
+uv run bot clusters list --status ranked
 uv run bot clusters show <id>
+```
+
+Baholashni bazaga yozmasdan sinash:
+
+```bash
+uv run bot rank --limit 8 --dry-run
 ```
 
 Doimiy rejim (scheduler bilan):
@@ -66,6 +74,10 @@ Sozlamalar `config/` katalogida — kod o'zgartirmasdan tahrirlash mumkin:
 | `sources.yaml` | Yangilik manbalari (RSS, HN, Reddit, arXiv) |
 | `channel.yaml` | Kanal profili, auditoriya, formatlash, post limitlari |
 | `models.yaml` | Har bosqich uchun model, fallback zanjiri, narxlar, limitlar |
+
+`channel.yaml` dagi `audience`, `topics_of_interest` va `topics_to_avoid`
+to'g'ridan-to'g'ri Rank promptiga tushadi — baholash sifatini shu yerdan
+sozlaysiz. `posting.min_importance_score` esa rad etish chegarasi.
 
 Maxfiy ma'lumotlar (API kalitlar) faqat `.env` faylida — YAML'ga yozilmaydi.
 
