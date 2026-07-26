@@ -1,0 +1,60 @@
+# Kuzatiladigan serverlar va tekshiruv chegaralari.
+#
+# MUHIM: bu yerda BUYRUQ yozilmaydi. Har check uchun buyruq
+# monitor/checks.py da qat'iy belgilangan va faqat o'qish amallari
+# (cat /proc/*, free, df, systemctl is-active). Konfiguratsiya faqat
+# "qaysi server, qaysi check, qaysi chegara" deb aytadi.
+#
+# SSH: kalit bilan, parolsiz. `monitor servers` buyrug'i sozlashni
+# tekshiradi. Tavsiya: root o'rniga cheklangan foydalanuvchi —
+# README dagi "Server monitor" bo'limiga qarang.
+
+defaults:
+  user: root
+  port: 22
+  # SSH kaliti. Bo'sh bo'lsa ~/.ssh/config va agent ishlatiladi.
+  key_file: ""
+  # Bitta serverni tekshirish uchun maksimal vaqt (soniya)
+  timeout: 20
+
+  checks:
+    load:
+      # load average bitta yadroga nisbatan
+      warn: 2.0
+      fail: 4.0
+    memory:
+      # band RAM foizi (total - available; buff/cache band hisoblanmaydi)
+      warn: 85
+      fail: 95
+    disk:
+      warn: 80
+      fail: 90
+      # Faqat shu mount'lar. Bo'sh qoldirilsa hamma haqiqiy disk
+      # tekshiriladi — Docker overlay va tmpfs baribir chiqarib
+      # tashlanadi, aks holda bitta serverda 15 ta "disk" bo'lardi.
+      mounts: ["/"]
+    uptime: {}   # chegarasiz — faqat qayd etiladi
+
+servers:
+  - name: hetzner-1
+    host: 49.13.68.107
+    services: [nginx, mysql, docker, ssh]
+    # Alert bo'lganda diagnostika uchun jurnaldan log olinadi
+    journal_units: [nginx, mysql]
+
+  # Qolgan serverlarni shu namunaga qarab qo'shing:
+  #
+  # - name: web-2
+  #   host: 10.0.0.12
+  #   user: monitor              # defaults ustidan
+  #   services: [nginx]
+  #   journal_units: [nginx]
+  #   checks:
+  #     disk:                    # shu server uchun boshqa chegara
+  #       warn: 70
+  #       fail: 85
+  #       mounts: ["/", "/var/lib/postgresql"]
+  #
+  # - name: build-1
+  #   host: 10.0.0.14
+  #   enabled: false             # vaqtincha kuzatilmaydi
