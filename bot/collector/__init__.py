@@ -21,7 +21,7 @@ from bot.collector.base import (
     save_items,
 )
 from bot.config import Source, load_config
-from bot.db import finish_run, log_error, start_run
+from core.db import finish_run, log_error, start_run
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)

@@ -1,6 +1,6 @@
 """Baza qatlami — SQLite ulanishi, migratsiyalar va yordamchi funksiyalar."""
 
-from bot.db.database import (
+from core.db.database import (
     check_schema,
     close_connection,
     current_version,
@@ -15,16 +15,17 @@ from bot.db.database import (
     transaction,
     utc_now,
 )
-from bot.db.schema import LATEST_VERSION
+from core.db.schema import all_migrations, latest_version
 
 __all__ = [
-    "LATEST_VERSION",
+    "all_migrations",
     "check_schema",
     "close_connection",
     "current_version",
     "execute",
     "finish_run",
     "get_connection",
+    "latest_version",
     "log_error",
     "migrate",
     "query",

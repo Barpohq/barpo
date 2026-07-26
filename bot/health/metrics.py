@@ -16,7 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from bot.config import load_config
-from bot.db import query, query_one
+from core.db import query, query_one
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)

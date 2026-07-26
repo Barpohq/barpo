@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_db_migrate() -> int:
-    from bot import db
+    from core import db
 
     applied = db.migrate()
     print(f"Baza versiyasi: {db.current_version()} (qo'llanildi: {applied} ta migratsiya)")
@@ -220,12 +220,13 @@ def cmd_db_migrate() -> int:
 
 
 def cmd_db_status() -> int:
-    from bot import db
+    from core import db
 
     version = db.current_version()
+    latest = db.latest_version()
     print(f"Baza:     {load_config().db_path}")
-    print(f"Versiya:  {version} / {db.LATEST_VERSION}")
-    if version < db.LATEST_VERSION:
+    print(f"Versiya:  {version} / {latest}")
+    if version < latest:
         print("  ⚠ Sxema eskirgan — `bot db migrate` ni ishga tushiring")
         return 0
 
@@ -246,8 +247,8 @@ def cmd_db_status() -> int:
 
 
 def cmd_llm_test(stage: str, prompt: str) -> int:
-    from bot import db
     from bot.llm import AllModelsFailed, CostLimitExceeded, LLMClient
+    from core import db
 
     db.check_schema()
     cfg = load_config().models
@@ -277,8 +278,8 @@ def cmd_llm_test(stage: str, prompt: str) -> int:
 
 
 def cmd_cost(days: int) -> int:
-    from bot import db
     from bot.llm import today_cost_usd
+    from core import db
 
     db.check_schema()
     since = (datetime.now(UTC) - timedelta(days=days)).date().isoformat()
@@ -326,8 +327,8 @@ def cmd_cost(days: int) -> int:
 
 
 def cmd_collect(source_name: str | None) -> int:
-    from bot import db
     from bot.collector import collect_all
+    from core import db
 
     db.check_schema()
     report = collect_all(source_name)
@@ -347,8 +348,8 @@ def cmd_collect(source_name: str | None) -> int:
 
 
 def cmd_backfill_publishers() -> int:
-    from bot import db
     from bot.collector.backfill import backfill_publishers
+    from core import db
 
     db.check_schema()
     report = backfill_publishers()
@@ -365,8 +366,8 @@ def cmd_backfill_publishers() -> int:
 
 
 def cmd_dedup(window_days: int) -> int:
-    from bot import db
     from bot.dedup import run_dedup
+    from core import db
 
     db.check_schema()
     run_id = db.start_run("dedup")
@@ -387,8 +388,8 @@ def cmd_dedup(window_days: int) -> int:
 
 
 def cmd_rank(limit: int, batch_size: int, dry_run: bool) -> int:
-    from bot import db
     from bot.rank import run_rank
+    from core import db
 
     db.check_schema()
     run_id = db.start_run("rank")
@@ -419,8 +420,8 @@ def cmd_rank(limit: int, batch_size: int, dry_run: bool) -> int:
 
 
 def cmd_enrich(limit: int, no_search: bool) -> int:
-    from bot import db
     from bot.enricher import run_enrich
+    from core import db
 
     db.check_schema()
     run_id = db.start_run("enrich")
@@ -449,8 +450,8 @@ def cmd_enrich(limit: int, no_search: bool) -> int:
 
 
 def cmd_write(limit: int, cluster_id: int | None) -> int:
-    from bot import db
     from bot.writer import run_write
+    from core import db
 
     db.check_schema()
     run_id = db.start_run("write")
@@ -482,10 +483,10 @@ def cmd_write(limit: int, cluster_id: int | None) -> int:
 
 
 def cmd_lang_test(cluster_count: int, models_arg: str | None, show: bool) -> int:
-    from bot import db
     from bot.enricher import enriched_clusters
     from bot.writer.compare import format_comparison, run_comparison
     from bot.writer.write import MIN_SOURCE_TEXT
+    from core import db
 
     db.check_schema()
 
@@ -542,7 +543,7 @@ def cmd_lang_test(cluster_count: int, models_arg: str | None, show: bool) -> int
 
 
 def cmd_posts_list(limit: int, status: str | None) -> int:
-    from bot import db
+    from core import db
 
     db.check_schema()
     where = "WHERE p.status = ?" if status else ""
@@ -581,8 +582,8 @@ def cmd_posts_list(limit: int, status: str | None) -> int:
 
 
 def cmd_posts_show(post_id: int) -> int:
-    from bot import db
     from bot.writer import post_detail
+    from core import db
 
     db.check_schema()
     post = post_detail(post_id)
@@ -606,8 +607,8 @@ def cmd_posts_show(post_id: int) -> int:
 
 
 def cmd_publish(limit: int, send_only: bool) -> int:
-    from bot import db
     from bot.publisher import run_publish
+    from core import db
 
     db.check_schema()
     run_id = db.start_run("publish")
@@ -637,8 +638,8 @@ def cmd_publish(limit: int, send_only: bool) -> int:
 
 
 def cmd_publish_now(post_id: int, force: bool) -> int:
-    from bot import db
     from bot.publisher import QueueBlocked, channel_link, publish_now
+    from core import db
 
     db.check_schema()
     try:
@@ -699,8 +700,8 @@ def _strip_html(text: str) -> str:
 
 
 def cmd_health(hours: int, send: bool, sources: bool) -> int:
-    from bot import db
     from bot.health import collect_metrics, format_daily_report, format_sources
+    from core import db
 
     db.check_schema()
 
@@ -724,8 +725,8 @@ def cmd_health(hours: int, send: bool, sources: bool) -> int:
 
 
 def cmd_stats() -> int:
-    from bot import db
     from bot.health import format_stats
+    from core import db
 
     db.check_schema()
     print(_strip_html(format_stats()))
@@ -733,7 +734,7 @@ def cmd_stats() -> int:
 
 
 def cmd_clusters_list(limit: int, status: str | None) -> int:
-    from bot import db
+    from core import db
 
     db.check_schema()
     where = "WHERE c.status = ?" if status else ""
@@ -771,8 +772,8 @@ def cmd_clusters_list(limit: int, status: str | None) -> int:
 
 
 def cmd_clusters_show(cluster_id: int) -> int:
-    from bot import db
     from bot.dedup import cluster_summary
+    from core import db
 
     db.check_schema()
     data = cluster_summary(cluster_id)
@@ -812,8 +813,8 @@ def cmd_clusters_show(cluster_id: int) -> int:
 
 
 def cmd_run(interval_hours: int, once: bool) -> int:
-    from bot import db
     from bot.scheduler import run_forever, run_pipeline
+    from core import db
 
     db.check_schema()
     if once:

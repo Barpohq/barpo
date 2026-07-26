@@ -385,7 +385,7 @@ class TestEnrichFlow:
     """To'liq oqim — fetch va search mock qilingan holda."""
 
     def _seed(self, url: str, title: str = "Sinov yangiligi", extra: str | None = None) -> int:
-        from bot.db import execute, utc_now
+        from core.db import execute, utc_now
 
         now = utc_now()
         cursor = execute(
@@ -437,8 +437,8 @@ class TestEnrichFlow:
         monkeypatch.setattr(enrich_mod, "is_configured", lambda: True)
 
     def test_fetch_path(self, migrated_db, monkeypatch) -> None:
-        from bot.db import query_one
         from bot.enricher import run_enrich
+        from core.db import query_one
 
         cluster_id = self._seed("https://openai.com/index/gpt")
         self._patch_fetch(monkeypatch, "To'liq maqola matni " * 20)
@@ -454,8 +454,8 @@ class TestEnrichFlow:
         assert "To'liq maqola matni" in row["enriched_text"]
 
     def test_aggregator_uses_search(self, migrated_db, monkeypatch) -> None:
-        from bot.db import query_one
         from bot.enricher import run_enrich
+        from core.db import query_one
 
         cluster_id = self._seed(
             "https://news.google.com/rss/articles/CBMiabc",
@@ -488,8 +488,8 @@ class TestEnrichFlow:
 
     def test_fetch_failure_falls_back_to_search(self, migrated_db, monkeypatch) -> None:
         """403 bergan sayt (OpenAI kabi) qidiruv orqali boyitiladi."""
-        from bot.db import query_one
         from bot.enricher import run_enrich
+        from core.db import query_one
 
         cluster_id = self._seed("https://openai.com/index/gpt-5-6", title="GPT-5.6 released")
         self._patch_fetch(monkeypatch, None)  # FetchError
@@ -518,8 +518,8 @@ class TestEnrichFlow:
 
         Noto'g'ri matn bilan post yozilsa kanalda xato yangilik chiqadi.
         """
-        from bot.db import query_one
         from bot.enricher import run_enrich
+        from core.db import query_one
 
         cluster_id = self._seed(
             "https://news.google.com/rss/articles/CBMiabc", title="Claude Opus 5"
@@ -549,8 +549,8 @@ class TestEnrichFlow:
 
     def test_short_text_is_not_useful(self, migrated_db, monkeypatch) -> None:
         """Sahifadan qisqa matn chiqsa boyitilmagan deb hisoblanadi."""
-        from bot.db import query_one
         from bot.enricher import run_enrich
+        from core.db import query_one
 
         cluster_id = self._seed("https://x.dev/a")
         self._patch_fetch(monkeypatch, "juda qisqa")

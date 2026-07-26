@@ -21,8 +21,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from bot.config import load_config
-from bot.db import query, query_one
 from bot.dedup.versions import extract_model_ids
+from core.db import query, query_one
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)

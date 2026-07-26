@@ -22,7 +22,6 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
-from bot.db import execute, log_error, query, utc_now
 from bot.dedup import publisher_url
 from bot.dedup.versions import extract_model_ids, models_conflict, versions_conflict
 from bot.enricher.fetcher import MIN_USEFUL_TEXT, FetchError, clean_markdown, fetch_article
@@ -33,6 +32,7 @@ from bot.enricher.search import (
     SearchUnavailable,
     is_configured,
 )
+from core.db import execute, log_error, query, utc_now
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)

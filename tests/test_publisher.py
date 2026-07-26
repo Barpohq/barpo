@@ -19,7 +19,7 @@ from bot.publisher.queue import (
 
 def _seed_cluster(title: str, *, score: float = 9.0, category: str = "model_release") -> int:
     """Klaster yaratish (ranked, boyitilgan)."""
-    from bot.db import execute, utc_now
+    from core.db import execute, utc_now
 
     now = utc_now()
     cursor = execute(
@@ -44,7 +44,7 @@ def _seed_post(
     published_at: str | None = None,
     body: str = "Post matni",
 ) -> int:
-    from bot.db import execute, utc_now
+    from core.db import execute, utc_now
 
     cursor = execute(
         "INSERT INTO posts (cluster_id, body, model, created_at, status, published_at) "
@@ -248,8 +248,8 @@ class TestNextInQueue:
 
 class TestStateTransitions:
     def test_approve(self, migrated_db) -> None:
-        from bot.db import query_one
         from bot.publisher import mark_approved
+        from core.db import query_one
 
         post_id = _seed_post(_seed_cluster("Claude Opus 5"))
         mark_approved(post_id)
@@ -260,8 +260,8 @@ class TestStateTransitions:
 
     def test_reject_saves_reason_and_cluster(self, migrated_db) -> None:
         """Rad etish sababi Faza 3 da prompt tuning uchun kerak."""
-        from bot.db import query_one
         from bot.publisher import mark_rejected
+        from core.db import query_one
 
         cluster_id = _seed_cluster("Claude Opus 5")
         post_id = _seed_post(cluster_id)
@@ -275,8 +275,8 @@ class TestStateTransitions:
         ] == "rejected"
 
     def test_publish_updates_both(self, migrated_db) -> None:
-        from bot.db import query_one
         from bot.publisher import mark_published
+        from core.db import query_one
 
         cluster_id = _seed_cluster("Claude Opus 5")
         post_id = _seed_post(cluster_id, status="approved")
@@ -294,8 +294,8 @@ class TestStateTransitions:
 
     def test_edit_preserves_original(self, migrated_db) -> None:
         """Asl matn saqlanadi — model nima yozgani prompt tuning signali."""
-        from bot.db import query_one
         from bot.publisher import apply_edit
+        from core.db import query_one
 
         post_id = _seed_post(_seed_cluster("Claude Opus 5"), body="Asl matn")
         apply_edit(post_id, "Tuzatilgan matn")
@@ -305,8 +305,8 @@ class TestStateTransitions:
         assert row["original_body"] == "Asl matn"
 
     def test_second_edit_keeps_first_original(self, migrated_db) -> None:
-        from bot.db import query_one
         from bot.publisher import apply_edit
+        from core.db import query_one
 
         post_id = _seed_post(_seed_cluster("Claude Opus 5"), body="Asl matn")
         apply_edit(post_id, "Birinchi tahrir")

@@ -338,7 +338,7 @@ class TestWriteFlow:
     """To'liq oqim — LLM mock qilingan holda."""
 
     def _seed(self, *, text_length: int = 2000, cluster_id_out: list | None = None) -> int:
-        from bot.db import execute, utc_now
+        from core.db import execute, utc_now
 
         now = utc_now()
         cursor = execute(
@@ -413,8 +413,8 @@ class TestWriteFlow:
         )
 
     def test_writes_post(self, migrated_db, monkeypatch) -> None:
-        from bot.db import query_one
         from bot.writer import run_write
+        from core.db import query_one
 
         cluster_id = self._seed()
         self._mock_llm(monkeypatch, [self._post_for()])
@@ -429,8 +429,8 @@ class TestWriteFlow:
 
     def test_signature_appended(self, migrated_db, monkeypatch) -> None:
         from bot.config import load_config
-        from bot.db import query_one
         from bot.writer import run_write
+        from core.db import query_one
 
         self._seed()
         self._mock_llm(monkeypatch, [self._post_for()])
@@ -442,8 +442,8 @@ class TestWriteFlow:
             assert body.rstrip().endswith(username)
 
     def test_cluster_status_updated(self, migrated_db, monkeypatch) -> None:
-        from bot.db import query_one
         from bot.writer import run_write
+        from core.db import query_one
 
         cluster_id = self._seed()
         self._mock_llm(monkeypatch, [self._post_for()])
@@ -470,8 +470,8 @@ class TestWriteFlow:
         assert report.retried == 1
 
     def test_gives_up_after_max_attempts(self, migrated_db, monkeypatch) -> None:
-        from bot.db import query_one
         from bot.writer import MAX_ATTEMPTS, run_write
+        from core.db import query_one
 
         cluster_id = self._seed()
         state = self._mock_llm(monkeypatch, ["<ul><li>doim buzuq</li></ul>"])
@@ -497,8 +497,8 @@ class TestWriteFlow:
 
     def test_short_source_is_skipped(self, migrated_db, monkeypatch) -> None:
         """Matni qisqa klasterdan umumiy post chiqadi — yozilmaydi."""
-        from bot.db import execute, utc_now
         from bot.writer import run_write
+        from core.db import execute, utc_now
 
         now = utc_now()
         cursor = execute(

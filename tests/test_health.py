@@ -20,7 +20,7 @@ def _ago(hours: float = 0, minutes: float = 0) -> str:
 
 
 def _add_item(source: str = "rss-a", *, fetched_at: str | None = None) -> int:
-    from bot.db import execute, utc_now
+    from core.db import execute, utc_now
 
     when = fetched_at or utc_now()
     cursor = execute(
@@ -32,7 +32,7 @@ def _add_item(source: str = "rss-a", *, fetched_at: str | None = None) -> int:
 
 
 def _add_error(component: str, context: str, *, created_at: str | None = None) -> None:
-    from bot.db import execute, utc_now
+    from core.db import execute, utc_now
 
     execute(
         "INSERT INTO errors (created_at, component, context, message) VALUES (?, ?, ?, ?)",
@@ -41,7 +41,7 @@ def _add_error(component: str, context: str, *, created_at: str | None = None) -
 
 
 def _add_run(stage: str, *, ok: bool, started_at: str | None = None) -> None:
-    from bot.db import execute, utc_now
+    from core.db import execute, utc_now
 
     execute(
         "INSERT INTO runs (started_at, finished_at, stage, ok) VALUES (?, ?, ?, ?)",
@@ -59,7 +59,7 @@ def _add_post(
     published: bool = False,
     edited: bool = False,
 ) -> int:
-    from bot.db import execute, utc_now
+    from core.db import execute, utc_now
 
     # URL noyob bo'lishi kerak: utc_now() soniya aniqligida, bir siklda
     # yaratilgan postlar bir xil vaqt oladi
@@ -332,7 +332,7 @@ class TestLifetimeStats:
         assert lifetime_stats().edit_rate == 50.0
 
     def test_reject_reasons_collected(self, migrated_db) -> None:
-        from bot.db import execute
+        from core.db import execute
 
         post_id = _add_post(status="rejected", reviewed=True)
         execute("UPDATE posts SET reject_reason = ? WHERE id = ?", ("Sarlavha quruq", post_id))

@@ -58,7 +58,7 @@ def test_successful_call_records_cost(models_config, migrated_db):
     # 1000 token * $1/1M + 500 * $2/1M = 0.001 + 0.001 = 0.002
     assert result.cost_usd == pytest.approx(0.002)
 
-    from bot.db import query_one
+    from core.db import query_one
 
     row = query_one(
         "SELECT stage, model, cost_usd, success FROM llm_calls ORDER BY id DESC LIMIT 1"
@@ -120,7 +120,7 @@ def test_all_models_fail(models_config, migrated_db):
 
 def test_cost_limit_blocks_call(models_config, migrated_db):
     """Kunlik limit oshgan bo'lsa chaqiruv umuman qilinmaydi."""
-    from bot.db import execute, utc_now
+    from core.db import execute, utc_now
 
     execute(
         "INSERT INTO llm_calls (created_at, stage, model, requested_model, cost_usd) "

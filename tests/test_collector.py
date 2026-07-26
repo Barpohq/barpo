@@ -111,7 +111,7 @@ class TestSaveItems:
         assert result.inserted == 1
         assert result.duplicates == 0
 
-        from bot.db import query_one
+        from core.db import query_one
 
         row = query_one("SELECT source, title, status, url_normalized FROM items")
         assert row["source"] == "test-source"
@@ -126,7 +126,7 @@ class TestSaveItems:
         assert result.inserted == 0
         assert result.duplicates == 1
 
-        from bot.db import query_one
+        from core.db import query_one
 
         assert query_one("SELECT COUNT(*) c FROM items")["c"] == 1
 
@@ -136,7 +136,7 @@ class TestSaveItems:
         result = save_items([self._item(source="b")])
 
         assert result.inserted == 1
-        from bot.db import query_one
+        from core.db import query_one
 
         assert query_one("SELECT COUNT(*) c FROM items")["c"] == 2
 
@@ -155,7 +155,7 @@ class TestSaveItems:
 
         import json
 
-        from bot.db import query_one
+        from core.db import query_one
 
         row = query_one("SELECT extra FROM items")
         assert json.loads(row["extra"])["points"] == 250
@@ -227,8 +227,8 @@ class TestRssPublisher:
         import json
 
         from bot.collector.base import save_items
-        from bot.db import query_one
         from bot.dedup.clustering import _is_official
+        from core.db import query_one
 
         feed = self._feed(
             """<item>
@@ -249,7 +249,7 @@ class TestBackfillPublishers:
     """Eski agregator elementlariga nashriyotni keyinchalik qo'shish."""
 
     def _insert(self, external_id: str, extra: str | None = None) -> int:
-        from bot.db import execute, utc_now
+        from core.db import execute, utc_now
 
         cursor = execute(
             "INSERT INTO items (source, external_id, url, url_normalized, title, "
@@ -287,7 +287,7 @@ class TestBackfillPublishers:
         import json
 
         from bot.collector.backfill import backfill_publishers
-        from bot.db import query_one
+        from core.db import query_one
 
         item_id = self._insert("GUID1")
         self._patch_feed(monkeypatch, {"GUID1": ("https://www.anthropic.com", "Anthropic")})
@@ -304,7 +304,7 @@ class TestBackfillPublishers:
         import json
 
         from bot.collector.backfill import backfill_publishers
-        from bot.db import query_one
+        from core.db import query_one
 
         item_id = self._insert("GUID1", extra=json.dumps({"feed_title": "Eski qiymat"}))
         self._patch_feed(monkeypatch, {"GUID1": ("https://www.anthropic.com", "Anthropic")})
@@ -318,7 +318,7 @@ class TestBackfillPublishers:
     def test_item_not_in_feed_is_left_alone(self, migrated_db, monkeypatch) -> None:
         """Feed oynasidan eski element o'zgarmaydi — url ga fallback qiladi."""
         from bot.collector.backfill import backfill_publishers
-        from bot.db import query_one
+        from core.db import query_one
 
         item_id = self._insert("ESKI")
         self._patch_feed(monkeypatch, {"BOSHQA": ("https://x.dev", "X")})

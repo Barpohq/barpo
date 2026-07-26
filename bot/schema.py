@@ -1,13 +1,20 @@
-"""Baza sxemasi — versiyalangan migratsiyalar.
+"""Botning baza sxemasi — versiyalangan migratsiyalar (diapazon: 1–199).
 
-Yangi migratsiya qo'shish: MIGRATIONS ro'yxatiga (versiya, izoh, SQL) qo'shiladi.
+Yangi migratsiya qo'shish: BOT_MIGRATIONS ro'yxatiga (versiya, izoh, SQL).
 Mavjud migratsiyani hech qachon o'zgartirmang — yangisini qo'shing.
+
+Versiya 1–4 tarixiy: o'sha paytda bot yagona agent edi, shuning uchun
+umumiy jadvallar (llm_calls, errors, runs) ham shu yerda yaratiladi.
+Ularni ajratish mumkin emas — mavjud bazalarda allaqachon qo'llangan.
+Yangi umumiy jadvallar `core/db/schema.py` ga qo'shiladi.
+
+Barcha agentlarning migratsiyalari `core/db/schema.py` da birlashtiriladi.
 """
 
 from __future__ import annotations
 
 # Har bir element: (versiya, izoh, SQL)
-MIGRATIONS: list[tuple[int, str, str]] = [
+BOT_MIGRATIONS: list[tuple[int, str, str]] = [
     (
         1,
         "Boshlang'ich sxema: items, clusters, cluster_items, posts, llm_calls, errors",
@@ -214,4 +221,3 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     ),
 ]
 
-LATEST_VERSION = max(v for v, _, _ in MIGRATIONS) if MIGRATIONS else 0

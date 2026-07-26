@@ -233,7 +233,7 @@ class TestClusteringIntegration:
         report = clustering.run_dedup(window_days=7)
         assert report.new_clusters == 1
 
-        from bot.db import query_one
+        from core.db import query_one
 
         assert query_one("SELECT item_count FROM clusters")["item_count"] == 2
 
@@ -250,7 +250,7 @@ class TestClusteringIntegration:
 
         clustering.run_dedup()
 
-        from bot.db import query_one
+        from core.db import query_one
 
         assert query_one("SELECT status FROM items")["status"] == "clustered"
 

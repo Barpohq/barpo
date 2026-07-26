@@ -179,7 +179,7 @@ class TestRankFlow:
 
     def _seed_cluster(self, title: str = "Yangilik") -> int:
         from bot.collector.base import CollectedItem, save_items
-        from bot.db import execute, query_one, utc_now
+        from core.db import execute, query_one, utc_now
 
         save_items([CollectedItem(source="a", url=f"https://x.com/{title}", title=title)])
         item_id = query_one("SELECT id FROM items ORDER BY id DESC LIMIT 1")["id"]
@@ -228,8 +228,8 @@ class TestRankFlow:
         monkeypatch.setattr(scorer, "LLMClient", FakeClient)
 
     def test_high_score_is_accepted(self, migrated_db, monkeypatch) -> None:
-        from bot.db import query_one
         from bot.rank import run_rank
+        from core.db import query_one
 
         cluster_id = self._seed_cluster()
         self._mock_llm(
@@ -256,8 +256,8 @@ class TestRankFlow:
 
     def test_low_score_is_rejected(self, migrated_db, monkeypatch) -> None:
         """Chegaradan past baho — Writer'ga bormaydi."""
-        from bot.db import query_one
         from bot.rank import run_rank
+        from core.db import query_one
 
         cluster_id = self._seed_cluster()
         self._mock_llm(
@@ -284,8 +284,8 @@ class TestRankFlow:
 
     def test_spam_is_rejected_despite_high_score(self, migrated_db, monkeypatch) -> None:
         """Spam belgisi yuqori bahodan ustun."""
-        from bot.db import query_one
         from bot.rank import run_rank
+        from core.db import query_one
 
         cluster_id = self._seed_cluster()
         self._mock_llm(
@@ -333,8 +333,8 @@ class TestRankFlow:
         assert run_rank().processed == 0
 
     def test_dry_run_does_not_write(self, migrated_db, monkeypatch) -> None:
-        from bot.db import query_one
         from bot.rank import run_rank
+        from core.db import query_one
 
         cluster_id = self._seed_cluster()
         self._mock_llm(
@@ -396,9 +396,9 @@ class TestRankFlow:
 
     def test_llm_failure_leaves_cluster_new(self, migrated_db, monkeypatch) -> None:
         """LLM ishlamasa klaster `new` bo'lib qoladi — keyingi siklda qayta urinadi."""
-        from bot.db import query_one
         from bot.llm import LLMError
         from bot.rank import run_rank, scorer
+        from core.db import query_one
 
         cluster_id = self._seed_cluster()
 

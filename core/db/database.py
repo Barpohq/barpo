@@ -2,6 +2,10 @@
 
 Barcha modullar bazaga shu yerdan kiradi. Ulanish thread-local — APScheduler
 turli threadlarda ishlatgani uchun.
+
+Baza ikkala agent uchun bitta: `llm_calls` bo'linmasligi kerak (qaysi
+agent qancha sarflayapti), `errors` va `runs` ham umumiy. Migratsiyalar
+agent bo'yicha ajratilgan — `core/db/schema.py` ga qarang.
 """
 
 from __future__ import annotations
@@ -14,8 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from bot.config import load_config
-from bot.db.schema import LATEST_VERSION, MIGRATIONS
+from core.config import db_path
+from core.db.schema import all_migrations, latest_version
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -44,7 +48,7 @@ def get_connection() -> sqlite3.Connection:
     """Joriy thread uchun ulanish (kerak bo'lsa yaratiladi)."""
     conn = getattr(_local, "conn", None)
     if conn is None:
-        conn = _connect(load_config().db_path)
+        conn = _connect(db_path())
         _local.conn = conn
     return conn
 
@@ -113,7 +117,7 @@ def migrate() -> int:
     _ensure_migrations_table(conn)
 
     applied = {r["version"] for r in conn.execute("SELECT version FROM schema_migrations")}
-    pending = [(v, note, sql) for v, note, sql in MIGRATIONS if v not in applied]
+    pending = [(v, note, sql) for v, note, sql in all_migrations() if v not in applied]
 
     if not pending:
         log.info("Baza yangi (versiya %d), migratsiya kerak emas", current_version())
@@ -142,9 +146,10 @@ def migrate() -> int:
 def check_schema() -> None:
     """Sxema eng so'nggi versiyada ekanini tekshirish. Bo'lmasa xato."""
     version = current_version()
-    if version < LATEST_VERSION:
+    latest = latest_version()
+    if version < latest:
         raise RuntimeError(
-            f"Baza sxemasi eskirgan (versiya {version}, kerak {LATEST_VERSION}). "
+            f"Baza sxemasi eskirgan (versiya {version}, kerak {latest}). "
             f"`bot db migrate` ni ishga tushiring."
         )
 

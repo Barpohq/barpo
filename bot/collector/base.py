@@ -14,7 +14,7 @@ from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from bot.config import Source
-from bot.db import execute, query_one, utc_now
+from core.db import execute, query_one, utc_now
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)

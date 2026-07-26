@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from bot.db import execute, query, utc_now
+from core.db import execute, query, utc_now
 from core.logging_setup import get_logger
 
 if TYPE_CHECKING:

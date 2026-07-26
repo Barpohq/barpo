@@ -21,9 +21,9 @@ from typing import Any
 import numpy as np
 from rapidfuzz import fuzz
 
-from bot.db import execute, query, query_one, utc_now
 from bot.dedup.embeddings import embed_items
 from bot.dedup.versions import versions_conflict
+from core.db import execute, query, query_one, utc_now
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)

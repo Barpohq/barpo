@@ -16,8 +16,8 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 def migrated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Har test uchun toza, migratsiya qilingan vaqtinchalik baza."""
     from bot import config as config_module
-    from bot.db import database
     from core import config as core_config
+    from core.db import database
 
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DB_PATH", str(db_path))

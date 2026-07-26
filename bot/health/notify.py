@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import asyncio
 
-from bot.db import execute, query_one, utc_now
 from bot.health.metrics import collect_metrics
 from bot.health.report import format_alert, format_daily_report
+from core.db import execute, query_one, utc_now
 from core.logging_setup import get_logger
 
 log = get_logger(__name__)
