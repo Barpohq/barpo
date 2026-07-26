@@ -20,9 +20,9 @@ from bot.config import load_config
 from bot.db import execute, log_error, query, query_one, transaction, utc_now
 from bot.enricher import enriched_clusters
 from bot.llm import CostLimitExceeded, LLMClient, LLMError
-from bot.logging_setup import get_logger
 from bot.writer.prompts import SYSTEM_PROMPT, build_write_prompt, signature_length
 from bot.writer.validator import append_signature, validate_post
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 

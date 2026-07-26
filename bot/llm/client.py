@@ -23,7 +23,7 @@ import httpx
 
 from bot.config import ModelsConfig, env_str, load_config
 from bot.db import execute, query_one, utc_now
-from bot.logging_setup import get_logger
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 

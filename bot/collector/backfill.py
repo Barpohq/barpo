@@ -21,7 +21,7 @@ import httpx
 from bot.collector.rss import USER_AGENT, publisher_of
 from bot.config import Source, load_config
 from bot.db import execute, query, transaction
-from bot.logging_setup import get_logger
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 

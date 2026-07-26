@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from bot.db import execute, query, utc_now
-from bot.logging_setup import get_logger
+from core.logging_setup import get_logger
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer

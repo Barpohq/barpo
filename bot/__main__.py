@@ -32,10 +32,10 @@ from datetime import UTC, datetime, timedelta
 
 from bot import __version__
 from bot.config import ConfigError, load_config
-from bot.logging_setup import get_logger, setup_logging
 
 # Faqat parser yordam matni uchun — og'ir bog'liqlik tortmaydi
 from bot.rank.scorer import DEFAULT_BATCH_SIZE
+from core.logging_setup import get_logger, setup_logging
 
 log = get_logger("bot.cli")
 

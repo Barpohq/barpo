@@ -19,7 +19,6 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from bot.db import query_one
-from bot.logging_setup import get_logger
 from bot.publisher.publish import (
     apply_edit,
     get_post,
@@ -35,6 +34,7 @@ from bot.publisher.telegram import (
     TelegramClient,
     admin_chat_id,
 )
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 

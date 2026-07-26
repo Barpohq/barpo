@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import httpx
 
 from bot.collector.base import clean_text
-from bot.logging_setup import get_logger
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 

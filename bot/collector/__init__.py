@@ -22,7 +22,7 @@ from bot.collector.base import (
 )
 from bot.config import Source, load_config
 from bot.db import finish_run, log_error, start_run
-from bot.logging_setup import get_logger
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 

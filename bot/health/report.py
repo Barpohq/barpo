@@ -22,7 +22,7 @@ from bot.health.metrics import (
     lifetime_stats,
     source_health,
 )
-from bot.logging_setup import get_logger
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 

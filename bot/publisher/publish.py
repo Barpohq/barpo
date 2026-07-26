@@ -20,7 +20,6 @@ from typing import Any
 
 from bot.config import load_config
 from bot.db import execute, log_error, query_one, utc_now
-from bot.logging_setup import get_logger
 from bot.publisher.queue import QueueBlocked, check_can_publish, unsent_drafts
 from bot.publisher.telegram import (
     TelegramClient,
@@ -31,6 +30,7 @@ from bot.publisher.telegram import (
     is_configured,
     with_client,
 )
+from core.logging_setup import get_logger
 
 log = get_logger(__name__)
 
