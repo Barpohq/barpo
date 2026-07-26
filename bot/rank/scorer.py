@@ -20,6 +20,7 @@ from typing import Any
 
 from bot.config import load_config
 from bot.db import execute, log_error, query, transaction, utc_now
+from bot.dedup import publisher_url
 from bot.llm import CostLimitExceeded, LLMClient, LLMError
 from bot.logging_setup import get_logger
 from bot.rank.prompts import CATEGORIES, SYSTEM_PROMPT, build_rank_prompt
@@ -379,7 +380,7 @@ def ranked_clusters(limit: int = 20, *, min_relevance: float = 0.0) -> list[dict
     rows = query(
         """
         SELECT c.id, c.title, c.importance_score, c.relevance_score,
-               c.category, c.rank_reason, c.item_count, i.url, i.source
+               c.category, c.rank_reason, c.item_count, i.url, i.extra, i.source
         FROM clusters c
         JOIN items i ON i.id = c.primary_item_id
         WHERE c.status = 'ranked' AND c.relevance_score >= ?
@@ -388,4 +389,8 @@ def ranked_clusters(limit: int = 20, *, min_relevance: float = 0.0) -> list[dict
         """,
         (min_relevance, limit),
     )
-    return [dict(r) for r in rows]
+    queue = [dict(r) for r in rows]
+    for cluster in queue:
+        # Post havolasi agregatorga emas, nashriyotga ketishi kerak
+        cluster["publisher_url"] = publisher_url(cluster)
+    return queue

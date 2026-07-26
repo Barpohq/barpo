@@ -5,6 +5,7 @@ from bot.dedup.clustering import (
     TITLE_FUZZY_THRESHOLD,
     DedupReport,
     cluster_summary,
+    publisher_url,
     run_dedup,
 )
 from bot.dedup.embeddings import MODEL_NAME, embed_items, embed_texts
@@ -17,5 +18,6 @@ __all__ = [
     "cluster_summary",
     "embed_items",
     "embed_texts",
+    "publisher_url",
     "run_dedup",
 ]

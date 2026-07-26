@@ -44,6 +44,23 @@ def _pick_content(entry: Any) -> str:
     return entry.get("summary") or entry.get("description") or ""
 
 
+def publisher_of(entry: Any) -> tuple[str | None, str | None]:
+    """Elementning haqiqiy nashriyoti: (URL, nom).
+
+    Agregatorlarda (Google News) `link` agregatorning redirect havolasi
+    bo'ladi — u JavaScript orqali ochiladi, HTTP redirect bermaydi va
+    base64 id ichida haqiqiy URL yo'q (2024 dan keyingi format).
+
+    Lekin `<source url="...">` tegida nashriyot domeni turadi. Uni
+    saqlaymiz: dedup shu asosda birlamchi manbani aniqlaydi, aks holda
+    rasmiy blog e'loni oddiy qayta hikoya bilan teng ko'rinadi.
+    """
+    source_tag = entry.get("source")
+    if not isinstance(source_tag, dict):
+        return None, None
+    return source_tag.get("href"), source_tag.get("title")
+
+
 def collect(source: Source) -> list[CollectedItem]:
     """Bitta RSS manbadan elementlarni olish."""
     url = source.options.get("url")
@@ -82,6 +99,13 @@ def collect(source: Source) -> list[CollectedItem]:
             or entry.get("updated")
         )
 
+        extra: dict[str, Any] = {"feed_title": feed.feed.get("title", "")}
+        publisher_url, publisher_name = publisher_of(entry)
+        if publisher_url:
+            extra["publisher_url"] = publisher_url
+        if publisher_name:
+            extra["publisher_name"] = publisher_name
+
         items.append(
             CollectedItem(
                 source=source.name,
@@ -93,7 +117,7 @@ def collect(source: Source) -> list[CollectedItem]:
                 author=entry.get("author"),
                 image_url=_pick_image(entry),
                 published_at=published,
-                extra={"feed_title": feed.feed.get("title", "")},
+                extra=extra,
             )
         )
 

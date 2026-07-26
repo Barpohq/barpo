@@ -79,6 +79,21 @@ Sozlamalar `config/` katalogida — kod o'zgartirmasdan tahrirlash mumkin:
 to'g'ridan-to'g'ri Rank promptiga tushadi — baholash sifatini shu yerdan
 sozlaysiz. `posting.min_importance_score` esa rad etish chegarasi.
 
+### Agregator manbalar
+
+Anthropic va Meta AI rasmiy RSS chiqarmaydi, shuning uchun ular uchun Google
+News RSS ishlatiladi. Bunday feed'da `link` — agregatorning redirect havolasi
+(JavaScript orqali ochiladi, ichida haqiqiy URL yo'q). Collector `<source url>`
+tegidan nashriyot domenini olib `extra.publisher_url` ga yozadi; dedup shu
+asosda birlamchi manbani tanlaydi va postdagi havola agregatorga emas,
+nashriyotga ketadi.
+
+Collector'ga bu qo'shilishidan oldin yig'ilgan elementlar uchun:
+
+```bash
+uv run bot backfill-publishers
+```
+
 Maxfiy ma'lumotlar (API kalitlar) faqat `.env` faylida — YAML'ga yozilmaydi.
 
 ## Loyiha strukturasi

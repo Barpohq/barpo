@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
-from bot.dedup.clustering import _is_official, _normalize_title, _pick_primary
+from bot.dedup.clustering import (
+    _is_official,
+    _normalize_title,
+    _pick_primary,
+    publisher_url,
+)
 
 
 class TestNormalizeTitle:
@@ -52,6 +59,53 @@ class TestIsOfficial:
     def test_missing_url(self) -> None:
         assert not _is_official({})
 
+    def test_aggregator_link_with_official_publisher(self) -> None:
+        """Google News havolasi ortidagi rasmiy nashriyot tanilishi kerak.
+
+        Aks holda rasmiy blog e'loni qayta hikoya bilan teng ko'rinadi va
+        klasterda asosiy element noto'g'ri tanlanadi.
+        """
+        item = {
+            "url": "https://news.google.com/rss/articles/CBMiabc?oc=5",
+            "extra": json.dumps({"publisher_url": "https://www.anthropic.com"}),
+        }
+        assert _is_official(item)
+
+    def test_aggregator_link_with_non_official_publisher(self) -> None:
+        item = {
+            "url": "https://news.google.com/rss/articles/CBMiabc?oc=5",
+            "extra": json.dumps({"publisher_url": "https://techcrunch.com"}),
+        }
+        assert not _is_official(item)
+
+
+class TestPublisherUrl:
+    def test_prefers_publisher_over_aggregator_link(self) -> None:
+        item = {
+            "url": "https://news.google.com/rss/articles/CBMiabc",
+            "extra": json.dumps({"publisher_url": "https://www.anthropic.com"}),
+        }
+        assert publisher_url(item) == "https://www.anthropic.com"
+
+    def test_falls_back_to_url(self) -> None:
+        """Oddiy RSS manbada publisher_url yo'q — url o'zi ishlatiladi."""
+        item = {"url": "https://openai.com/news/x", "extra": None}
+        assert publisher_url(item) == "https://openai.com/news/x"
+
+    def test_accepts_dict_extra(self) -> None:
+        """extra bazadan JSON matn, kod ichida dict bo'lishi mumkin."""
+        item = {"url": "https://news.google.com/x", "extra": {"publisher_url": "https://x.dev"}}
+        assert publisher_url(item) == "https://x.dev"
+
+    @pytest.mark.parametrize("extra", ["{buzuq json", "", "null", "[]"])
+    def test_malformed_extra_falls_back(self, extra: str) -> None:
+        """Buzuq extra dedup'ni yiqitmasligi kerak."""
+        item = {"url": "https://openai.com/x", "extra": extra}
+        assert publisher_url(item) == "https://openai.com/x"
+
+    def test_missing_everything(self) -> None:
+        assert publisher_url({}) == ""
+
 
 class TestPickPrimary:
     def _item(self, **kw):
@@ -72,6 +126,27 @@ class TestPickPrimary:
         aggregator = self._item(id=2, url="https://news.google.com/y", content="juda " * 200)
 
         assert _pick_primary([aggregator, official], {})["id"] == 1
+
+    def test_official_wins_through_aggregator_link(self) -> None:
+        """Google News orqali kelgan rasmiy e'lon qayta hikoyadan ustun.
+
+        Bu real holat: anthropic-news manbasi Google News RSS ishlatadi,
+        shuning uchun rasmiy blog posti ham agregator havolasi bilan keladi.
+        """
+        official_via_gnews = self._item(
+            id=1,
+            url="https://news.google.com/rss/articles/CBMiabc",
+            extra=json.dumps({"publisher_url": "https://www.anthropic.com"}),
+            content="qisqa",
+        )
+        rewrite = self._item(
+            id=2,
+            url="https://news.google.com/rss/articles/CBMixyz",
+            extra=json.dumps({"publisher_url": "https://techcrunch.com"}),
+            content="juda " * 200,
+        )
+
+        assert _pick_primary([rewrite, official_via_gnews], {})["id"] == 1
 
     def test_source_weight_breaks_tie(self) -> None:
         """Ikkalasi ham norasmiy bo'lsa — manba weight hal qiladi."""

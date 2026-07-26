@@ -13,6 +13,7 @@ solishtiradi — eski yangilikni yangi deb chiqarish xatosining oldini olish uch
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -74,7 +75,8 @@ def _recent_window(days: int) -> str:
 def _fetch_unclustered() -> list[dict[str, Any]]:
     rows = query(
         """
-        SELECT i.id, i.source, i.title, i.content, i.summary, i.url, i.published_at, i.fetched_at
+        SELECT i.id, i.source, i.title, i.content, i.summary, i.url, i.extra,
+               i.published_at, i.fetched_at
         FROM items i
         WHERE i.status = 'raw'
           AND NOT EXISTS (SELECT 1 FROM cluster_items ci WHERE ci.item_id = i.id)
@@ -118,8 +120,25 @@ OFFICIAL_DOMAINS = (
 )
 
 
+def publisher_url(item: dict[str, Any]) -> str:
+    """Elementning haqiqiy nashriyot URL'i.
+
+    Agregatordan (Google News) kelgan elementda `url` — redirect havolasi,
+    haqiqiy nashriyot esa collector saqlagan `extra.publisher_url` da.
+    """
+    raw_extra = item.get("extra")
+    if raw_extra:
+        try:
+            extra = json.loads(raw_extra) if isinstance(raw_extra, str) else raw_extra
+        except (TypeError, ValueError, json.JSONDecodeError):
+            extra = None
+        if isinstance(extra, dict) and (found := extra.get("publisher_url")):
+            return str(found)
+    return str(item.get("url") or "")
+
+
 def _is_official(item: dict[str, Any]) -> bool:
-    url = (item.get("url") or "").lower()
+    url = publisher_url(item).lower()
     return any(domain in url for domain in OFFICIAL_DOMAINS)
 
 
@@ -348,7 +367,7 @@ def cluster_summary(cluster_id: int) -> dict[str, Any] | None:
 
     members = query(
         """
-        SELECT i.id, i.source, i.title, i.url, i.published_at,
+        SELECT i.id, i.source, i.title, i.url, i.extra, i.published_at,
                ci.similarity, ci.is_primary
         FROM cluster_items ci
         JOIN items i ON i.id = ci.item_id
@@ -357,4 +376,8 @@ def cluster_summary(cluster_id: int) -> dict[str, Any] | None:
         """,
         (cluster_id,),
     )
-    return {"cluster": dict(cluster), "members": [dict(m) for m in members]}
+    rows = [dict(m) for m in members]
+    for row in rows:
+        # Agregator havolasi o'rniga nashriyot URL'i — CLI va Writer uchun
+        row["publisher_url"] = publisher_url(row)
+    return {"cluster": dict(cluster), "members": rows}

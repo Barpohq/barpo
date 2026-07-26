@@ -163,3 +163,204 @@ class TestSaveItems:
     def test_html_in_title_cleaned_on_construction(self) -> None:
         item = self._item(title="<b>Qalin</b> sarlavha")
         assert item.title == "Qalin sarlavha"
+
+
+class TestRssPublisher:
+    """Agregator feed'idan haqiqiy nashriyotni ajratish.
+
+    Google News RSS'da `link` — redirect havolasi (JavaScript orqali
+    ochiladi, base64 id ichida URL yo'q). Haqiqiy nashriyot faqat
+    `<source url="...">` tegida bo'ladi.
+    """
+
+    def _feed(self, item_xml: str) -> bytes:
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel>
+          <title>Test feed</title>
+          {item_xml}
+        </channel></rss>""".encode()
+
+    def _collect(self, feed_bytes: bytes, monkeypatch: pytest.MonkeyPatch) -> list:
+        """RSS adapterini tarmoqsiz ishga tushirish."""
+        import httpx
+
+        from bot.collector import rss
+        from bot.config import Source
+
+        def fake_get(self, url, **kw):  # noqa: ANN001, ARG001
+            return httpx.Response(200, content=feed_bytes, request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(httpx.Client, "get", fake_get)
+        source = Source(name="test", type="rss", options={"url": "https://example.com/feed"})
+        return rss.collect(source)
+
+    def test_extracts_publisher_from_source_tag(self, monkeypatch) -> None:
+        feed = self._feed(
+            """<item>
+              <title>Introducing Claude Opus 5 - Anthropic</title>
+              <link>https://news.google.com/rss/articles/CBMiabc?oc=5</link>
+              <source url="https://www.anthropic.com">Anthropic</source>
+            </item>"""
+        )
+        items = self._collect(feed, monkeypatch)
+
+        assert len(items) == 1
+        assert items[0].extra["publisher_url"] == "https://www.anthropic.com"
+        assert items[0].extra["publisher_name"] == "Anthropic"
+        # Asl havola saqlanadi — nashriyot alohida maydonda
+        assert items[0].url.startswith("https://news.google.com/")
+
+    def test_plain_feed_has_no_publisher(self, monkeypatch) -> None:
+        """Oddiy rasmiy blog feed'ida `source` tegi yo'q — extra ham bo'sh."""
+        feed = self._feed(
+            """<item>
+              <title>Yangi model</title>
+              <link>https://openai.com/news/x</link>
+            </item>"""
+        )
+        items = self._collect(feed, monkeypatch)
+
+        assert "publisher_url" not in items[0].extra
+
+    def test_publisher_flows_into_official_detection(self, migrated_db, monkeypatch) -> None:
+        """Uchidan-uchiga: agregator orqali kelgan rasmiy e'lon tanilishi kerak."""
+        import json
+
+        from bot.collector.base import save_items
+        from bot.db import query_one
+        from bot.dedup.clustering import _is_official
+
+        feed = self._feed(
+            """<item>
+              <title>Introducing Claude Opus 5 - Anthropic</title>
+              <link>https://news.google.com/rss/articles/CBMiabc?oc=5</link>
+              <source url="https://www.anthropic.com">Anthropic</source>
+            </item>"""
+        )
+        items = self._collect(feed, monkeypatch)
+        save_items(items)
+
+        row = dict(query_one("SELECT url, extra FROM items"))
+        assert json.loads(row["extra"])["publisher_url"] == "https://www.anthropic.com"
+        assert _is_official(row)
+
+
+class TestBackfillPublishers:
+    """Eski agregator elementlariga nashriyotni keyinchalik qo'shish."""
+
+    def _insert(self, external_id: str, extra: str | None = None) -> int:
+        from bot.db import execute, utc_now
+
+        cursor = execute(
+            "INSERT INTO items (source, external_id, url, url_normalized, title, "
+            "fetched_at, status, extra) VALUES (?, ?, ?, ?, ?, ?, 'raw', ?)",
+            (
+                "anthropic-news",
+                external_id,
+                f"https://news.google.com/rss/articles/{external_id}",
+                f"https://news.google.com/rss/articles/{external_id}",
+                "Test sarlavha",
+                utc_now(),
+                extra,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def _patch_feed(self, monkeypatch: pytest.MonkeyPatch, mapping: dict) -> None:
+        from bot.collector import backfill
+        from bot.config import Source
+
+        monkeypatch.setattr(
+            backfill,
+            "_aggregator_sources",
+            lambda: [
+                Source(
+                    name="anthropic-news",
+                    type="rss",
+                    options={"url": "https://news.google.com/rss/search?q=x"},
+                )
+            ],
+        )
+        monkeypatch.setattr(backfill, "_guid_to_publisher", lambda source: mapping)
+
+    def test_fills_missing_publisher(self, migrated_db, monkeypatch) -> None:
+        import json
+
+        from bot.collector.backfill import backfill_publishers
+        from bot.db import query_one
+
+        item_id = self._insert("GUID1")
+        self._patch_feed(monkeypatch, {"GUID1": ("https://www.anthropic.com", "Anthropic")})
+
+        report = backfill_publishers()
+
+        assert report.updated == 1
+        extra = json.loads(query_one("SELECT extra FROM items WHERE id = ?", (item_id,))["extra"])
+        assert extra["publisher_url"] == "https://www.anthropic.com"
+        assert extra["publisher_name"] == "Anthropic"
+
+    def test_preserves_existing_extra_fields(self, migrated_db, monkeypatch) -> None:
+        """Mavjud extra maydonlari yo'qolmasligi kerak."""
+        import json
+
+        from bot.collector.backfill import backfill_publishers
+        from bot.db import query_one
+
+        item_id = self._insert("GUID1", extra=json.dumps({"feed_title": "Eski qiymat"}))
+        self._patch_feed(monkeypatch, {"GUID1": ("https://www.anthropic.com", "Anthropic")})
+
+        backfill_publishers()
+
+        extra = json.loads(query_one("SELECT extra FROM items WHERE id = ?", (item_id,))["extra"])
+        assert extra["feed_title"] == "Eski qiymat"
+        assert extra["publisher_url"] == "https://www.anthropic.com"
+
+    def test_item_not_in_feed_is_left_alone(self, migrated_db, monkeypatch) -> None:
+        """Feed oynasidan eski element o'zgarmaydi — url ga fallback qiladi."""
+        from bot.collector.backfill import backfill_publishers
+        from bot.db import query_one
+
+        item_id = self._insert("ESKI")
+        self._patch_feed(monkeypatch, {"BOSHQA": ("https://x.dev", "X")})
+
+        report = backfill_publishers()
+
+        assert report.not_found == 1
+        assert report.updated == 0
+        assert query_one("SELECT extra FROM items WHERE id = ?", (item_id,))["extra"] is None
+
+    def test_already_filled_is_not_candidate(self, migrated_db, monkeypatch) -> None:
+        """Ikkinchi marta ishga tushirish ortiqcha ish qilmaydi (idempotent)."""
+        import json
+
+        from bot.collector.backfill import backfill_publishers
+
+        self._insert("GUID1", extra=json.dumps({"publisher_url": "https://www.anthropic.com"}))
+        self._patch_feed(monkeypatch, {"GUID1": ("https://www.anthropic.com", "Anthropic")})
+
+        report = backfill_publishers()
+
+        assert report.candidates == 0
+        assert report.updated == 0
+
+    def test_feed_failure_does_not_crash(self, migrated_db, monkeypatch) -> None:
+        """Feed o'qilmasa backfill xato bermay, hisobotda qayd etadi."""
+        from bot.collector import backfill
+        from bot.config import Source
+
+        self._insert("GUID1")
+
+        def boom(source):  # noqa: ANN001, ARG001
+            raise RuntimeError("tarmoq yo'q")
+
+        monkeypatch.setattr(
+            backfill,
+            "_aggregator_sources",
+            lambda: [Source(name="anthropic-news", type="rss", options={"url": "https://x/y"})],
+        )
+        monkeypatch.setattr(backfill, "_guid_to_publisher", boom)
+
+        report = backfill.backfill_publishers()
+
+        assert report.failed_sources == ["anthropic-news"]
+        assert report.updated == 0

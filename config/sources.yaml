@@ -10,9 +10,19 @@ defaults:
 
 sources:
   # ─── Rasmiy bloglar (RSS) — eng ishonchli manba ───
-  # Diqqat: Anthropic va Meta AI rasmiy RSS feed chiqarmaydi (2026-07 holatiga
-  # ko'ra /rss.xml, /news/rss.xml, /feed.xml — barchasi 404). Ular uchun
-  # Google News RSS ishlatilmoqda; rasmiy feed paydo bo'lsa almashtiriladi.
+  # Diqqat: Anthropic va Meta AI rasmiy AI feed chiqarmaydi. 2026-07-26 da
+  # qayta tekshirildi: anthropic.com uchun /rss.xml, /news/rss.xml, /feed.xml,
+  # /atom.xml, /index.xml, /engineering/rss.xml — barchasi 404, HTML'da ham
+  # feed havolasi yo'q. ai.meta.com/blog/rss/ ham 404.
+  #
+  # Meta uchun engineering.fb.com/feed/ va about.fb.com/news/feed/ ishlaydi,
+  # lekin ular yaroqsiz: birinchisi infratuzilma/reklama muhandisligi haqida,
+  # ikkinchisi korporativ PR (Rank ularni spam deb belgilagan).
+  #
+  # Shuning uchun ikkalasi uchun Google News RSS qoldirilmoqda. Havola
+  # muammosi hal qilingan: collector `<source url>` tegidan haqiqiy
+  # nashriyotni olib `extra.publisher_url` ga yozadi, dedup va Writer
+  # agregator redirect'i o'rniga o'shani ishlatadi.
   - name: anthropic-news
     type: rss
     url: "https://news.google.com/rss/search?q=Anthropic+Claude+when:7d&hl=en-US&gl=US&ceid=US:en"

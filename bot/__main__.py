@@ -6,6 +6,7 @@ Buyruqlar:
     bot llm test            — OpenRouter ulanishini tekshirish
     bot cost [--days N]     — LLM xarajatlari hisoboti
     bot collect             — manbalardan yangilik yig'ish
+    bot backfill-publishers — eski elementlarga nashriyot ma'lumotini qo'shish
     bot dedup               — dublikatlarni klasterlash
     bot rank                — klasterlarni LLM bilan baholash
     bot clusters list       — klasterlar ro'yxati
@@ -69,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     # ── collect / dedup ──
     collect_parser = sub.add_parser("collect", help="Manbalardan yangilik yig'ish")
     collect_parser.add_argument("--source", help="Faqat shu manbadan (nom bo'yicha)")
+
+    sub.add_parser(
+        "backfill-publishers",
+        help="Eski agregator elementlariga nashriyot ma'lumotini qo'shish",
+    )
 
     dedup_parser = sub.add_parser("dedup", help="Dublikatlarni klasterlash")
     dedup_parser.add_argument(
@@ -249,6 +255,24 @@ def cmd_collect(source_name: str | None) -> int:
     return 1 if report.has_errors and not report.ok_sources else 0
 
 
+def cmd_backfill_publishers() -> int:
+    from bot import db
+    from bot.collector.backfill import backfill_publishers
+
+    db.check_schema()
+    report = backfill_publishers()
+
+    print()
+    print(f"Nomzod:        {report.candidates}")
+    print(f"To'ldirildi:   {report.updated}")
+    print(f"Topilmadi:     {report.not_found}")
+    if report.failed_sources:
+        print(f"Xato manbalar: {', '.join(report.failed_sources)}")
+    if report.not_found:
+        print("\nTopilmaganlar feed oynasidan eski — ular `url` ga fallback qiladi.")
+    return 0
+
+
 def cmd_dedup(window_days: int) -> int:
     from bot import db
     from bot.dedup import run_dedup
@@ -370,7 +394,9 @@ def cmd_clusters_show(cluster_id: int) -> int:
         marker = "★" if m["is_primary"] else " "
         sim = f"{m['similarity']:.3f}" if m["similarity"] is not None else "  —  "
         print(f" {marker} [{m['id']:>4}] {sim}  {m['source']:<18} {m['title'][:60]}")
-        print(f"              {m['url'][:88]}")
+        # Agregatordan kelgan bo'lsa nashriyot havolasi ko'rsatiladi
+        link = m.get("publisher_url") or m["url"]
+        print(f"              {link[:88]}")
     return 0
 
 
@@ -416,6 +442,8 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_cost(args.days)
             case "collect":
                 return cmd_collect(args.source)
+            case "backfill-publishers":
+                return cmd_backfill_publishers()
             case "dedup":
                 return cmd_dedup(args.window_days)
             case "rank":
