@@ -1,55 +1,29 @@
-"""Konfiguratsiya yuklash — YAML fayllar va muhit o'zgaruvchilari.
+"""Botning konfiguratsiyasi — manbalar va kanal profili.
 
-Barcha modullar sozlamalarni shu yerdan oladi. YAML fayllar `config/`
-katalogida, maxfiy ma'lumotlar (API kalitlar) faqat muhit o'zgaruvchilarida.
+Umumiy qism (`.env`, `models.yaml`, baza yo'li) `core/config.py` da.
+Bu yerda faqat yangiliklar botiga tegishlisi: `sources.yaml` va
+`channel.yaml`.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
-from dotenv import load_dotenv
+from core.config import (
+    ConfigError,
+    ModelsConfig,
+    db_path,
+    load_models,
+    log_level,
+    read_yaml,
+)
 
-# Loyiha ildizi: bot/config.py -> bot/ -> ildiz
-ROOT_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = ROOT_DIR / "config"
-
-load_dotenv(ROOT_DIR / ".env")
-
-
-class ConfigError(RuntimeError):
-    """Konfiguratsiya xatosi — yetishmayotgan fayl yoki kalit."""
-
-
-def _read_yaml(name: str) -> dict[str, Any]:
-    path = CONFIG_DIR / name
-    if not path.exists():
-        raise ConfigError(f"Konfiguratsiya fayli topilmadi: {path}")
-    with path.open(encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise ConfigError(f"{name} ildizida obyekt (mapping) kutilgan edi")
-    return data
-
-
-def env_str(key: str, default: str | None = None, *, required: bool = False) -> str:
-    """Muhit o'zgaruvchisini o'qish.
-
-    `required=True` bo'lsa va qiymat yo'q bo'lsa ConfigError.
-    """
-    value = os.getenv(key, default)
-    if required and not value:
-        raise ConfigError(
-            f"{key} muhit o'zgaruvchisi belgilanmagan. .env.example dan nusxa oling."
-        )
-    return value or ""
+# Eski import yo'llari saqlanadi: `from bot.config import ConfigError`
+# hali ko'p joyda ishlatiladi va bot uchun ma'noli.
+__all__ = ["Config", "ConfigError", "Source", "load_config"]
 
 
 # ─────────────────────────── Manbalar ───────────────────────────
@@ -101,99 +75,6 @@ def _parse_sources(raw: dict[str, Any]) -> list[Source]:
     return sources
 
 
-# ─────────────────────────── Modellar ───────────────────────────
-
-
-@dataclass(frozen=True, slots=True)
-class StageConfig:
-    """Pipeline bosqichi uchun model sozlamalari."""
-
-    name: str
-    model: str
-    fallbacks: tuple[str, ...] = ()
-    max_tokens: int = 1000
-    temperature: float = 0.0
-
-    @property
-    def chain(self) -> tuple[str, ...]:
-        """Asosiy model + fallbacklar — urinish tartibida."""
-        return (self.model, *self.fallbacks)
-
-
-@dataclass(frozen=True, slots=True)
-class Price:
-    """Model narxi, $/1M token."""
-
-    input: float
-    output: float
-
-    def cost_usd(self, prompt_tokens: int, completion_tokens: int) -> float:
-        return (prompt_tokens * self.input + completion_tokens * self.output) / 1_000_000
-
-
-@dataclass(frozen=True, slots=True)
-class Limits:
-    daily_cost_usd: float = 2.0
-    max_retries: int = 3
-    retry_base_delay: float = 2.0
-    request_timeout: int = 120
-
-
-@dataclass(frozen=True, slots=True)
-class ModelsConfig:
-    stages: dict[str, StageConfig]
-    pricing: dict[str, Price]
-    limits: Limits
-    language_test_candidates: tuple[str, ...] = ()
-
-    def stage(self, name: str) -> StageConfig:
-        try:
-            return self.stages[name]
-        except KeyError:
-            raise ConfigError(
-                f"models.yaml: '{name}' bosqichi topilmadi. "
-                f"Mavjud bosqichlar: {sorted(self.stages)}"
-            ) from None
-
-    def price(self, model: str) -> Price | None:
-        """Model narxi. Noma'lum model uchun None — xarajat 0 deb hisoblanadi."""
-        return self.pricing.get(model)
-
-
-def _parse_models(raw: dict[str, Any]) -> ModelsConfig:
-    stages: dict[str, StageConfig] = {}
-    for name, cfg in (raw.get("stages") or {}).items():
-        if "model" not in cfg:
-            raise ConfigError(f"models.yaml: '{name}' bosqichida 'model' maydoni yo'q")
-        stages[name] = StageConfig(
-            name=name,
-            model=cfg["model"],
-            fallbacks=tuple(cfg.get("fallbacks") or ()),
-            max_tokens=int(cfg.get("max_tokens", 1000)),
-            temperature=float(cfg.get("temperature", 0.0)),
-        )
-
-    pricing = {
-        model: Price(input=float(p["input"]), output=float(p["output"]))
-        for model, p in (raw.get("pricing") or {}).items()
-    }
-
-    limits_raw = raw.get("limits") or {}
-    limits = Limits(
-        daily_cost_usd=float(limits_raw.get("daily_cost_usd", 2.0)),
-        max_retries=int(limits_raw.get("max_retries", 3)),
-        retry_base_delay=float(limits_raw.get("retry_base_delay", 2.0)),
-        request_timeout=int(limits_raw.get("request_timeout", 120)),
-    )
-
-    return ModelsConfig(
-        stages=stages,
-        pricing=pricing,
-        limits=limits,
-        language_test_candidates=tuple(raw.get("language_test_candidates") or ()),
-    )
-
-
 # ─────────────────────────── Umumiy config ───────────────────────────
 
 
@@ -207,23 +88,21 @@ class Config:
     def enabled_sources(self) -> list[Source]:
         return [s for s in self.sources if s.enabled]
 
-    # Telegram / baza sozlamalari — maxfiy bo'lgani uchun env'dan
+    # Baza va log sozlamalari umumiy — core.config dan keladi
     @property
     def db_path(self) -> Path:
-        raw = env_str("DB_PATH", "data/bot.db")
-        path = Path(raw)
-        return path if path.is_absolute() else ROOT_DIR / path
+        return db_path()
 
     @property
     def log_level(self) -> str:
-        return env_str("LOG_LEVEL", "INFO").upper()
+        return log_level()
 
 
 @lru_cache(maxsize=1)
 def load_config() -> Config:
     """Konfiguratsiyani yuklash (jarayon davomida bir marta o'qiladi)."""
     return Config(
-        sources=_parse_sources(_read_yaml("sources.yaml")),
-        channel=_read_yaml("channel.yaml"),
-        models=_parse_models(_read_yaml("models.yaml")),
+        sources=_parse_sources(read_yaml("sources.yaml")),
+        channel=read_yaml("channel.yaml"),
+        models=load_models(),
     )

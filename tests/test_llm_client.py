@@ -5,8 +5,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from bot.config import Limits, ModelsConfig, Price, StageConfig
 from bot.llm.client import AllModelsFailed, CostLimitExceeded, LLMClient, LLMError
+from core.config import Limits, ModelsConfig, Price, StageConfig
 
 
 @pytest.fixture

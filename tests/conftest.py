@@ -17,10 +17,15 @@ def migrated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Pat
     """Har test uchun toza, migratsiya qilingan vaqtinchalik baza."""
     from bot import config as config_module
     from bot.db import database
+    from core import config as core_config
 
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DB_PATH", str(db_path))
+    # Ikkala kesh ham tozalanishi kerak: bot konfiguratsiyasi va
+    # models.yaml alohida keshlanadi, aks holda oldingi testning
+    # bazasi keyingisiga o'tib ketadi.
     config_module.load_config.cache_clear()
+    core_config.load_models.cache_clear()
 
     database.close_connection()
     database.migrate()
@@ -29,3 +34,4 @@ def migrated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Pat
 
     database.close_connection()
     config_module.load_config.cache_clear()
+    core_config.load_models.cache_clear()
