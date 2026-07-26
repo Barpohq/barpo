@@ -9,6 +9,7 @@ Buyruqlar:
     bot backfill-publishers — eski elementlarga nashriyot ma'lumotini qo'shish
     bot dedup               — dublikatlarni klasterlash
     bot rank                — klasterlarni LLM bilan baholash
+    bot enrich              — to'liq maqola matni bilan boyitish
     bot clusters list       — klasterlar ro'yxati
     bot clusters show <id>  — bitta klaster tafsiloti
     bot run                 — scheduler bilan doimiy rejim
@@ -94,6 +95,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rank_parser.add_argument(
         "--dry-run", action="store_true", help="Baholaydi va ko'rsatadi, bazaga yozmaydi"
+    )
+
+    # ── enrich ──
+    enrich_parser = sub.add_parser("enrich", help="To'liq maqola matni bilan boyitish")
+    enrich_parser.add_argument(
+        "--limit", type=int, default=20, help="Maksimal nechta klaster (default: 20)"
+    )
+    enrich_parser.add_argument(
+        "--no-search",
+        action="store_true",
+        help="Faqat fetch — web search ishlatilmaydi (Tavily krediti sarflanmaydi)",
     )
 
     # ── clusters ──
@@ -327,6 +339,36 @@ def cmd_rank(limit: int, batch_size: int, dry_run: bool) -> int:
     return 0
 
 
+def cmd_enrich(limit: int, no_search: bool) -> int:
+    from bot import db
+    from bot.enricher import run_enrich
+
+    db.check_schema()
+    run_id = db.start_run("enrich")
+    report = run_enrich(limit=limit, use_search=not no_search)
+    db.finish_run(
+        run_id,
+        items_in=report.processed,
+        items_out=report.enriched,
+        error_count=report.failed,
+        ok=not report.problems,
+        note=report.summary(),
+    )
+
+    print()
+    print(f"Ishlandi:   {report.processed}")
+    print(f"Boyitildi:  {report.enriched} ({report.by_fetch} fetch, {report.by_search} search)")
+    if report.failed:
+        print(f"Bo'lmadi:   {report.failed} — feed matni bilan qoladi")
+    if report.search_credits:
+        print(f"Qidiruv:    {report.search_credits} kredit")
+    if report.problems:
+        print("\nMuammolar:")
+        for problem in report.problems[:10]:
+            print(f"  - {problem}")
+    return 0
+
+
 def cmd_clusters_list(limit: int, status: str | None) -> int:
     from bot import db
 
@@ -387,6 +429,12 @@ def cmd_clusters_show(cluster_id: int) -> int:
         )
         if cluster["rank_reason"]:
             print(f"Izoh:      {cluster['rank_reason']}")
+    if cluster.get("enriched_at"):
+        text_len = len(cluster["enriched_text"] or "")
+        source = cluster["enrich_source"] or "—"
+        print(f"Boyitish:  {source}, {text_len} belgi")
+        if cluster["article_url"]:
+            print(f"Maqola:    {cluster['article_url']}")
     print(f"Yaratildi: {cluster['created_at']}")
     print()
     print("A'zolar:")
@@ -448,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_dedup(args.window_days)
             case "rank":
                 return cmd_rank(args.limit, args.batch_size, args.dry_run)
+            case "enrich":
+                return cmd_enrich(args.limit, args.no_search)
             case "clusters" if args.clusters_command == "list":
                 return cmd_clusters_list(args.limit, args.status)
             case "clusters" if args.clusters_command == "show":

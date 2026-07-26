@@ -164,6 +164,23 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX idx_runs_stage   ON runs (stage);
         """,
     ),
+    (
+        2,
+        "Enricher: klasterga boyitilgan matn va manba havolasi",
+        """
+        -- Enricher bosqichi natijalari.
+        -- Matn klasterga yoziladi (itemga emas): boyitish klaster darajasida
+        -- bir marta bajariladi, qaysi a'zodan olinganidan qat'i nazar.
+        ALTER TABLE clusters ADD COLUMN enriched_text   TEXT;
+        -- Maqolaning aniq URL'i. Agregatordan kelgan klasterda item.url
+        -- faqat redirect havolasi bo'ladi — post shu ustunga tayanadi.
+        ALTER TABLE clusters ADD COLUMN article_url     TEXT;
+        ALTER TABLE clusters ADD COLUMN article_image   TEXT;
+        -- fetch | search | none — matn qayerdan olindi (debug va statistika)
+        ALTER TABLE clusters ADD COLUMN enrich_source   TEXT;
+        ALTER TABLE clusters ADD COLUMN enriched_at     TEXT;
+        """,
+    ),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS) if MIGRATIONS else 0

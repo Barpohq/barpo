@@ -40,10 +40,11 @@ uv run bot db migrate
 # 4. LLM ulanishini tekshirish
 uv run bot llm test
 
-# 5. Bir marta yig'ish + dedup + baholash
+# 5. Bir marta yig'ish + dedup + baholash + boyitish
 uv run bot collect
 uv run bot dedup
 uv run bot rank
+uv run bot enrich
 
 # 6. Klasterlarni ko'rish
 uv run bot clusters list
@@ -93,6 +94,30 @@ Collector'ga bu qo'shilishidan oldin yig'ilgan elementlar uchun:
 ```bash
 uv run bot backfill-publishers
 ```
+
+## Boyitish (Enricher)
+
+Feed'lardagi matn qisqa (o'rtacha ~130 belgi — sarlavha va anons), Writer
+uchun yetarli emas. Enricher har bir baholangan klasterga to'liq maqola
+matnini topadi:
+
+| Holat | Usul |
+|---|---|
+| Aniq maqola URL'i bor | Sahifa ochiladi, HTML'dan matn ajratiladi |
+| Faqat nashriyot domeni (agregator) | Sarlavha bo'yicha web search |
+| Sahifa 403 beradi (OpenAI kabi) | Search'ga fallback |
+
+Web search uchun `TAVILY_API_KEY` kerak (oyiga 1000 so'rov bepul —
+[tavily.com](https://tavily.com)). Kalitsiz ham ishlaydi, faqat fetch
+bilan:
+
+```bash
+uv run bot enrich --limit 20     # fetch + search
+uv run bot enrich --no-search    # faqat fetch, kredit sarflanmaydi
+```
+
+Boyitib bo'lmagan klaster ham `enriched` deb belgilanadi — har siklda qayta
+urinilmasligi uchun. U Writer'ga feed'dagi qisqa matn bilan boradi.
 
 Maxfiy ma'lumotlar (API kalitlar) faqat `.env` faylida — YAML'ga yozilmaydi.
 
