@@ -85,3 +85,66 @@ class TestVersionsConflict:
             "Claude Opus 5 vs Claude Opus 4.7 comparison",
             "Claude Opus 5 benchmarks",
         )
+
+
+class TestExtractModelIds:
+    """To'liq model identifikatori — Claude variantlari alohida."""
+
+    def test_claude_variant_kept(self) -> None:
+        from bot.dedup.versions import extract_model_ids
+
+        assert extract_model_ids("Introducing Claude Opus 5") == {"claude-opus-5"}
+
+    def test_bare_variant_normalized(self) -> None:
+        """'Opus 5' ham 'Claude Opus 5' bilan bir xil id berishi kerak."""
+        from bot.dedup.versions import extract_model_ids
+
+        assert extract_model_ids("Anthropic releases Opus 5") == {"claude-opus-5"}
+
+    def test_siblings_are_distinct(self) -> None:
+        from bot.dedup.versions import extract_model_ids
+
+        ids = extract_model_ids("Claude Sonnet 5 vs Claude Opus 5")
+        assert ids == {"claude-opus-5", "claude-sonnet-5"}
+
+    def test_no_model_returns_empty(self) -> None:
+        from bot.dedup.versions import extract_model_ids
+
+        assert extract_model_ids("AI funding round news") == set()
+
+
+class TestModelsConflict:
+    def test_siblings_conflict(self) -> None:
+        """Opus 5 va Sonnet 5 — turli relizlar."""
+        from bot.dedup.versions import models_conflict
+
+        assert models_conflict("Claude Opus 5 released", "Introducing Claude Sonnet 5")
+
+    def test_same_model_no_conflict(self) -> None:
+        from bot.dedup.versions import models_conflict
+
+        assert not models_conflict(
+            "Anthropic launches Claude Opus 5", "Introducing Claude Opus 5"
+        )
+
+    def test_bare_variant_matches_full_name(self) -> None:
+        from bot.dedup.versions import models_conflict
+
+        assert not models_conflict("Claude Opus 5", "Anthropic releases Opus 5")
+
+    def test_no_model_no_conflict(self) -> None:
+        """Model topilmasa konflikt yo'q — boshqa signal hal qiladi."""
+        from bot.dedup.versions import models_conflict
+
+        assert not models_conflict("AI funding news", "Another AI story")
+
+    def test_dedup_still_treats_siblings_as_same_product(self) -> None:
+        """versions_conflict dedup uchun eski xatti-harakatini saqlaydi.
+
+        Dedup uchun Opus/Sonnet bir mahsulot (Claude oilasi) — bu ataylab
+        shunday. Enricher esa aniqroq ajratish uchun models_conflict
+        ishlatadi.
+        """
+        from bot.dedup.versions import versions_conflict
+
+        assert not versions_conflict("Claude Opus 5", "Claude Sonnet 5")

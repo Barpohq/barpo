@@ -29,6 +29,9 @@ USER_AGENT = (
 # Sahifadan olinadigan maksimal matn (belgilarda) — LLM konteksti uchun
 MAX_TEXT_LENGTH = 6000
 
+# Shundan qisqa matn Writer uchun foydasiz — boyitilmagan deb qaraladi
+MIN_USEFUL_TEXT = 200
+
 # Matn bo'lmagan bloklar — butunlay olib tashlanadi
 _NOISE_BLOCKS = re.compile(
     r"<(script|style|noscript|svg|head|nav|header|footer|aside|form|iframe)\b[^>]*>.*?</\1>",
@@ -56,7 +59,7 @@ class Article:
     @property
     def is_useful(self) -> bool:
         """Matn Writer uchun foydali uzunlikdami."""
-        return len(self.text) >= 200
+        return len(self.text) >= MIN_USEFUL_TEXT
 
 
 def _meta_content(html: str, *keys: str) -> str:
@@ -119,6 +122,43 @@ def extract_text(html: str) -> str:
         unique.append(para)
 
     return "\n\n".join(unique)[:MAX_TEXT_LENGTH]
+
+
+# Markdown navigatsiya qatorlari: [Skip to content](#main), menyu havolalari
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+# Markdown sarlavha belgilari va ro'yxat markerlari qator boshida
+_MD_DECORATION = re.compile(r"^\s*(#{1,6}\s+|[*+-]\s+|>\s+)", re.MULTILINE)
+
+
+def clean_markdown(text: str) -> str:
+    """Tavily'ning markdown matnidan navigatsiya shovqinini olib tashlash.
+
+    Search yo'li bilan kelgan matn sahifaning to'liq markdown nusxasi —
+    ichida menyu, "Skip to content", havolalar ro'yxati bo'ladi. Fetch
+    yo'lida bu HTML darajasida tozalanadi; bu yerda markdown darajasida.
+    """
+    if not text:
+        return ""
+
+    # Havolalarni matniga almashtiramiz: [Claude](https://x) → Claude
+    without_links = _MD_LINK.sub(r"\1", text)
+    without_decoration = _MD_DECORATION.sub("", without_links)
+
+    paragraphs: list[str] = []
+    seen: set[str] = set()
+    for chunk in without_decoration.split("\n"):
+        line = _WHITESPACE.sub(" ", chunk).strip()
+        # Gap belgisi: yetarli uzun va ichida bo'shliq bor (extract_text
+        # bilan bir xil mezon — menyu elementlari qisqa bo'ladi)
+        if len(line) < 80 or " " not in line:
+            continue
+        key = line[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        paragraphs.append(line)
+
+    return "\n\n".join(paragraphs)[:MAX_TEXT_LENGTH]
 
 
 def fetch_article(url: str, *, timeout: float = 20.0) -> Article:

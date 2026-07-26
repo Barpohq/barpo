@@ -8,9 +8,17 @@ from typing import Any
 import httpx
 import pytest
 
-from bot.enricher.enrich import _domain_of, _needs_search, _pick_search_result
+from bot.enricher.enrich import _needs_search, _pick_search_result, _title_matches
 from bot.enricher.fetcher import MAX_TEXT_LENGTH, _meta_content, extract_text
 from bot.enricher.search import SearchResult
+
+# Qidiruv natijasi matni — tozalashdan o'tishi uchun yetarlicha uzun
+# (clean_markdown 80+ belgili qatorlarni oladi, natija 200+ bo'lishi kerak)
+SEARCH_TEXT = (
+    "Anthropic kompaniyasi yangi modelni rasman e'lon qildi va u avvalgi "
+    "avlodga qaraganda sezilarli darajada tezroq hamda arzonroq ishlaydi. "
+    "Reliz sohada katta qiziqish uyg'otdi va dasturchilar uni sinab ko'rmoqda."
+)
 
 
 class TestExtractText:
@@ -99,6 +107,69 @@ class TestExtractText:
         assert "G'oyalar" in text
 
 
+class TestCleanMarkdown:
+    """Tavily'ning markdown matnini tozalash.
+
+    Search yo'li bilan kelgan matn sahifaning to'liq nusxasi — menyu,
+    "Skip to content" va havolalar ro'yxati bilan.
+    """
+
+    def test_strips_navigation_links(self) -> None:
+        from bot.enricher.fetcher import clean_markdown
+
+        raw = (
+            "[Skip to content](#main)   [Artificial Intelligence](https://gizmodo.com/tech/ai)\n"
+            "# Anthropic Releases New Claude Model\n"
+            "Anthropic bugun Claude Opus 5 modelini e'lon qildi va u avvalgi "
+            "avlodga qaraganda sezilarli darajada tezroq ishlaydi."
+        )
+        text = clean_markdown(raw)
+
+        assert "Skip to content" not in text
+        assert "Claude Opus 5 modelini" in text
+
+    def test_unwraps_link_text(self) -> None:
+        """Havola matni saqlanadi, URL olib tashlanadi."""
+        from bot.enricher.fetcher import clean_markdown
+
+        raw = (
+            "Kompaniya [Claude Opus 5](https://anthropic.com/news) modelini taqdim etdi "
+            "va bu reliz sohada katta qiziqish uyg'otdi, chunki narx ikki barobar past."
+        )
+        text = clean_markdown(raw)
+
+        assert "Claude Opus 5" in text
+        assert "https://anthropic.com" not in text
+
+    def test_drops_short_menu_lines(self) -> None:
+        from bot.enricher.fetcher import clean_markdown
+
+        raw = "* Apps\n* AI\n* Claude\n* Guides\n"
+        assert clean_markdown(raw) == ""
+
+    def test_deduplicates(self) -> None:
+        from bot.enricher.fetcher import clean_markdown
+
+        para = (
+            "Anthropic yangi modelni e'lon qildi va u avvalgi avlodga qaraganda "
+            "ancha tezroq hamda arzonroq ishlaydi deb ta'kidlanmoqda.\n"
+        )
+        text = clean_markdown(para * 3)
+
+        assert text.count("Anthropic yangi modelni") == 1
+
+    def test_respects_max_length(self) -> None:
+        from bot.enricher.fetcher import MAX_TEXT_LENGTH, clean_markdown
+
+        raw = ("Juda uzun matn qatori bo'lib yetarlicha uzunlikka ega ekanligi aniq. " * 300)
+        assert len(clean_markdown(raw)) <= MAX_TEXT_LENGTH
+
+    def test_empty(self) -> None:
+        from bot.enricher.fetcher import clean_markdown
+
+        assert clean_markdown("") == ""
+
+
 class TestMetaContent:
     def test_reads_og_title(self) -> None:
         html = '<meta property="og:title" content="Claude Opus 5 chiqdi">'
@@ -128,24 +199,40 @@ class TestNeedsSearch:
         assert not _needs_search({})
 
 
-class TestDomainOf:
-    @pytest.mark.parametrize(
-        ("url", "expected"),
-        [
-            ("https://www.anthropic.com/news/x", "anthropic.com"),
-            ("https://siliconangle.com", "siliconangle.com"),
-            ("https://blog.google/technology/ai/", "blog.google"),
-            ("", ""),
-        ],
-    )
-    def test_domain_extraction(self, url: str, expected: str) -> None:
-        assert _domain_of(url) == expected
+class TestTitleMatches:
+    """Qidiruv natijasi haqiqatan shu yangilik haqidami."""
+
+    def test_same_article(self) -> None:
+        assert _title_matches(
+            "Anthropic launches Claude Opus 5 with efficiency improvements",
+            "Anthropic launches Claude Opus 5 with efficiency improvements - SiliconANGLE",
+        )
+
+    def test_reworded_same_article(self) -> None:
+        assert _title_matches("Claude Opus 5", "Introducing Claude Opus 5")
+
+    def test_different_topic_rejected(self) -> None:
+        assert not _title_matches(
+            "GPT-5.6: Frontier intelligence that scales with your ambition",
+            "David Velez and Robin Vince join the boards",
+        )
+
+    def test_sibling_model_rejected(self) -> None:
+        """Real holat: 'Claude Opus 5' so'roviga Sonnet 5 sahifasi kelgan.
+
+        Tavily uni 0.604 ball bergan — ballga tayanib qolsak, Opus posti
+        Sonnet matni bilan yozilardi.
+        """
+        assert not _title_matches("Claude Opus 5", "Introducing Claude Sonnet 5 - Anthropic")
+
+    def test_older_version_rejected(self) -> None:
+        assert not _title_matches("Claude Opus 5", "Claude Opus 4.7 benchmarks and how to try it")
 
 
 class TestPickSearchResult:
     def _result(self, **kw: Any) -> SearchResult:
         base = {
-            "title": "Claude Opus 5",
+            "title": "Introducing Claude Opus 5",
             "url": "https://www.anthropic.com/news/claude-opus-5",
             "content": "Qisqacha mazmun",
             "raw_content": "To'liq maqola matni",
@@ -153,9 +240,12 @@ class TestPickSearchResult:
         }
         return SearchResult(**{**base, **kw})
 
+    def _cluster(self, title: str = "Claude Opus 5") -> dict[str, Any]:
+        return {"id": 1, "title": title}
+
     def test_picks_first_good_result(self) -> None:
         results = [self._result(score=0.9), self._result(score=0.8)]
-        chosen = _pick_search_result(results, {})
+        chosen = _pick_search_result(results, self._cluster())
 
         assert chosen is not None
         assert chosen.score == 0.9
@@ -163,7 +253,7 @@ class TestPickSearchResult:
     def test_skips_low_score(self) -> None:
         """Past balli natija boshqa maqola bo'lishi mumkin."""
         results = [self._result(score=0.2), self._result(score=0.7)]
-        chosen = _pick_search_result(results, {})
+        chosen = _pick_search_result(results, self._cluster())
 
         assert chosen is not None
         assert chosen.score == 0.7
@@ -173,16 +263,38 @@ class TestPickSearchResult:
             self._result(score=0.9, content="", raw_content=""),
             self._result(score=0.6),
         ]
-        chosen = _pick_search_result(results, {})
+        chosen = _pick_search_result(results, self._cluster())
 
         assert chosen is not None
         assert chosen.score == 0.6
 
+    def test_skips_wrong_article_despite_high_score(self) -> None:
+        """Yuqori ball ham noto'g'ri maqolani o'tkazmasligi kerak."""
+        results = [
+            self._result(score=0.95, title="Introducing Claude Sonnet 5 - Anthropic"),
+            self._result(score=0.6, title="Introducing Claude Opus 5"),
+        ]
+        chosen = _pick_search_result(results, self._cluster("Claude Opus 5"))
+
+        assert chosen is not None
+        assert chosen.title == "Introducing Claude Opus 5"
+
+    def test_aggregator_suffix_ignored_in_comparison(self) -> None:
+        """Klaster sarlavhasidagi ' - Nashriyot' taqqoslashga xalaqit bermasin."""
+        results = [self._result(title="Anthropic launches Claude Opus 5")]
+        cluster = self._cluster("Anthropic launches Claude Opus 5 - SiliconANGLE")
+
+        assert _pick_search_result(results, cluster) is not None
+
     def test_all_bad_returns_none(self) -> None:
-        assert _pick_search_result([self._result(score=0.1)], {}) is None
+        assert _pick_search_result([self._result(score=0.1)], self._cluster()) is None
 
     def test_empty_list(self) -> None:
-        assert _pick_search_result([], {}) is None
+        assert _pick_search_result([], self._cluster()) is None
+
+    def test_no_cluster_title_skips_check(self) -> None:
+        """Sarlavha yo'q bo'lsa faqat ballga tayanamiz."""
+        assert _pick_search_result([self._result()], {"id": 1, "title": ""}) is not None
 
 
 class TestSearchResultText:
@@ -347,16 +459,17 @@ class TestEnrichFlow:
 
         cluster_id = self._seed(
             "https://news.google.com/rss/articles/CBMiabc",
+            title="Anthropic launches Claude Opus 5 - SiliconANGLE",
             extra=json.dumps({"publisher_url": "https://siliconangle.com"}),
         )
         self._patch_search(
             monkeypatch,
             [
                 SearchResult(
-                    title="Topildi",
+                    title="Anthropic launches Claude Opus 5",
                     url="https://siliconangle.com/2026/07/26/opus-5",
                     content="qisqa",
-                    raw_content="Qidiruvdan kelgan to'liq matn",
+                    raw_content=SEARCH_TEXT,
                     score=0.9,
                 )
             ],
@@ -371,23 +484,23 @@ class TestEnrichFlow:
         )
         assert row["enrich_source"] == "search"
         assert row["article_url"] == "https://siliconangle.com/2026/07/26/opus-5"
-        assert "Qidiruvdan kelgan" in row["enriched_text"]
+        assert "Anthropic kompaniyasi" in row["enriched_text"]
 
     def test_fetch_failure_falls_back_to_search(self, migrated_db, monkeypatch) -> None:
         """403 bergan sayt (OpenAI kabi) qidiruv orqali boyitiladi."""
         from bot.db import query_one
         from bot.enricher import run_enrich
 
-        cluster_id = self._seed("https://openai.com/index/gpt-5-6")
+        cluster_id = self._seed("https://openai.com/index/gpt-5-6", title="GPT-5.6 released")
         self._patch_fetch(monkeypatch, None)  # FetchError
         self._patch_search(
             monkeypatch,
             [
                 SearchResult(
-                    title="GPT-5.6",
+                    title="GPT-5.6 released",
                     url="https://openai.com/index/gpt-5-6",
                     content="",
-                    raw_content="Qidiruv topgan matn",
+                    raw_content=SEARCH_TEXT,
                     score=0.9,
                 )
             ],
@@ -399,6 +512,40 @@ class TestEnrichFlow:
         assert report.by_fetch == 0
         row = query_one("SELECT enrich_source FROM clusters WHERE id = ?", (cluster_id,))
         assert row["enrich_source"] == "search"
+
+    def test_wrong_article_is_not_saved(self, migrated_db, monkeypatch) -> None:
+        """Qidiruv boshqa maqolani qaytarsa — boyitmagan yaxshiroq.
+
+        Noto'g'ri matn bilan post yozilsa kanalda xato yangilik chiqadi.
+        """
+        from bot.db import query_one
+        from bot.enricher import run_enrich
+
+        cluster_id = self._seed(
+            "https://news.google.com/rss/articles/CBMiabc", title="Claude Opus 5"
+        )
+        self._patch_search(
+            monkeypatch,
+            [
+                SearchResult(
+                    title="Introducing Claude Sonnet 5 - Anthropic",
+                    url="https://www.anthropic.com/news/claude-sonnet-5",
+                    content="",
+                    raw_content=SEARCH_TEXT,
+                    score=0.95,
+                )
+            ],
+        )
+
+        report = run_enrich()
+
+        assert report.failed == 1
+        assert report.by_search == 0
+        row = query_one(
+            "SELECT enriched_text, enrich_source FROM clusters WHERE id = ?", (cluster_id,)
+        )
+        assert row["enrich_source"] == "none"
+        assert row["enriched_text"] is None
 
     def test_short_text_is_not_useful(self, migrated_db, monkeypatch) -> None:
         """Sahifadan qisqa matn chiqsa boyitilmagan deb hisoblanadi."""
@@ -477,16 +624,17 @@ class TestEnrichFlow:
 
         self._seed(
             "https://news.google.com/rss/articles/CBMiabc",
+            title="Anthropic launches Claude Opus 5 - SiliconANGLE",
             extra=json.dumps({"publisher_url": "https://siliconangle.com"}),
         )
         self._patch_search(
             monkeypatch,
             [
                 SearchResult(
-                    title="T",
+                    title="Anthropic launches Claude Opus 5",
                     url="https://siliconangle.com/2026/07/26/opus-5",
                     content="",
-                    raw_content="To'liq matn qidiruvdan",
+                    raw_content=SEARCH_TEXT,
                     score=0.9,
                 )
             ],
@@ -498,7 +646,7 @@ class TestEnrichFlow:
         assert len(queue) == 1
         # Havola aniq maqolaga, agregatorga emas
         assert queue[0]["link"] == "https://siliconangle.com/2026/07/26/opus-5"
-        assert queue[0]["text"] == "To'liq matn qidiruvdan"
+        assert "Anthropic kompaniyasi" in queue[0]["text"]
 
     def test_queue_falls_back_to_feed_text(self, migrated_db, monkeypatch) -> None:
         """Boyitilmagan klaster ham navbatga tushadi — feed matni bilan."""

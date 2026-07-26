@@ -19,11 +19,13 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+
+from rapidfuzz import fuzz
 
 from bot.db import execute, log_error, query, utc_now
 from bot.dedup import publisher_url
-from bot.enricher.fetcher import FetchError, fetch_article
+from bot.dedup.versions import extract_model_ids, models_conflict, versions_conflict
+from bot.enricher.fetcher import MIN_USEFUL_TEXT, FetchError, clean_markdown, fetch_article
 from bot.enricher.search import (
     SearchClient,
     SearchError,
@@ -40,6 +42,13 @@ AGGREGATOR_MARKER = "news.google.com"
 
 # Qidiruv natijasi shu balldan past bo'lsa ishonchsiz deb qaraladi
 MIN_SEARCH_SCORE = 0.5
+
+# Sarlavhalar umuman aloqasiz bo'lsa rad etiladi. Chegara past qo'yilgan:
+# bir voqea haqidagi qayta hikoyalar butunlay boshqacha yoziladi
+# ("launches Claude Opus 5" ↔ "releases new model, Opus 5" = 53 ball),
+# shuning uchun sarlavha o'xshashligi faqat qo'pol filtr bo'la oladi.
+# Aniq ajratishni model identifikatori qiladi (_model_conflict).
+MIN_TITLE_MATCH = 45.0
 
 
 @dataclass(slots=True)
@@ -94,15 +103,6 @@ def _needs_search(cluster: dict[str, Any]) -> bool:
     return AGGREGATOR_MARKER in url
 
 
-def _domain_of(url: str) -> str:
-    """URL'dan domen (qidiruvni nashriyot bilan cheklash uchun)."""
-    try:
-        netloc = urlsplit(url).netloc.lower()
-    except ValueError:
-        return ""
-    return netloc.removeprefix("www.")
-
-
 # ─────────────────────────── Boyitish usullari ───────────────────────────
 
 
@@ -122,18 +122,59 @@ def _enrich_by_fetch(cluster: dict[str, Any]) -> tuple[str, str, str] | None:
     return article.text, article.url, article.image_url
 
 
+def _title_matches(cluster_title: str, result_title: str) -> bool:
+    """Natija sarlavhasi klasterning yangiligiga tegishlimi.
+
+    Sarlavha o'xshashligining o'zi bu vazifani hal qilmaydi — 2026-07-26
+    kalibrlashida to'g'ri juftliklar 50-64 ball, noto'g'rilari 72-76 ball
+    olgan, ya'ni ular ustma-ust tushadi. Sabab: bir voqea haqidagi qayta
+    hikoyalar boshqacha yoziladi, "Opus 5" va "Sonnet 5" esa leksik
+    jihatdan deyarli bir xil.
+
+    Shuning uchun asosiy signal — model identifikatori:
+      1. Model konflikti — Opus 5 o'rniga Sonnet 5 kelishini rad etadi
+      2. Versiya konflikti — Opus 5 o'rniga Opus 4.7 kelishini rad etadi
+      3. Fuzzy o'xshashlik — modeli yo'q yangiliklar uchun qo'pol filtr
+    """
+    if models_conflict(cluster_title, result_title):
+        return False
+    if versions_conflict(cluster_title, result_title):
+        return False
+
+    # Ikkalasida ham bir xil model — bu yetarli dalil, sarlavha qanday
+    # yozilganidan qat'i nazar ("GPT-5.6: Frontier intelligence" ↔
+    # "GPT-5.6 is here" atigi 39 ball oladi, lekin bir voqea haqida).
+    if extract_model_ids(cluster_title) & extract_model_ids(result_title):
+        return True
+
+    return fuzz.token_set_ratio(cluster_title, result_title) >= MIN_TITLE_MATCH
+
+
 def _pick_search_result(
     results: list[SearchResult], cluster: dict[str, Any]
 ) -> SearchResult | None:
     """Qidiruv natijalaridan eng mosini tanlash.
 
-    Tavily natijalarni reyting bo'yicha qaytaradi, lekin past ballilar
-    boshqa maqola bo'lishi mumkin — chegaradan pastini olmaymiz.
+    Tavily balli o'zi yetarli emas (yuqoridagi MIN_TITLE_MATCH izohiga
+    qarang) — sarlavha mosligini ham talab qilamiz. Noto'g'ri maqola
+    matni bilan post yozilgandan ko'ra boyitmasdan qoldirgan yaxshiroq.
     """
+    cluster_title = str(cluster.get("title") or "")
+    # Agregator sarlavhasidagi " - Nashriyot" qo'shimchasi taqqoslashga xalaqit
+    if " - " in cluster_title:
+        cluster_title = cluster_title.rsplit(" - ", 1)[0]
+
     for result in results:
         if result.score < MIN_SEARCH_SCORE:
             continue
         if not result.best_text.strip():
+            continue
+        if cluster_title and not _title_matches(cluster_title, result.title):
+            log.debug(
+                "Klaster %s: natija rad etildi (sarlavha mos emas): %r",
+                cluster.get("id"),
+                result.title[:60],
+            )
             continue
         return result
     return None
@@ -147,24 +188,24 @@ def _enrich_by_search(
     # Google News sarlavhasi " - Nashriyot" bilan tugaydi — qidiruvga xalaqit
     query_text = title.rsplit(" - ", 1)[0] if " - " in title else title
 
-    # Nashriyot ma'lum bo'lsa qidiruvni shu domen bilan cheklaymiz —
-    # aynan o'sha maqola topiladi, boshqa nashrning qayta hikoyasi emas
-    publisher_domain = _domain_of(publisher_url(cluster))
-    include = [publisher_domain] if publisher_domain else None
-
-    results = client.search(query_text, include_domains=include)
+    # Domen cheklovisiz qidiramiz. `include_domains` bilan Tavily o'sha
+    # domendagi eng yaqin maqolani qaytaradi — mavzu boshqa bo'lsa ham
+    # (sinovda "Claude Opus 5" so'roviga Sonnet 5 sahifasi kelgan).
+    # To'g'ri maqolani sarlavha mosligi ajratadi, domen emas.
+    results = client.search(query_text)
     chosen = _pick_search_result(results, cluster)
-
-    # Domen bilan topilmasa — cheklovsiz qayta urinish
-    if chosen is None and include:
-        log.debug("Klaster %s: %s da topilmadi, keng qidiruv", cluster["id"], publisher_domain)
-        results = client.search(query_text)
-        chosen = _pick_search_result(results, cluster)
 
     if chosen is None:
         return None
 
-    return chosen.best_text, chosen.url, ""
+    # Tavily sahifaning to'liq markdown nusxasini beradi — navigatsiya va
+    # havolalar ro'yxati bilan. Fetch yo'lidagi kabi tozalash kerak.
+    text = clean_markdown(chosen.best_text)
+    if len(text) < MIN_USEFUL_TEXT:
+        log.debug("Klaster %s: qidiruv matni tozalashdan keyin qisqa", cluster["id"])
+        return None
+
+    return text, chosen.url, ""
 
 
 # ─────────────────────────── Bazaga yozish ───────────────────────────

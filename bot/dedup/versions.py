@@ -56,6 +56,58 @@ def extract_versions(text: str) -> set[tuple[str, str]]:
     return found
 
 
+def extract_model_ids(text: str) -> set[str]:
+    """Matndagi to'liq model identifikatorlari: variant + versiya.
+
+    `extract_versions` dan farqi: bu yerda Claude oilasining variantlari
+    (Opus / Sonnet / Haiku) alohida saqlanadi. Dedup uchun ular bir xil
+    mahsulot, lekin "qaysi maqola aynan shu reliz haqida?" degan savolda
+    Opus 5 va Sonnet 5 — butunlay boshqa yangilik.
+
+    >>> sorted(extract_model_ids("Introducing Claude Opus 5"))
+    ['claude-opus-5']
+    >>> sorted(extract_model_ids("Claude Sonnet 5 vs Claude Opus 5"))
+    ['claude-opus-5', 'claude-sonnet-5']
+    >>> sorted(extract_model_ids("GPT-5.6 Sol preview"))
+    ['gpt-5.6']
+    """
+    found: set[str] = set()
+    for match in _VERSION_PATTERN.finditer(text):
+        product = match.group("product").lower()
+        qualifier = (match.group("qualifier") or "").lower()
+        version = match.group("version")
+
+        # "Claude Opus 5" — product=claude, qualifier=opus
+        # "Opus 5"       — product=opus,   qualifier=None
+        if product in {"opus", "sonnet", "haiku"}:
+            qualifier = product
+            product = "claude"
+
+        parts = [product, qualifier, version] if qualifier else [product, version]
+        found.add("-".join(parts))
+    return found
+
+
+def models_conflict(text_a: str, text_b: str) -> bool:
+    """Ikki matn turli model variantlari haqidami?
+
+    True — masalan biri Opus 5, ikkinchisi Sonnet 5 haqida.
+    False — model topilmadi, yoki hech bo'lmasa bittasi umumiy.
+
+    >>> models_conflict("Claude Opus 5 released", "Introducing Claude Sonnet 5")
+    True
+    >>> models_conflict("Anthropic launches Claude Opus 5", "Introducing Claude Opus 5")
+    False
+    >>> models_conflict("AI funding news", "Another AI story")
+    False
+    """
+    ids_a = extract_model_ids(text_a)
+    ids_b = extract_model_ids(text_b)
+    if not ids_a or not ids_b:
+        return False
+    return not (ids_a & ids_b)
+
+
 def versions_conflict(text_a: str, text_b: str) -> bool:
     """Ikki matnda bir mahsulotning turli versiyalari bormi?
 
