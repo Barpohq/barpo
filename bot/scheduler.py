@@ -20,13 +20,17 @@ from datetime import UTC, datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from bot.db import check_schema, log_error, query_one
+from bot.db import check_schema, log_error
 from bot.logging_setup import get_logger
 
 log = get_logger(__name__)
 
 # Har necha soatda pipeline ishga tushadi
 DEFAULT_INTERVAL_HOURS = 3
+
+# Kunlik hisobot vaqti (UTC). 4:00 UTC = 9:00 Toshkent (UTC+5) —
+# ish kuni boshida kelsin.
+REPORT_HOUR_UTC = 4
 
 
 def run_pipeline() -> None:
@@ -104,29 +108,39 @@ def run_pipeline() -> None:
     elapsed = (datetime.now(UTC) - started).total_seconds()
     log.info("─── Sikl tugadi (%.1f soniya) ───", elapsed)
 
+    # Sikl oxirida holatni tekshiramiz — muammo bo'lsa darhol alert.
+    # Kunlik hisobotni kutish uzoq: manba buzilsa 24 soat bilinmay qoladi.
+    health_check()
+
+
+def daily_report() -> None:
+    """Kunlik hisobot — Telegram'ga yuboriladi.
+
+    Hammasi joyida bo'lsa ham keladi: bot ishlayotganini ko'rish va
+    tendensiyani kuzatish uchun (04-xavflar, X4).
+    """
+    try:
+        from bot.health.notify import send_daily_report
+
+        send_daily_report()
+    except Exception as exc:  # noqa: BLE001 — hisobot xatosi botni to'xtatmasin
+        log.exception("Kunlik hisobot yuborilmadi")
+        log_error("scheduler.report", str(exc), traceback=traceback.format_exc())
+
 
 def health_check() -> None:
-    """Kunlik holat tekshiruvi.
+    """Muammo bo'lsa darhol alert yuborish.
 
-    24 soat davomida hech narsa yig'ilmasa — nimadir buzilgan (04-xavflar X4).
-    Faza 2'da bu Telegram'ga alert yuboradi.
+    Pipeline har siklidan keyin chaqiriladi. Alert cooldown bilan —
+    bir xil muammo haqida har safar xabar kelmaydi.
     """
-    row = query_one(
-        "SELECT COUNT(*) AS c FROM items WHERE fetched_at >= datetime('now', '-24 hours')"
-    )
-    collected = row["c"] if row else 0
+    try:
+        from bot.health.notify import send_alert_if_needed
 
-    errors_row = query_one(
-        "SELECT COUNT(*) AS c FROM errors WHERE created_at >= datetime('now', '-24 hours')"
-    )
-    errors = errors_row["c"] if errors_row else 0
-
-    if collected == 0:
-        message = "24 soat davomida bitta ham yangilik yig'ilmadi — manbalarni tekshiring"
-        log.error("SOG'LIQ TEKSHIRUVI: %s", message)
-        log_error("scheduler.health", message)
-    else:
-        log.info("Sog'liq tekshiruvi: 24 soatda %d element, %d xato", collected, errors)
+        send_alert_if_needed()
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Sog'liq tekshiruvida xato")
+        log_error("scheduler.health", str(exc), traceback=traceback.format_exc())
 
 
 def run_forever(interval_hours: int = DEFAULT_INTERVAL_HOURS) -> int:
@@ -151,10 +165,10 @@ def run_forever(interval_hours: int = DEFAULT_INTERVAL_HOURS) -> int:
         name=f"Pipeline (har {interval_hours} soatda)",
     )
     scheduler.add_job(
-        health_check,
-        CronTrigger(hour=9, minute=0),
-        id="health",
-        name="Kunlik sog'liq tekshiruvi",
+        daily_report,
+        CronTrigger(hour=REPORT_HOUR_UTC, minute=0),
+        id="report",
+        name=f"Kunlik hisobot ({REPORT_HOUR_UTC}:00 UTC)",
     )
 
     stop_event = threading.Event()

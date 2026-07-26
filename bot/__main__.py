@@ -16,6 +16,8 @@ Buyruqlar:
     bot publish             — draftlarni tasdiqqa yuborish + navbatni chiqarish
     bot publish-now <id>    — bitta postni darhol kanalga chiqarish
     bot telegram check      — bot va kanal sozlamalarini tekshirish
+    bot health              — hozirgi holat va kunlik hisobot
+    bot stats               — umumiy statistika, avtonom rejimga tayyorlik
     bot clusters list       — klasterlar ro'yxati
     bot clusters show <id>  — bitta klaster tafsiloti
     bot run                 — scheduler bilan doimiy rejim
@@ -155,6 +157,20 @@ def build_parser() -> argparse.ArgumentParser:
     tg_parser = sub.add_parser("telegram", help="Telegram sozlamalari")
     tg_sub = tg_parser.add_subparsers(dest="telegram_command", required=True)
     tg_sub.add_parser("check", help="Bot, kanal va admin chatni tekshirish")
+
+    # ── health / stats ──
+    health_parser = sub.add_parser("health", help="Bot holati va kunlik hisobot")
+    health_parser.add_argument(
+        "--hours", type=int, default=24, help="Necha soatlik (default: 24)"
+    )
+    health_parser.add_argument(
+        "--send", action="store_true", help="Hisobotni Telegram'ga yuborish"
+    )
+    health_parser.add_argument(
+        "--sources", action="store_true", help="Manbalar sog'ligini ko'rsatish"
+    )
+
+    sub.add_parser("stats", help="Umumiy statistika va avtonom rejimga tayyorlik")
 
     # ── clusters ──
     cl_parser = sub.add_parser("clusters", help="Klasterlarni ko'rish")
@@ -600,6 +616,47 @@ def cmd_telegram_check() -> int:
     return 0 if result["channel_ok"] and result["admin_ok"] else 1
 
 
+def _strip_html(text: str) -> str:
+    """Telegram HTML'ni terminal uchun oddiy matnga aylantirish."""
+    import re
+
+    return re.sub(r"</?[a-z]+>", "", text)
+
+
+def cmd_health(hours: int, send: bool, sources: bool) -> int:
+    from bot import db
+    from bot.health import collect_metrics, format_daily_report, format_sources
+
+    db.check_schema()
+
+    if sources:
+        print(_strip_html(format_sources()))
+        return 0
+
+    metrics = collect_metrics(hours)
+    print(_strip_html(format_daily_report(metrics)))
+
+    if send:
+        from bot.health.notify import send_daily_report
+
+        print()
+        if send_daily_report():
+            print("→ Telegram'ga yuborildi")
+        else:
+            print("→ Yuborilmadi (Telegram sozlanmagan yoki xato)")
+
+    return 1 if metrics.has_problems else 0
+
+
+def cmd_stats() -> int:
+    from bot import db
+    from bot.health import format_stats
+
+    db.check_schema()
+    print(_strip_html(format_stats()))
+    return 0
+
+
 def cmd_clusters_list(limit: int, status: str | None) -> int:
     from bot import db
 
@@ -741,6 +798,10 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_publish_now(args.post_id, args.force)
             case "telegram" if args.telegram_command == "check":
                 return cmd_telegram_check()
+            case "health":
+                return cmd_health(args.hours, args.send, args.sources)
+            case "stats":
+                return cmd_stats()
             case "clusters" if args.clusters_command == "list":
                 return cmd_clusters_list(args.limit, args.status)
             case "clusters" if args.clusters_command == "show":

@@ -62,7 +62,12 @@ def build_dispatcher() -> Dispatcher:
             "✅ Chiqarish — kanalga joylaydi\n"
             "✏️ Tahrir — matnni tuzatib yuborasiz\n"
             "❌ Rad etish — sababini so'rayman\n\n"
-            "/status — hozirgi holat"
+            "<b>Buyruqlar</b>\n"
+            "/status — postlar holati\n"
+            "/health — kunlik hisobot\n"
+            "/stats — umumiy statistika\n"
+            "/sources — manbalar sog'ligi",
+            parse_mode="HTML",
         )
 
     @dp.message(Command("status"))
@@ -85,6 +90,30 @@ def build_dispatcher() -> Dispatcher:
             f"Bugun kanalga chiqdi: {published_today()}",
         ]
         await message.answer("\n".join(lines), parse_mode="HTML")
+
+    @dp.message(Command("health"))
+    async def cmd_health(message: Message) -> None:
+        if not _is_admin(message.chat.id):
+            return
+        from bot.health import format_daily_report
+
+        await message.answer(format_daily_report(), parse_mode="HTML")
+
+    @dp.message(Command("stats"))
+    async def cmd_stats(message: Message) -> None:
+        if not _is_admin(message.chat.id):
+            return
+        from bot.health import format_stats
+
+        await message.answer(format_stats(), parse_mode="HTML")
+
+    @dp.message(Command("sources"))
+    async def cmd_sources(message: Message) -> None:
+        if not _is_admin(message.chat.id):
+            return
+        from bot.health import format_sources
+
+        await message.answer(format_sources(), parse_mode="HTML")
 
     # ─────────────── Tugmalar ───────────────
 
