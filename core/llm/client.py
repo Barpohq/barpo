@@ -88,13 +88,26 @@ class LLMResponse:
             ) from exc
 
 
-def today_cost_usd() -> float:
-    """Bugungi (UTC) jami LLM xarajati."""
+def today_cost_usd(
+    stages: tuple[str, ...] = (), *, include: bool = True
+) -> float:
+    """Bugungi (UTC) LLM xarajati.
+
+    `stages` bo'sh bo'lsa — hammasi. Aks holda `include=True` faqat
+    shu bosqichlarni sanaydi, `include=False` esa ularni chiqarib
+    tashlaydi (bosqich bo'yicha alohida limitlar uchun).
+    """
     today = datetime.now(UTC).date().isoformat()
-    row = query_one(
-        "SELECT COALESCE(SUM(cost_usd), 0.0) AS total FROM llm_calls WHERE created_at >= ?",
-        (today,),
-    )
+    sql = "SELECT COALESCE(SUM(cost_usd), 0.0) AS total FROM llm_calls WHERE created_at >= ?"
+    params: tuple[Any, ...] = (today,)
+
+    if stages:
+        placeholders = ", ".join("?" for _ in stages)
+        keyword = "IN" if include else "NOT IN"
+        sql += f" AND stage {keyword} ({placeholders})"
+        params += stages
+
+    row = query_one(sql, params)
     return float(row["total"]) if row else 0.0
 
 
@@ -187,7 +200,7 @@ class LLMClient:
         `stage` — models.yaml dagi bosqich nomi (rank, enrich, write).
         Model ishlamasa fallback zanjiri bo'ylab o'tadi.
         """
-        self._check_cost_limit()
+        self._check_cost_limit(stage)
 
         cfg = self.models.stage(stage)
         messages: list[dict[str, str]] = []
@@ -240,7 +253,7 @@ class LLMClient:
         Model taqqoslash uchun: fallback ishlasa qaysi model javob
         berganini bilib bo'lmaydi, natija esa shu savolga bog'liq.
         """
-        self._check_cost_limit()
+        self._check_cost_limit(stage)
 
         messages: list[dict[str, str]] = []
         if system:
@@ -265,13 +278,16 @@ class LLMClient:
 
     # ─────────────────────── Ichki mantiq ───────────────────────
 
-    def _check_cost_limit(self) -> None:
-        limit = self.models.limits.daily_cost_usd
-        spent = today_cost_usd()
+    def _check_cost_limit(self, stage: str) -> None:
+        limits = self.models.limits
+        limit, key = limits.limit_for(stage)
+        stages, include = limits.counted_stages(stage)
+        spent = today_cost_usd(stages, include=include)
         if spent >= limit:
             raise CostLimitExceeded(
-                f"Kunlik xarajat limiti oshdi: ${spent:.4f} / ${limit:.2f}. "
-                f"Limitni models.yaml (limits.daily_cost_usd) da o'zgartiring."
+                f"'{stage}' uchun kunlik xarajat limiti oshdi: "
+                f"${spent:.4f} / ${limit:.2f}. "
+                f"Limitni models.yaml (limits.{key}) da o'zgartiring."
             )
 
     def _call_with_retry(

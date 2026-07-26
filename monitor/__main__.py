@@ -5,6 +5,7 @@ Buyruqlar:
     monitor check            — bir marta tekshirish, natijani saqlash
     monitor status           — oxirgi ma'lum holat (yangi tekshiruvsiz)
     monitor alerts           — alert tarixi
+    monitor diagnose         — muammoni LLM bilan izohlash (qo'lda sinash)
 """
 
 from __future__ import annotations
@@ -46,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument(
         "--notify", action="store_true", help="Muammo bo'lsa Telegram'ga alert yuborish"
     )
+    check_parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Alertga LLM diagnostikasini qo'shish (--notify bilan)",
+    )
 
     # ── status ──
     status_parser = sub.add_parser("status", help="Oxirgi ma'lum holat (tekshirmasdan)")
@@ -59,6 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     alerts_parser.add_argument("--limit", type=int, default=20, help="Nechta (default: 20)")
     alerts_parser.add_argument(
         "--open", action="store_true", help="Faqat yopilmagan alertlar"
+    )
+
+    # ── diagnose ──
+    diag_parser = sub.add_parser(
+        "diagnose", help="Muammoni LLM bilan izohlash (alert yuborilmaydi)"
+    )
+    diag_parser.add_argument("--server", required=True, help="Server nomi")
+    diag_parser.add_argument(
+        "--check", help="Check nomi (masalan disk:/). Bo'sh bo'lsa birinchi muammo"
     )
 
     return parser
@@ -98,7 +113,7 @@ def cmd_servers() -> int:
     return 1 if failures else 0
 
 
-def cmd_check(server_name: str | None, no_save: bool, notify: bool) -> int:
+def cmd_check(server_name: str | None, no_save: bool, notify: bool, diagnose: bool) -> int:
     """Tekshiruvni bajarish, natijani saqlash va ko'rsatish."""
     from core import db
     from monitor.checks import check_server
@@ -121,7 +136,7 @@ def cmd_check(server_name: str | None, no_save: bool, notify: bool) -> int:
         problems = sum(1 for r in results if r.is_problem)
     else:
         db.check_schema()
-        report = run_checks(servers, notify=notify)
+        report = run_checks(servers, notify=notify, diagnose=diagnose)
         results = report.results
         problems = report.problems
         alerts, resolved = report.alerts_sent, report.alerts_resolved
@@ -201,6 +216,40 @@ def cmd_alerts(limit: int, open_only: bool) -> int:
     return 0
 
 
+def cmd_diagnose(server_name: str, check_name: str | None) -> int:
+    """Diagnostikani qo'lda ishga tushirish — prompt va javobni ko'rish."""
+    from monitor.checks import check_server
+    from monitor.config import find_server
+    from monitor.diagnose import diagnose_problem
+
+    server = find_server(server_name)
+    results = check_server(server)
+
+    if check_name:
+        selected = next((r for r in results if r.name == check_name), None)
+        if selected is None:
+            names = ", ".join(r.name for r in results)
+            print(f"'{check_name}' topilmadi. Mavjud: {names}")
+            return 2
+    else:
+        selected = next((r for r in results if r.is_problem), None)
+        if selected is None:
+            print(f"{server.name}: muammo yo'q — diagnostika kerak emas.")
+            print("Aniq checkni ko'rish uchun: --check <nom>")
+            return 0
+
+    print(f"Muammo:  {selected.server}/{selected.name} — {selected.message}")
+    print("Diagnostika so'ralmoqda...\n")
+
+    diagnosis = diagnose_problem(selected, server)
+    if not diagnosis:
+        print("Diagnostika olinmadi (LLM xatosi yoki limit — loglarni ko'ring).")
+        return 1
+
+    print(diagnosis)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -217,11 +266,13 @@ def main(argv: list[str] | None = None) -> int:
             case "servers":
                 return cmd_servers()
             case "check":
-                return cmd_check(args.server, args.no_save, args.notify)
+                return cmd_check(args.server, args.no_save, args.notify, args.diagnose)
             case "status":
                 return cmd_status(args.server, args.problems)
             case "alerts":
                 return cmd_alerts(args.limit, args.open)
+            case "diagnose":
+                return cmd_diagnose(args.server, args.check)
             case _:
                 parser.error(f"Noma'lum buyruq: {args.command}")
                 return 2

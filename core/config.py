@@ -107,6 +107,33 @@ class Limits:
     max_retries: int = 3
     retry_base_delay: float = 2.0
     request_timeout: int = 120
+    # Bosqich bo'yicha alohida kunlik limit. Ikki agent bitta bazani
+    # bo'lishadi — bot pipeline'i limitni to'ldirsa monitor diagnostikasi
+    # bloklanmasligi kerak (va aksincha).
+    stage_limits: tuple[tuple[str, float], ...] = ()
+
+    def limit_for(self, stage: str) -> tuple[float, str]:
+        """Bosqich uchun limit va u qaysi kalitdan kelgani.
+
+        Alohida limiti bo'lmagan bosqichlar umumiy limitni bo'lishadi.
+        """
+        for name, value in self.stage_limits:
+            if name == stage:
+                return value, f"stage_limits.{name}"
+        return self.daily_cost_usd, "daily_cost_usd"
+
+    def counted_stages(self, stage: str) -> tuple[tuple[str, ...], bool]:
+        """Limitga qaysi bosqichlar sanaladi.
+
+        Qaytadi: (bosqichlar, `include`). `include=True` — faqat shu
+        ro'yxat sanaladi; `include=False` — ro'yxatdagilar chiqarib
+        tashlanadi (umumiy limit alohida limitli bosqichlarni
+        o'ziga qo'shmasligi kerak).
+        """
+        named = tuple(name for name, _ in self.stage_limits)
+        if stage in named:
+            return (stage,), True
+        return named, False
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,11 +176,18 @@ def parse_models(raw: dict[str, Any]) -> ModelsConfig:
     }
 
     limits_raw = raw.get("limits") or {}
+    stage_limits_raw = limits_raw.get("stage_limits") or {}
+    if not isinstance(stage_limits_raw, dict):
+        raise ConfigError("models.yaml: limits.stage_limits obyekt bo'lishi kerak")
+
     limits = Limits(
         daily_cost_usd=float(limits_raw.get("daily_cost_usd", 2.0)),
         max_retries=int(limits_raw.get("max_retries", 3)),
         retry_base_delay=float(limits_raw.get("retry_base_delay", 2.0)),
         request_timeout=int(limits_raw.get("request_timeout", 120)),
+        stage_limits=tuple(
+            (str(name), float(value)) for name, value in sorted(stage_limits_raw.items())
+        ),
     )
 
     return ModelsConfig(

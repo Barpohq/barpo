@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from core.db import execute, query, query_one, utc_now
 from core.logging_setup import get_logger
 from monitor.checks import CheckResult
+from monitor.config import Server
 from monitor.report import format_alert, format_recovery
 from monitor.state import CurrentState, should_alert
 
@@ -135,6 +136,7 @@ def process_results(
     results: list[CheckResult],
     *,
     diagnose: bool = False,
+    servers: dict[str, Server] | None = None,
 ) -> int:
     """Tekshiruv natijalaridan alertlarni yuborish.
 
@@ -142,6 +144,9 @@ def process_results(
       1. Muammo ketma-ket ikkinchi marta takrorlandimi (`should_alert`)
       2. Cooldown ichida emasmi
       3. Diagnostika (yoqilgan bo'lsa) — xato bo'lsa alert baribir ketadi
+
+    `servers` diagnostika uchun: loglarni olish serverga ulanishni
+    talab qiladi.
     """
     sent = 0
     for result in results:
@@ -158,7 +163,7 @@ def process_results(
         if diagnose:
             from monitor.diagnose import diagnose_problem
 
-            diagnosis = diagnose_problem(result)
+            diagnosis = diagnose_problem(result, (servers or {}).get(result.server))
 
         if send_alert(result, diagnosis=diagnosis):
             sent += 1

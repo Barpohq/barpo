@@ -74,7 +74,9 @@ def _notify(
     checked_servers = {s.name for s in servers}
 
     try:
-        sent = process_results(results, diagnose=diagnose)
+        sent = process_results(
+            results, diagnose=diagnose, servers={s.name: s for s in servers}
+        )
     except Exception as exc:  # noqa: BLE001
         log.exception("Alert yuborishda xato")
         log_error("monitor.notify", str(exc), traceback=traceback.format_exc())
