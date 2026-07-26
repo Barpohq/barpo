@@ -1,0 +1,58 @@
+# Kanal profili — Writer va Rank bosqichlari shu faylga tayanadi.
+# TODO: kanal username va few_shot_posts real ma'lumot bilan to'ldiriladi.
+
+channel:
+  # Postlar tili
+  language: uz
+  # Kanal nomi (post ichida ishlatilishi mumkin)
+  name: "TODO: kanal nomi"
+
+  # Auditoriya profili — Rank bosqichida "kanalga moslik" bahosi uchun promptga kiradi
+  audience: |
+    O'zbek tilida so'zlashuvchi texnik auditoriya: dasturchilar, IT sohasi
+    mutaxassislari, AI bilan qiziquvchi talabalar va tadbirkorlar.
+    Ular AI vositalarini amalda ishlatishadi, yangi model relizlari va
+    real foydalanish holatlari bilan qiziqishadi. Akademik chuqurlik emas,
+    amaliy qiymat muhim.
+
+  # Qaysi mavzular qiziq / qiziq emas — Rank promptiga kiradi
+  topics_of_interest:
+    - Yangi model relizlari (GPT, Claude, Gemini, ochiq modellar)
+    - AI vositalari va dasturchi asboblari
+    - Open-source modellar va lokal ishga tushirish
+    - AI kompaniyalari haqidagi muhim biznes yangiliklar
+    - Amaliy qo'llanmalar va real natijalar
+
+  topics_to_avoid:
+    - Reklama va sponsorlik postlari
+    - Mish-mish va tasdiqlanmagan gaplar
+    - Chuqur akademik maqolalar amaliy qiymatsiz
+    - Kripto/NFT bilan aralash AI loyihalari
+
+posting:
+  # Kuniga maksimal post soni
+  max_posts_per_day: 6
+  # Rank bahosi shu qiymatdan past bo'lsa post yozilmaydi (1-10)
+  min_importance_score: 6
+  # Ikki post orasidagi minimal tanaffus (daqiqa)
+  min_interval_minutes: 45
+
+format:
+  # Telegram parse rejimi: HTML yoki MarkdownV2
+  parse_mode: HTML
+  # Post uzunligi chegarasi (belgilarda)
+  max_length: 1024
+  # Emoji siyosati: none | minimal | rich
+  emoji_policy: minimal
+  # Post oxirida manba havolasi bo'lsinmi
+  include_source_link: true
+  # Doimiy hashtaglar
+  hashtags:
+    - "#AI"
+  # OG rasm topilsa postga qo'shilsinmi
+  include_image: true
+
+# Writer uchun few-shot uslub namunalari — kanalning eng yaxshi 5-10 ta posti.
+# Bo'sh bo'lsa Writer faqat qoidalarga tayanadi.
+# TODO: real postlar bilan to'ldirish.
+few_shot_posts: []

@@ -1,0 +1,80 @@
+# Yangilik manbalari.
+# Manba qo'shish/olib tashlash uchun kod o'zgartirish shart emas.
+# `enabled: false` — vaqtincha o'chirish.
+
+defaults:
+  # Bitta siklda bitta manbadan olinadigan maksimal element
+  max_items: 40
+  # HTTP so'rov timeout (soniya)
+  timeout: 20
+
+sources:
+  # ─── Rasmiy bloglar (RSS) — eng ishonchli manba ───
+  # Diqqat: Anthropic va Meta AI rasmiy RSS feed chiqarmaydi (2026-07 holatiga
+  # ko'ra /rss.xml, /news/rss.xml, /feed.xml — barchasi 404). Ular uchun
+  # Google News RSS ishlatilmoqda; rasmiy feed paydo bo'lsa almashtiriladi.
+  - name: anthropic-news
+    type: rss
+    url: "https://news.google.com/rss/search?q=Anthropic+Claude+when:7d&hl=en-US&gl=US&ceid=US:en"
+    weight: 1.0
+
+  - name: openai-blog
+    type: rss
+    url: https://openai.com/news/rss.xml
+    weight: 1.0
+
+  - name: google-ai-blog
+    type: rss
+    url: https://blog.google/technology/ai/rss/
+    weight: 0.9
+
+  - name: deepmind-blog
+    type: rss
+    url: https://deepmind.google/blog/rss.xml
+    weight: 0.9
+
+  - name: huggingface-blog
+    type: rss
+    url: https://huggingface.co/blog/feed.xml
+    weight: 0.8
+
+  - name: meta-ai-blog
+    type: rss
+    url: "https://news.google.com/rss/search?q=%22Meta+AI%22+OR+Llama+model+when:7d&hl=en-US&gl=US&ceid=US:en"
+    weight: 0.7
+
+  - name: mistral-news
+    type: rss
+    url: https://mistral.ai/rss.xml
+    weight: 0.7
+
+  # ─── Hacker News (Algolia API) ───
+  - name: hn-ai
+    type: hackernews
+    # Diqqat: Algolia OR operatorini tushunmaydi — har bir so'rov alohida
+    # yuboriladi, natijalar objectID bo'yicha birlashtiriladi.
+    queries:
+      - AI
+      - LLM
+      - Claude
+      - OpenAI
+      - "open source model"
+    # Shu balldan yuqori postlar olinadi
+    min_points: 50
+    lookback_days: 3
+    max_items: 30
+    weight: 0.6
+
+  # ─── Keyingi bosqichda yoqiladi (Faza 1 oxirida sifat baholangach) ───
+  - name: reddit-localllama
+    type: reddit
+    subreddit: LocalLLaMA
+    min_score: 150
+    enabled: false
+    weight: 0.5
+
+  - name: arxiv-cs-ai
+    type: arxiv
+    categories: [cs.AI, cs.CL, cs.LG]
+    enabled: false
+    weight: 0.4

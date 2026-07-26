@@ -1,0 +1,22 @@
+services:
+  bot:
+    build: .
+    container_name: ai-news-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Baza — konteyner qayta qurilganda ham saqlanadi
+      - ./data:/app/data
+      # Embedding modeli keshi — har safar qayta yuklanmasligi uchun
+      - models_cache:/app/models_cache
+      # Konfiguratsiya — tahrirlab restart qilish yetarli, qayta qurish shart emas
+      - ./config:/app/config:ro
+    # Loglar cheksiz o'smasligi uchun
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  models_cache:

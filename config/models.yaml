@@ -1,0 +1,85 @@
+# Qaysi bosqichda qaysi model ishlatiladi.
+# Slug'lar OpenRouter formatida. Narxlar $/1M token (2026-07 holatiga).
+# Model almashtirish uchun faqat shu faylni tahrirlash yetadi.
+
+# Har bosqich uchun: model + fallback zanjiri.
+# Asosiy model xato bersa yoki mavjud bo'lmasa — keyingisiga o'tadi.
+stages:
+  rank:
+    # Arzon model 90% ishni qiladi: klasterlarni baholash, spam filtri.
+    #
+    # 2026-07-26 sinovi (8 ta real yangilik, 6 model):
+    #   gemini-3.1-flash-lite  — yagona model, korporativ PR postlarini
+    #                            is_spam=true deb belgiladi; eng tez (2.4s)
+    #   gemini-2.5-flash-lite  — 5x arzon, lekin eski qo'llanmani 7/9 baholadi
+    #   gpt-4.1-nano           — PR postini 7/7 baholadi (yaroqsiz filtr)
+    #   gpt-5-nano             — bo'sh javob qaytardi, zanjirdan chiqarildi
+    # Narx farqi oyiga ~$0.18 — spam filtri sifatidan muhimroq emas.
+    model: google/gemini-3.1-flash-lite
+    fallbacks:
+      - google/gemini-3.5-flash-lite
+      - google/gemini-2.5-flash-lite
+    max_tokens: 2000
+    # Baholash deterministik bo'lishi kerak
+    temperature: 0.0
+
+  enrich:
+    # Web sahifa matnidan kontekst ajratish
+    model: google/gemini-2.5-flash
+    fallbacks:
+      - google/gemini-3.1-flash-lite
+    max_tokens: 2000
+    temperature: 0.2
+
+  write:
+    # Eng kuchli model — post sifati = kanal obro'si.
+    # 2026-07-26 dastlabki sinov: Opus 5 o'zbekchada toza yozdi (diakritika,
+    # grammatika to'g'ri). Faza 2'da to'liq taqqoslash o'tkaziladi.
+    model: anthropic/claude-opus-5
+    fallbacks:
+      - anthropic/claude-sonnet-5
+      - google/gemini-3.1-pro-preview
+    max_tokens: 2000
+    temperature: 0.7
+
+# Faza 2 til sinovi uchun nomzodlar: bir xil yangilikni har biriga
+# yozdirib, o'zbekcha sifatini taqqoslaymiz.
+# Narxlar juda farq qiladi — agar arzonrog'i yetarli sifat bersa,
+# oylik xarajat bir necha barobar tushadi.
+language_test_candidates:
+  - anthropic/claude-opus-5        # 5.00/25.00 — hozirgi asosiy
+  - anthropic/claude-sonnet-5      # 2.00/10.00 — 2.5x arzon
+  - openai/gpt-5.6-luna            # 1.00/ 6.00 — 5x arzon, yangi avlod
+  - google/gemini-3.1-pro-preview  # 2.00/12.00
+
+# Narxlar ($/1M token). Xarajat hisobi shu jadvalga tayanadi.
+# OpenRouter javobidagi `usage` bilan birga ishlatiladi.
+pricing:
+  # Arzon (rank/enrich uchun)
+  openai/gpt-5-nano:              { input: 0.05, output: 0.40 }
+  google/gemini-2.5-flash-lite:   { input: 0.10, output: 0.40 }
+  openai/gpt-4.1-nano:            { input: 0.10, output: 0.40 }
+  openai/gpt-5.4-nano:            { input: 0.20, output: 1.25 }
+  google/gemini-3.1-flash-lite:   { input: 0.25, output: 1.50 }
+  google/gemini-2.5-flash:        { input: 0.30, output: 2.50 }
+  google/gemini-3.5-flash-lite:   { input: 0.30, output: 2.50 }
+  google/gemini-3-flash-preview:  { input: 0.50, output: 3.00 }
+  # O'rta / kuchli (writer uchun)
+  openai/gpt-5.6-luna:            { input: 1.00, output: 6.00 }
+  anthropic/claude-haiku-4.5:     { input: 1.00, output: 5.00 }
+  google/gemini-3.5-flash:        { input: 1.50, output: 9.00 }
+  anthropic/claude-sonnet-5:      { input: 2.00, output: 10.00 }
+  google/gemini-3.1-pro-preview:  { input: 2.00, output: 12.00 }
+  openai/gpt-5.6-terra:           { input: 2.50, output: 15.00 }
+  anthropic/claude-opus-5:        { input: 5.00, output: 25.00 }
+  openai/gpt-5.6-sol:             { input: 5.00, output: 30.00 }
+
+limits:
+  # Kunlik xarajat limiti ($). Oshsa bot to'xtaydi va alert yuboradi.
+  daily_cost_usd: 2.0
+  # Bitta LLM chaqiruvi uchun maksimal urinishlar soni
+  max_retries: 3
+  # Retry orasidagi boshlang'ich kutish (soniya), har urinishda 2x oshadi
+  retry_base_delay: 2.0
+  # Bitta so'rov timeout (soniya)
+  request_timeout: 120
