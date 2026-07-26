@@ -11,6 +11,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# openssh-client — monitor agenti serverlarga shu orqali ulanadi
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv — tez paket menejeri
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -18,7 +23,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml README.md ./
 RUN uv pip install --system --no-cache .
 
+COPY core/ ./core/
 COPY bot/ ./bot/
+COPY monitor/ ./monitor/
 COPY config/ ./config/
 
 # Baza va model keshi uchun kataloglar

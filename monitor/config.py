@@ -23,6 +23,10 @@ MOUNT_PATH_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
 # Server nomi — hisobotlarda va baza kalitida ishlatiladi
 SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
+# Doimiy rejimda tekshiruv oralig'i (daqiqa). Bu yerda — CLI yordam
+# matni uchun `monitor.scheduler` (apscheduler) ni tortmaslik kerak.
+DEFAULT_INTERVAL_MINUTES = 10
+
 DEFAULT_THRESHOLDS: dict[str, dict[str, Any]] = {
     "load": {"warn": 2.0, "fail": 4.0},
     "memory": {"warn": 85.0, "fail": 95.0},

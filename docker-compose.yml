@@ -18,5 +18,39 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Server monitor agenti — bir xil image, alohida jarayon.
+  # Alohida sabab: bot 3 soatda, monitor 10 daqiqada ishlaydi, va
+  # botning deploy'i monitorni to'xtatmasligi kerak.
+  monitor:
+    build: .
+    container_name: ai-monitor
+    restart: unless-stopped
+    env_file: .env
+    command: ["run"]
+    entrypoint: ["python", "-m", "monitor"]
+    volumes:
+      # Bitta baza: llm_calls bo'linmasligi kerak
+      - ./data:/app/data
+      - ./config:/app/config:ro
+      # SSH kalitlari va known_hosts — faqat o'qish uchun
+      - ~/.ssh:/root/.ssh:ro
+    depends_on:
+      # Migratsiyalar bot konteynerida qo'llanadi
+      - bot
+    # Healthcheck monitorning o'zi tirikligini tekshiradi, serverlar
+    # holatini emas: server buzilgani konteynerni "unhealthy" qilmasligi
+    # kerak — u aynan shuni xabar qilish uchun ishlayapti.
+    healthcheck:
+      test: ["CMD", "python", "-m", "monitor", "servers"]
+      interval: 30m
+      timeout: 60s
+      start_period: 2m
+      retries: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   models_cache:

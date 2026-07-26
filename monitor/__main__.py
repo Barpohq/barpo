@@ -6,6 +6,7 @@ Buyruqlar:
     monitor status           — oxirgi ma'lum holat (yangi tekshiruvsiz)
     monitor alerts           — alert tarixi
     monitor diagnose         — muammoni LLM bilan izohlash (qo'lda sinash)
+    monitor run              — scheduler bilan doimiy rejim
 """
 
 from __future__ import annotations
@@ -15,6 +16,9 @@ import sys
 
 from core.config import ConfigError, log_level
 from core.logging_setup import get_logger, setup_logging
+
+# Faqat parser yordam matni uchun — apscheduler tortilmaydi
+from monitor.config import DEFAULT_INTERVAL_MINUTES
 
 log = get_logger("monitor.cli")
 
@@ -74,6 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
     diag_parser.add_argument("--server", required=True, help="Server nomi")
     diag_parser.add_argument(
         "--check", help="Check nomi (masalan disk:/). Bo'sh bo'lsa birinchi muammo"
+    )
+
+    # ── run ──
+    run_parser = sub.add_parser("run", help="Doimiy rejim (scheduler)")
+    run_parser.add_argument(
+        "--interval-minutes",
+        type=int,
+        default=DEFAULT_INTERVAL_MINUTES,
+        help=f"Tekshiruv oralig'i (default: {DEFAULT_INTERVAL_MINUTES})",
+    )
+    run_parser.add_argument("--once", action="store_true", help="Bir sikl bajarib chiqish")
+    run_parser.add_argument(
+        "--no-diagnose", action="store_true", help="LLM diagnostikasiz (arzonroq)"
     )
 
     return parser
@@ -250,6 +267,20 @@ def cmd_diagnose(server_name: str, check_name: str | None) -> int:
     return 0
 
 
+def cmd_run(interval_minutes: int, once: bool, no_diagnose: bool) -> int:
+    """Doimiy rejim yoki bitta to'liq sikl."""
+    from core import db
+    from monitor.scheduler import run_cycle, run_forever
+
+    db.check_schema()
+
+    if once:
+        run_cycle(diagnose=not no_diagnose)
+        return 0
+
+    return run_forever(interval_minutes, diagnose=not no_diagnose)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -273,6 +304,8 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_alerts(args.limit, args.open)
             case "diagnose":
                 return cmd_diagnose(args.server, args.check)
+            case "run":
+                return cmd_run(args.interval_minutes, args.once, args.no_diagnose)
             case _:
                 parser.error(f"Noma'lum buyruq: {args.command}")
                 return 2
