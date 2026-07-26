@@ -88,6 +88,16 @@ def _format_block(channel: dict[str, Any], *, budget: int, target: int) -> str:
         " matn sig'masa qisqartiriladi, yangi abzats ochilmaydi",
         f"  - Faqat shu HTML teglar ishlaydi: {tags}",
         "  - <ul>, <li>, <br>, <p> ISHLAMAYDI — ro'yxat uchun '• ' belgisi",
+    ]
+
+    bullet_min = int(fmt.get("min_bullets", 0) or 0)
+    bullet_max = int(fmt.get("max_bullets", 0) or 0)
+    if bullet_max:
+        lines.append(
+            f"  - Ro'yxatda {bullet_min}-{bullet_max} punkt — ko'pi qabul qilinmaydi"
+        )
+
+    lines += [
         "  - & < > belgilari matnda &amp; &lt; &gt; ko'rinishida yoziladi",
         "  - Bloklar orasida bitta bo'sh qator",
     ]

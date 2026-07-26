@@ -1,7 +1,9 @@
 """Doimiy rejim — pipeline'ni jadval bo'yicha ishga tushirish.
 
-Hozirgi holat: collect → dedup → rank → enrich → write. Publisher
-qo'shilganda shu yerga ulanadi.
+To'liq pipeline: collect → dedup → rank → enrich → write → publish.
+
+`run_forever()` qo'shimcha ravishda Telegram approval tinglovchisini
+alohida threadda ishga tushiradi — busiz ✅/✏️/❌ tugmalari javob bermaydi.
 
 Har bosqich idempotent: qayta ishga tushirilsa qayerda qolgan bo'lsa
 o'sha yerdan davom etadi (holat bazada). Bitta sikl xato bersa keyingisi
@@ -28,7 +30,7 @@ DEFAULT_INTERVAL_HOURS = 3
 
 
 def run_pipeline() -> None:
-    """Bitta to'liq sikl: yig'ish → klasterlash → baholash → boyitish → yozish.
+    """Bitta to'liq sikl: yig'ish → ... → yozish → tasdiqqa yuborish.
 
     Bu funksiya hech qachon exception tashlamasligi kerak — aks holda
     scheduler jobni o'chirib qo'yadi va bot jimgina o'lib qoladi.
@@ -84,6 +86,19 @@ def run_pipeline() -> None:
     except Exception as exc:  # noqa: BLE001
         log.exception("Writer bosqichida xato")
         log_error("scheduler.write", str(exc), traceback=traceback.format_exc())
+        return
+
+    try:
+        from bot.publisher import is_configured, run_publish
+
+        if is_configured():
+            publish_report = run_publish()
+            log.info("Publisher: %s", publish_report.summary())
+        else:
+            log.info("Telegram sozlanmagan — publish bosqichi o'tkazib yuborildi")
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Publisher bosqichida xato")
+        log_error("scheduler.publish", str(exc), traceback=traceback.format_exc())
         return
 
     elapsed = (datetime.now(UTC) - started).total_seconds()
@@ -150,6 +165,24 @@ def run_forever(interval_hours: int = DEFAULT_INTERVAL_HOURS) -> int:
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
+
+    # Telegram approval tugmalarini tinglash — alohida threadda.
+    # Busiz ✅/✏️/❌ tugmalari javob bermaydi.
+    try:
+        from bot.publisher import is_configured
+
+        if is_configured():
+            from bot.publisher.bot_app import start_in_background
+
+            start_in_background()
+            log.info("Telegram approval tinglovchisi ishga tushdi")
+        else:
+            log.warning(
+                "Telegram sozlanmagan — approval tugmalari ishlamaydi. "
+                ".env da TELEGRAM_BOT_TOKEN va TELEGRAM_CHANNEL_ID ni to'ldiring"
+            )
+    except Exception:  # noqa: BLE001 — polling yiqilsa ham pipeline ishlasin
+        log.exception("Telegram tinglovchisi ishga tushmadi")
 
     scheduler.start()
     log.info("Scheduler ishga tushdi. Rejadagi ishlar:")

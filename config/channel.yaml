@@ -75,6 +75,12 @@ format:
   # ro'yxat uchun "• " belgisi va qator uzilishi ishlatiladi.
   allowed_tags: [b, i, u, s, a, code, pre, blockquote]
 
+  # Tafsilotlar ro'yxatidagi punktlar soni (validator tekshiradi).
+  # Ko'p punkt post ko'rinishini og'irlashtiradi va o'quvchi diqqatini
+  # tarqatadi — eng muhim 2-4 tasi qoldirilgani ma'qul.
+  min_bullets: 2
+  max_bullets: 4
+
 # ─────────────────────── Post tuzilishi ───────────────────────
 # Writer shu sxemaga amal qiladi. Kanal yangi bo'lgani uchun few-shot
 # namunalar sun'iy tayyorlangan (2026-07-26) — real postlar to'planganda

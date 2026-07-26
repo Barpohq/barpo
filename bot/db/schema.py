@@ -196,6 +196,22 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON posts (status, created_at);
         """,
     ),
+    (
+        4,
+        "Publisher: tahrir tarixi va approval holati",
+        """
+        -- Qo'lda tahrirlangan bo'lsa asl matn shu yerda saqlanadi.
+        -- Faza 3 da prompt tuning uchun kerak: model nima yozgan va
+        -- odam nimani tuzatgan — farqi eng qimmatli signal.
+        ALTER TABLE posts ADD COLUMN original_body TEXT;
+        -- Approval xabari yuborilgan chat (odatda admin, lekin
+        -- kelajakda bir nechta muharrir bo'lishi mumkin)
+        ALTER TABLE posts ADD COLUMN approval_chat_id INTEGER;
+
+        CREATE INDEX IF NOT EXISTS idx_posts_approval_msg
+            ON posts (approval_msg_id);
+        """,
+    ),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS) if MIGRATIONS else 0

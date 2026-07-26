@@ -35,6 +35,8 @@ CHANNEL: dict[str, Any] = {
         "include_channel_signature": True,
         "signature_separator": "———",
         "emoji_policy": "minimal",
+        "min_bullets": 2,
+        "max_bullets": 4,
     },
     "post_structure": {
         "blocks": [
@@ -210,6 +212,22 @@ class TestValidatePost:
         result = self._validate(text)
         assert not result.ok
         assert any("Ortiqcha blok" in e for e in result.errors)
+
+    def test_too_many_bullets_fails(self) -> None:
+        """Ko'p punkt postni og'irlashtiradi — real postda 5 ta chiqqan edi."""
+        text = (
+            "🔹 <b>Sarlavha</b>\n\nMohiyat.\n\n"
+            "• bir\n• ikki\n• uch\n• to'rt\n• besh\n\n"
+            '🔗 <a href="https://x.dev">Manba</a>'
+        )
+        result = self._validate(text)
+
+        assert not result.ok
+        assert any("punkt" in e for e in result.errors)
+
+    def test_allowed_bullet_count_passes(self) -> None:
+        result = self._validate(GOOD_POST)
+        assert result.ok, result.errors
 
     def test_code_fence_is_stripped(self) -> None:
         result = self._validate(f"```html\n{GOOD_POST}\n```")

@@ -116,6 +116,11 @@ def count_blocks(text: str) -> int:
     return len([b for b in text.split("\n\n") if b.strip()])
 
 
+def count_bullets(text: str) -> int:
+    """Ro'yxat punktlari soni."""
+    return len([line for line in text.split("\n") if line.lstrip().startswith("• ")])
+
+
 def max_blocks(channel: dict[str, Any]) -> int:
     """Tuzilishga ko'ra ruxsat etilgan maksimal blok soni.
 
@@ -183,6 +188,15 @@ def validate_post(
         result.errors.append(
             f"Ortiqcha blok: {actual_blocks} ta, tuzilishda {allowed_blocks} ta. "
             f"Qo'shimcha abzatsni olib tashlang yoki mavjud blokka qo'shing."
+        )
+
+    # Ro'yxat hajmi — ko'p punkt postni og'irlashtiradi
+    bullets = count_bullets(text)
+    bullet_max = int(fmt.get("max_bullets", 0) or 0)
+    if bullet_max and bullets > bullet_max:
+        result.errors.append(
+            f"Ro'yxatda {bullets} ta punkt, ruxsat {bullet_max} ta. "
+            f"Eng muhimlarini qoldirib, qolganini olib tashlang."
         )
 
     # Ogohlantirishlar — post rad etilmaydi, lekin log'ga tushadi

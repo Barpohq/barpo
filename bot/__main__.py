@@ -13,6 +13,9 @@ Buyruqlar:
     bot write               — klasterlardan post yozish
     bot posts list          — yozilgan postlar ro'yxati
     bot posts show <id>     — bitta postni ko'rish
+    bot publish             — draftlarni tasdiqqa yuborish + navbatni chiqarish
+    bot publish-now <id>    — bitta postni darhol kanalga chiqarish
+    bot telegram check      — bot va kanal sozlamalarini tekshirish
     bot clusters list       — klasterlar ro'yxati
     bot clusters show <id>  — bitta klaster tafsiloti
     bot run                 — scheduler bilan doimiy rejim
@@ -128,6 +131,30 @@ def build_parser() -> argparse.ArgumentParser:
     posts_list.add_argument("--status", help="Status bo'yicha filtr (draft, published, ...)")
     posts_show = posts_sub.add_parser("show", help="Bitta postni ko'rish")
     posts_show.add_argument("post_id", type=int)
+
+    # ── publish ──
+    publish_parser = sub.add_parser("publish", help="Tasdiqqa yuborish va navbatni chiqarish")
+    publish_parser.add_argument(
+        "--limit", type=int, default=5, help="Nechta draft yuborilsin (default: 5)"
+    )
+    publish_parser.add_argument(
+        "--send-only",
+        action="store_true",
+        help="Faqat tasdiqqa yuboradi, kanalga chiqarmaydi",
+    )
+
+    now_parser = sub.add_parser("publish-now", help="Bitta postni darhol kanalga chiqarish")
+    now_parser.add_argument("post_id", type=int)
+    now_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Vaqt oralig'i va takror cheklovlarini e'tiborsiz qoldirish",
+    )
+
+    # ── telegram ──
+    tg_parser = sub.add_parser("telegram", help="Telegram sozlamalari")
+    tg_sub = tg_parser.add_subparsers(dest="telegram_command", required=True)
+    tg_sub.add_parser("check", help="Bot, kanal va admin chatni tekshirish")
 
     # ── clusters ──
     cl_parser = sub.add_parser("clusters", help="Klasterlarni ko'rish")
@@ -487,6 +514,92 @@ def cmd_posts_show(post_id: int) -> int:
     return 0
 
 
+def cmd_publish(limit: int, send_only: bool) -> int:
+    from bot import db
+    from bot.publisher import run_publish
+
+    db.check_schema()
+    run_id = db.start_run("publish")
+    report = run_publish(limit=limit, send_only=send_only)
+    db.finish_run(
+        run_id,
+        items_in=report.sent_for_approval,
+        items_out=report.published,
+        error_count=report.failed,
+        ok=not report.problems,
+        note=report.summary(),
+    )
+
+    print()
+    print(f"Tasdiqqa yuborildi: {report.sent_for_approval}")
+    if not send_only:
+        print(f"Kanalga chiqdi:     {report.published}")
+    if report.skipped:
+        print(f"Kutmoqda:           {report.skipped}")
+    if report.problems:
+        print("\nMuammolar:")
+        for problem in report.problems[:10]:
+            print(f"  - {problem}")
+    if report.sent_for_approval:
+        print("\nTelegram'da tasdiqlang — @labbaygo_bot chatiga qarang.")
+    return 0
+
+
+def cmd_publish_now(post_id: int, force: bool) -> int:
+    from bot import db
+    from bot.publisher import QueueBlocked, channel_link, publish_now
+
+    db.check_schema()
+    try:
+        message_id = publish_now(post_id, force=force)
+    except QueueBlocked as exc:
+        print(f"Chiqarilmadi: {exc}")
+        print("Majburlash uchun: --force")
+        return 1
+    except ValueError as exc:
+        print(f"Xato: {exc}")
+        return 1
+
+    print(f"Post #{post_id} kanalga chiqdi (message_id={message_id})")
+    if link := channel_link(message_id):
+        print(f"Havola: {link}")
+    return 0
+
+
+def cmd_telegram_check() -> int:
+    import asyncio
+
+    from bot.publisher import is_configured
+    from bot.publisher.telegram import TelegramClient, with_client
+
+    if not is_configured():
+        print("Telegram sozlanmagan.")
+        print("  .env da TELEGRAM_BOT_TOKEN va TELEGRAM_CHANNEL_ID kerak")
+        return 1
+
+    async def work(client: TelegramClient):
+        return await client.check_access()
+
+    result = asyncio.run(with_client(work))
+
+    print(f"Bot:      @{result['bot_username']} (id {result['bot_id']})")
+    print()
+    if result.get("channel_error"):
+        print(f"Kanal:    ✗ {result['channel_error']}")
+    else:
+        print(f"Kanal:    {result.get('channel_title')} (id {result.get('channel_numeric_id')})")
+        print(f"  status:  {result.get('channel_status')}")
+        print(f"  post qo'ya oladi: {result.get('can_post')}")
+        print(f"  {'✓ tayyor' if result['channel_ok'] else '✗ admin qilib qo`shing'}")
+    print()
+    if result.get("admin_error"):
+        print(f"Admin chat: ✗ {result['admin_error']}")
+    else:
+        print(f"Admin chat: {result.get('admin_name')} ✓")
+
+    return 0 if result["channel_ok"] and result["admin_ok"] else 1
+
+
 def cmd_clusters_list(limit: int, status: str | None) -> int:
     from bot import db
 
@@ -622,6 +735,12 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_posts_list(args.limit, args.status)
             case "posts" if args.posts_command == "show":
                 return cmd_posts_show(args.post_id)
+            case "publish":
+                return cmd_publish(args.limit, args.send_only)
+            case "publish-now":
+                return cmd_publish_now(args.post_id, args.force)
+            case "telegram" if args.telegram_command == "check":
+                return cmd_telegram_check()
             case "clusters" if args.clusters_command == "list":
                 return cmd_clusters_list(args.limit, args.status)
             case "clusters" if args.clusters_command == "show":
