@@ -181,6 +181,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE clusters ADD COLUMN enriched_at     TEXT;
         """,
     ),
+    (
+        3,
+        "Writer: klaster statusiga written/write_failed qo'shildi (izoh)",
+        """
+        -- SQLite'da CHECK constraint yo'q, shuning uchun bu migratsiya
+        -- faqat hujjat vazifasini bajaradi. clusters.status qiymatlari:
+        --   new → ranked → written → published
+        --   rejected      (Rank: spam yoki past baho)
+        --   write_failed  (Writer: tekshiruvdan o'tmadi, qo'lda ko'rish kerak)
+        --
+        -- Yangi indeks: Publisher navbatini tez topish uchun.
+        CREATE INDEX IF NOT EXISTS idx_posts_status_created
+            ON posts (status, created_at);
+        """,
+    ),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS) if MIGRATIONS else 0

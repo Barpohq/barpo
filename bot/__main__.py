@@ -10,6 +10,9 @@ Buyruqlar:
     bot dedup               — dublikatlarni klasterlash
     bot rank                — klasterlarni LLM bilan baholash
     bot enrich              — to'liq maqola matni bilan boyitish
+    bot write               — klasterlardan post yozish
+    bot posts list          — yozilgan postlar ro'yxati
+    bot posts show <id>     — bitta postni ko'rish
     bot clusters list       — klasterlar ro'yxati
     bot clusters show <id>  — bitta klaster tafsiloti
     bot run                 — scheduler bilan doimiy rejim
@@ -107,6 +110,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Faqat fetch — web search ishlatilmaydi (Tavily krediti sarflanmaydi)",
     )
+
+    # ── write ──
+    write_parser = sub.add_parser("write", help="Klasterlardan post yozish")
+    write_parser.add_argument(
+        "--limit", type=int, default=5, help="Maksimal nechta post (default: 5)"
+    )
+    write_parser.add_argument(
+        "--cluster", type=int, help="Faqat shu klaster uchun (sinov uchun)"
+    )
+
+    # ── posts ──
+    posts_parser = sub.add_parser("posts", help="Yozilgan postlarni ko'rish")
+    posts_sub = posts_parser.add_subparsers(dest="posts_command", required=True)
+    posts_list = posts_sub.add_parser("list", help="Postlar ro'yxati")
+    posts_list.add_argument("--limit", type=int, default=20)
+    posts_list.add_argument("--status", help="Status bo'yicha filtr (draft, published, ...)")
+    posts_show = posts_sub.add_parser("show", help="Bitta postni ko'rish")
+    posts_show.add_argument("post_id", type=int)
 
     # ── clusters ──
     cl_parser = sub.add_parser("clusters", help="Klasterlarni ko'rish")
@@ -369,6 +390,103 @@ def cmd_enrich(limit: int, no_search: bool) -> int:
     return 0
 
 
+def cmd_write(limit: int, cluster_id: int | None) -> int:
+    from bot import db
+    from bot.writer import run_write
+
+    db.check_schema()
+    run_id = db.start_run("write")
+    report = run_write(limit=limit, cluster_id=cluster_id)
+    db.finish_run(
+        run_id,
+        items_in=report.processed,
+        items_out=report.written,
+        error_count=report.failed,
+        ok=not report.problems,
+        note=report.summary(),
+    )
+
+    print()
+    print(f"Ishlandi:   {report.processed}")
+    print(f"Yozildi:    {report.written}")
+    if report.retried:
+        print(f"Qayta yozildi: {report.retried} (birinchi urinish tekshiruvdan o'tmadi)")
+    if report.failed:
+        print(f"Bo'lmadi:   {report.failed}")
+    print(f"Xarajat:    ${report.cost_usd:.5f}")
+    if report.problems:
+        print("\nMuammolar:")
+        for problem in report.problems[:10]:
+            print(f"  - {problem}")
+    if report.written:
+        print("\nKo'rish: bot posts list")
+    return 0
+
+
+def cmd_posts_list(limit: int, status: str | None) -> int:
+    from bot import db
+
+    db.check_schema()
+    where = "WHERE p.status = ?" if status else ""
+    params = (status, limit) if status else (limit,)
+    rows = db.query(
+        f"""
+        SELECT p.id, p.cluster_id, p.status, p.model, p.created_at,
+               length(p.body) AS len, c.category, c.importance_score, c.title
+        FROM posts p
+        JOIN clusters c ON c.id = p.cluster_id
+        {where}
+        ORDER BY p.created_at DESC
+        LIMIT ?
+        """,
+        params,
+    )
+
+    if not rows:
+        print("Post topilmadi. `bot write` ni ishga tushiring.")
+        return 0
+
+    header = (
+        f"{'ID':>4} {'KLST':>5} {'STATUS':<10} {'BAHO':>5} "
+        f"{'BELGI':>6} {'KATEGORIYA':<14} SARLAVHA"
+    )
+    print(header)
+    print("─" * 108)
+    for r in rows:
+        score = f"{r['importance_score']:.1f}" if r["importance_score"] is not None else "—"
+        print(
+            f"{r['id']:>4} {r['cluster_id']:>5} {r['status']:<10} {score:>5} "
+            f"{r['len']:>6} {(r['category'] or '—')[:14]:<14} {r['title'][:38]}"
+        )
+    print("\nTo'liq ko'rish: bot posts show <id>")
+    return 0
+
+
+def cmd_posts_show(post_id: int) -> int:
+    from bot import db
+    from bot.writer import post_detail
+
+    db.check_schema()
+    post = post_detail(post_id)
+    if post is None:
+        print(f"Post #{post_id} topilmadi.")
+        return 1
+
+    print(f"Post #{post['id']}  (klaster {post['cluster_id']})")
+    print(f"Status:    {post['status']}")
+    print(f"Model:     {post['model']}")
+    print(f"Uzunlik:   {len(post['body'])} belgi")
+    print(f"Kategoriya: {post['category']}, muhimlik {post['importance_score']}")
+    if post.get("image_url"):
+        print(f"Rasm:      {post['image_url'][:80]}")
+    print(f"Yozildi:   {post['created_at']}")
+    print()
+    print("─" * 60)
+    print(post["body"])
+    print("─" * 60)
+    return 0
+
+
 def cmd_clusters_list(limit: int, status: str | None) -> int:
     from bot import db
 
@@ -498,6 +616,12 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_rank(args.limit, args.batch_size, args.dry_run)
             case "enrich":
                 return cmd_enrich(args.limit, args.no_search)
+            case "write":
+                return cmd_write(args.limit, args.cluster)
+            case "posts" if args.posts_command == "list":
+                return cmd_posts_list(args.limit, args.status)
+            case "posts" if args.posts_command == "show":
+                return cmd_posts_show(args.post_id)
             case "clusters" if args.clusters_command == "list":
                 return cmd_clusters_list(args.limit, args.status)
             case "clusters" if args.clusters_command == "show":
