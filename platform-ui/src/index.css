@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme {
+  /* Tungi boshqaruv markazi — siyoh-ko'k fon, Samarqand lazur aksent */
+  --color-bg: #0f1520;
+  --color-panel: #18202f;
+  --color-panel2: #1f2a3d;
+  --color-line: #2a3650;
+  --color-ink: #e9eef8;
+  --color-muted: #8e9bb5;
+  --color-faint: #5c6a87;
+
+  --color-lazur: #45c8b5;
+  --color-lazur-dim: #1fa090;
+  --color-gold: #d9a94e;
+  --color-coral: #e2685c;
+  --color-mint: #61b876;
+
+  /* Grafik seriyalari — dataviz validatoridan o'tgan (dark, #18202F) */
+  --color-s1: #1fa090;
+  --color-s2: #b08428;
+  --color-s3: #4e82d0;
+  --color-s4: #c75d53;
+
+  --font-display: "Bricolage Grotesque Variable", system-ui, sans-serif;
+  --font-sans: "Manrope Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-lazur) 35%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-lazur);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Yupqa scrollbar — loglar va jadval panellari uchun */
+.thin-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 3px;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: rise-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot,
+  .cursor-blink,
+  .rise-in {
+    animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
