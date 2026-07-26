@@ -28,18 +28,16 @@ Javob sifatida faqat post matnini qaytarasan, hech qanday izohsiz."""
 
 
 def _channel_block(channel: dict[str, Any]) -> str:
-    """Auditoriya profili — post kim uchun yozilayotganini belgilaydi."""
+    """Auditoriya profili — post kim uchun yozilayotganini belgilaydi.
+
+    `topics_of_interest` bu yerga kirmaydi: u Rank bosqichi uchun —
+    "bu yangilik kanalga mosmi?" degan savolga javob beradi. Writer'ga
+    yangilik allaqachon tanlangan holda keladi, ro'yxat esa promptni
+    uzaytiradi va hech narsa qo'shmaydi.
+    """
     ch = channel.get("channel") or {}
-    parts = ["KANAL VA AUDITORIYA"]
-
-    if audience := (ch.get("audience") or "").strip():
-        parts.append(f"\n{audience}")
-
-    if interests := ch.get("topics_of_interest"):
-        listed = "\n".join(f"  - {t}" for t in interests)
-        parts.append(f"\nAuditoriya nimaga qiziqadi:\n{listed}")
-
-    return "\n".join(parts)
+    audience = (ch.get("audience") or "").strip()
+    return f"AUDITORIYA\n{audience}" if audience else ""
 
 
 def _structure_block(channel: dict[str, Any]) -> str:
@@ -110,6 +108,27 @@ def _format_block(channel: dict[str, Any], *, budget: int, target: int) -> str:
     return "\n".join(lines)
 
 
+# Promptga tushadigan namunalar soni.
+#
+# Har namuna ~500 belgi (~125 token). 4 ta namuna promptning 35% ini
+# egallaydi, lekin ular bir xil uslubni ko'rsatadi — model uchun 2 tasi
+# ham yetarli signal. Xarajat: kuniga 6 post × 250 token × 30 kun =
+# oyiga 45k input token tejaladi.
+MAX_EXAMPLES = 2
+
+# Manba matnining promptga tushadigan qismi (belgilarda).
+#
+# Enricher 6000 belgigacha beradi, lekin postdagi faktlar tahlili
+# (2026-07-26) ko'rsatdiki, ular deyarli har doim matn boshida:
+# to'rtta postda fakt pozitsiyalari 0-3300 oralig'ida, bittasida 5390.
+# Maqola oxiri odatda marketing tafsilotlari, prompt namunalari va
+# "shuningdek o'qing" bo'ladi.
+#
+# 3500 tanlandi: fakt yo'qotmaslik uchun zaxira bilan, lekin promptni
+# sezilarli qisqartiradi.
+MAX_SOURCE_TEXT = 3500
+
+
 def _examples_block(channel: dict[str, Any], category: str) -> str:
     """Few-shot namunalar.
 
@@ -125,13 +144,34 @@ def _examples_block(channel: dict[str, Any], category: str) -> str:
     ordered = same + other
 
     lines = ["NAMUNALAR (shu uslubda yoz)"]
-    for example in ordered[:4]:
+    for example in ordered[:MAX_EXAMPLES]:
         body = (example.get("post") or "").strip()
         if not body:
             continue
         lines.append(f"\n--- {example.get('category', '')} ---\n{body}")
 
     return "\n".join(lines)
+
+
+def trim_source(text: str, limit: int = MAX_SOURCE_TEXT) -> str:
+    """Manba matnini qisqartirish — abzats chegarasida.
+
+    O'rtasidan kesish jumlani buzadi va model uzilgan faktni noto'g'ri
+    talqin qilishi mumkin, shuning uchun oxirgi to'liq abzatsda to'xtaymiz.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+
+    cut = text[:limit]
+    # Oxirgi abzats chegarasi (yoki jumla, agar abzats topilmasa)
+    for separator in ("\n\n", ". "):
+        index = cut.rfind(separator)
+        # Juda erta kesilmasin — kamida yarmi qolsin
+        if index > limit // 2:
+            return cut[: index + len(separator)].strip()
+
+    return cut.strip()
 
 
 def signature_length(channel: dict[str, Any]) -> int:
@@ -188,7 +228,7 @@ def build_write_prompt(
         _examples_block(channel, category),
     ]
 
-    source_text = str(cluster.get("text") or "").strip()
+    source_text = trim_source(str(cluster.get("text") or ""))
     link = str(cluster.get("link") or "")
 
     task = f"""YANGILIK

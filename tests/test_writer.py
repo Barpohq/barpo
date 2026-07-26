@@ -532,3 +532,95 @@ class TestWriteFlow:
         drafts = draft_posts()
         assert len(drafts) == 1
         assert drafts[0]["title"] == "Test yangilik"
+
+
+class TestTrimSource:
+    """Manba matnini qisqartirish — prompt xarajatini kamaytiradi."""
+
+    def test_short_text_untouched(self) -> None:
+        from bot.writer.prompts import trim_source
+
+        text = "Qisqa matn."
+        assert trim_source(text, 100) == text
+
+    def test_cuts_at_paragraph_boundary(self) -> None:
+        """O'rtasidan kesish jumlani buzadi — abzats chegarasida to'xtaymiz."""
+        from bot.writer.prompts import trim_source
+
+        text = "Birinchi abzats matni.\n\nIkkinchi abzats matni.\n\nUchinchi abzats."
+        # 30 belgi ikkinchi abzatsning boshiga tushadi — u butunlay tashlanadi
+        result = trim_source(text, 30)
+
+        assert result == "Birinchi abzats matni."
+
+    def test_keeps_whole_paragraphs(self) -> None:
+        """Chegaraga sig'adigan abzatslar saqlanadi."""
+        from bot.writer.prompts import trim_source
+
+        text = "Birinchi abzats matni.\n\nIkkinchi abzats matni.\n\nUchinchi abzats."
+        result = trim_source(text, 50)
+
+        assert "Birinchi" in result
+        assert "Ikkinchi" in result
+        assert "Uchinchi" not in result
+
+    def test_falls_back_to_sentence(self) -> None:
+        from bot.writer.prompts import trim_source
+
+        text = "Birinchi jumla shu yerda. Ikkinchi jumla. Uchinchi jumla ham bor."
+        result = trim_source(text, 45)
+
+        assert result.endswith(".")
+        assert len(result) <= 45
+
+    def test_hard_cut_when_no_boundary(self) -> None:
+        from bot.writer.prompts import trim_source
+
+        text = "a" * 200
+        assert len(trim_source(text, 50)) == 50
+
+    def test_default_limit_applied_in_prompt(self) -> None:
+        """Prompt qurishda uzun matn avtomatik qisqaradi."""
+        from bot.writer.prompts import MAX_SOURCE_TEXT, build_write_prompt
+
+        cluster = {
+            "id": 1,
+            "title": "T",
+            "category": "model_release",
+            "text": "Juda uzun matn. " * 2000,
+            "link": "https://x.dev",
+        }
+        prompt = build_write_prompt(cluster, CHANNEL, budget=996)
+
+        # Matn qismi chegaradan oshmasligi kerak
+        assert len(prompt) < MAX_SOURCE_TEXT + 5000
+
+
+class TestExampleLimit:
+    def test_limits_examples(self) -> None:
+        """Few-shot namunalar soni cheklangan — prompt xarajati uchun."""
+        from bot.writer.prompts import MAX_EXAMPLES, build_write_prompt
+
+        channel = {
+            **CHANNEL,
+            "few_shot_posts": [
+                {"category": f"cat{i}", "post": f"Namuna {i} matni"} for i in range(6)
+            ],
+        }
+        cluster = {"id": 1, "title": "T", "category": "cat0", "text": "matn", "link": ""}
+        prompt = build_write_prompt(cluster, channel, budget=996)
+
+        included = sum(1 for i in range(6) if f"Namuna {i} matni" in prompt)
+        assert included == MAX_EXAMPLES
+
+    def test_topics_not_in_prompt(self) -> None:
+        """topics_of_interest Rank uchun — Writer promptini uzaytirmasin."""
+        from bot.writer.prompts import build_write_prompt
+
+        channel = {
+            **CHANNEL,
+            "channel": {**CHANNEL["channel"], "topics_of_interest": ["UNIKAL_MAVZU_NOMI"]},
+        }
+        cluster = {"id": 1, "title": "T", "category": "model_release", "text": "m", "link": ""}
+
+        assert "UNIKAL_MAVZU_NOMI" not in build_write_prompt(cluster, channel, budget=996)

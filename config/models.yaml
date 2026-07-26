@@ -32,25 +32,32 @@ stages:
     temperature: 0.2
 
   write:
-    # Eng kuchli model — post sifati = kanal obro'si.
-    # 2026-07-26 dastlabki sinov: Opus 5 o'zbekchada toza yozdi (diakritika,
-    # grammatika to'g'ri). Faza 2'da to'liq taqqoslash o'tkaziladi.
-    model: anthropic/claude-opus-5
+    # Post sifati = kanal obro'si, lekin eng qimmat model shart emas.
+    #
+    # 2026-07-26 til sinovi (3 yangilik × 4 model, `bot lang-test`):
+    #   sonnet-5      3/3 ok, $2.36/oy — eng ixcham va tabiiy o'zbekcha
+    #   gpt-5.6-luna  3/3 ok, $1.59/oy — batafsilroq, lekin ba'zi inglizcha
+    #                 so'zlar aralashadi (image, output)
+    #   opus-5        3/3 ok, $5.14/oy — sifat yaxshi, narx oqlanmaydi
+    #   gemini-3.1-pro 0/3  — manba havolasini qo'ymadi, zanjirdan chiqarildi
+    #
+    # Sonnet tanlandi: Luna 0.8$ arzon, lekin til tozaligi muhimroq.
+    model: anthropic/claude-sonnet-5
     fallbacks:
-      - anthropic/claude-sonnet-5
-      - google/gemini-3.1-pro-preview
+      - openai/gpt-5.6-luna
+      - anthropic/claude-opus-5
     max_tokens: 2000
     temperature: 0.7
 
-# Faza 2 til sinovi uchun nomzodlar: bir xil yangilikni har biriga
-# yozdirib, o'zbekcha sifatini taqqoslaymiz.
-# Narxlar juda farq qiladi — agar arzonrog'i yetarli sifat bersa,
-# oylik xarajat bir necha barobar tushadi.
+# Til sinovi nomzodlari — `bot lang-test` shu ro'yxatni ishlatadi.
+# Yangi model chiqqanda shu yerga qo'shib qayta sinash mumkin.
+#
+# Oxirgi sinov: 2026-07-26. Natija yuqoridagi `write` izohida.
 language_test_candidates:
-  - anthropic/claude-opus-5        # 5.00/25.00 — hozirgi asosiy
-  - anthropic/claude-sonnet-5      # 2.00/10.00 — 2.5x arzon
-  - openai/gpt-5.6-luna            # 1.00/ 6.00 — 5x arzon, yangi avlod
-  - google/gemini-3.1-pro-preview  # 2.00/12.00
+  - anthropic/claude-sonnet-5      # 2.00/10.00 — hozirgi asosiy
+  - openai/gpt-5.6-luna            # 1.00/ 6.00 — eng arzon ishlaydigan
+  - anthropic/claude-opus-5        # 5.00/25.00 — sifat etaloni
+  - google/gemini-3.1-pro-preview  # 2.00/12.00 — havola qo'ymaydi
 
 # Narxlar ($/1M token). Xarajat hisobi shu jadvalga tayanadi.
 # OpenRouter javobidagi `usage` bilan birga ishlatiladi.

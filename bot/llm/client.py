@@ -218,6 +218,46 @@ class LLMClient:
             f"'{stage}' bosqichi uchun barcha modellar ishlamadi:\n  " + "\n  ".join(errors)
         )
 
+    def complete_with_model(
+        self,
+        model: str,
+        *,
+        stage: str,
+        prompt: str,
+        system: str = "",
+        cluster_id: int | None = None,
+        json_mode: bool = False,
+        max_tokens: int = 2000,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        """Aniq model bilan chaqiruv — fallback zanjirisiz.
+
+        Model taqqoslash uchun: fallback ishlasa qaysi model javob
+        berganini bilib bo'lmaydi, natija esa shu savolga bog'liq.
+        """
+        self._check_cost_limit()
+
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: dict[str, Any] = {
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        return self._call_with_retry(
+            model=model,
+            requested_model=model,
+            payload_base=payload,
+            stage=stage,
+            cluster_id=cluster_id,
+        )
+
     # ─────────────────────── Ichki mantiq ───────────────────────
 
     def _check_cost_limit(self) -> None:

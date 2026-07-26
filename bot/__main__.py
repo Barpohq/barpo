@@ -11,6 +11,7 @@ Buyruqlar:
     bot rank                — klasterlarni LLM bilan baholash
     bot enrich              — to'liq maqola matni bilan boyitish
     bot write               — klasterlardan post yozish
+    bot lang-test           — til sinovi: modellarni taqqoslash
     bot posts list          — yozilgan postlar ro'yxati
     bot posts show <id>     — bitta postni ko'rish
     bot publish             — draftlarni tasdiqqa yuborish + navbatni chiqarish
@@ -123,6 +124,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     write_parser.add_argument(
         "--cluster", type=int, help="Faqat shu klaster uchun (sinov uchun)"
+    )
+
+    # ── lang-test ──
+    lang_parser = sub.add_parser(
+        "lang-test", help="Til sinovi: bir yangilikni turli modellarga yozdirish"
+    )
+    lang_parser.add_argument(
+        "--clusters", type=int, default=3, help="Nechta yangilikda sinash (default: 3)"
+    )
+    lang_parser.add_argument(
+        "--models", help="Vergul bilan model ro'yxati (default: models.yaml dagi nomzodlar)"
+    )
+    lang_parser.add_argument(
+        "--show", action="store_true", help="Yozilgan postlarni to'liq ko'rsatish"
     )
 
     # ── posts ──
@@ -466,6 +481,66 @@ def cmd_write(limit: int, cluster_id: int | None) -> int:
     return 0
 
 
+def cmd_lang_test(cluster_count: int, models_arg: str | None, show: bool) -> int:
+    from bot import db
+    from bot.enricher import enriched_clusters
+    from bot.writer.compare import format_comparison, run_comparison
+    from bot.writer.write import MIN_SOURCE_TEXT
+
+    db.check_schema()
+
+    # Sinov uchun eng yaxshi boyitilgan klasterlar — qisqa matnli
+    # klasterda modellar orasidagi farq ko'rinmaydi
+    candidates = [
+        c
+        for c in enriched_clusters(limit=cluster_count * 4)
+        if len(str(c.get("text") or "")) >= MIN_SOURCE_TEXT
+    ][:cluster_count]
+
+    if not candidates:
+        print("Sinov uchun boyitilgan klaster yo'q. Avval `bot enrich` ni ishga tushiring.")
+        return 1
+
+    models = [m.strip() for m in models_arg.split(",")] if models_arg else None
+
+    print(f"Sinov: {len(candidates)} yangilik")
+    for cluster in candidates:
+        print(f"  [{cluster['id']}] {str(cluster['title'])[:64]}")
+    print()
+
+    try:
+        summaries = run_comparison(candidates, models)
+    except ValueError as exc:
+        print(f"Xato: {exc}")
+        return 1
+
+    print()
+    print(format_comparison(summaries))
+
+    failures = [(s.model, a) for s in summaries for a in s.attempts if a.failed or not a.valid]
+    if failures:
+        print("\nMuammolar:")
+        for model, attempt in failures[:10]:
+            reason = attempt.failed or "; ".join(attempt.errors)
+            print(f"  {model}: {reason[:70]}")
+
+    if show:
+        for summary in summaries:
+            for attempt in summary.attempts:
+                if not attempt.text:
+                    continue
+                print()
+                print("=" * 72)
+                print(f"{summary.model}  ·  klaster {attempt.cluster_id}  ·  "
+                      f"{attempt.length} belgi  ·  ${attempt.cost_usd:.5f}")
+                print("=" * 72)
+                print(attempt.text)
+    else:
+        print("\nPostlarni ko'rish uchun: --show")
+
+    return 0
+
+
 def cmd_posts_list(limit: int, status: str | None) -> int:
     from bot import db
 
@@ -788,6 +863,8 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_enrich(args.limit, args.no_search)
             case "write":
                 return cmd_write(args.limit, args.cluster)
+            case "lang-test":
+                return cmd_lang_test(args.clusters, args.models, args.show)
             case "posts" if args.posts_command == "list":
                 return cmd_posts_list(args.limit, args.status)
             case "posts" if args.posts_command == "show":
