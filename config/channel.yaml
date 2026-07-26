@@ -52,6 +52,12 @@ format:
   emoji_policy: minimal
   # Post oxirida manba havolasi bo'lsinmi
   include_source_link: true
+  # Post oxirida kanal username'i ko'rsatilsinmi.
+  # Maqsad: post boshqa kanalga forward qilinganda yoki nusxa olinganda
+  # manba ko'rinib tursin — o'quvchi kanalni topa olsin.
+  include_channel_signature: true
+  # Imzo oldidagi ajratkich (bo'sh qoldirilsa ajratkich chiqmaydi)
+  signature_separator: "———"
   # Doimiy hashtaglar (kategoriya hashtagi avtomatik qo'shiladi)
   hashtags:
     - "#AI"
@@ -98,6 +104,11 @@ post_structure:
     - name: havola
       rule: |
         🔗 <a href="...">Manba</a> keyin ikki bo'shliq va hashtaglar.
+    - name: imzo
+      rule: |
+        Bo'sh qator, ajratkich (———), yana bo'sh qatorsiz kanal username'i.
+        Bu blokni Writer o'zi yozmaydi — Publisher avtomatik qo'shadi,
+        shuning uchun matn uzunligini hisoblashda hisobga olinadi.
 
 # Uslub qoidalari — Writer promptiga to'g'ridan-to'g'ri kiradi
 style_rules:
@@ -132,6 +143,9 @@ few_shot_posts:
 
       🔗 <a href="https://www.anthropic.com/news/claude-opus-5">Manba</a>  #AI #ModelRelease
 
+      ———
+      @meninguchunyangikanal
+
   - category: tool
     post: |
       🔹 <b>GitHub Copilot'ga Claude Opus 5 qo'shildi</b>
@@ -144,6 +158,9 @@ few_shot_posts:
       • Model tanlash menyusidan qo'lda yoqiladi
 
       🔗 <a href="https://github.blog">Manba</a>  #AI #Tool
+
+      ———
+      @meninguchunyangikanal
 
   - category: business
     post: |
@@ -161,6 +178,9 @@ few_shot_posts:
 
       🔗 <a href="https://mistral.ai/news">Manba</a>  #AI #Biznes
 
+      ———
+      @meninguchunyangikanal
+
   - category: research
     post: |
       🔹 <b>Anthropic Claude'ni izolyatsiyalash usulini ochib berdi</b>
@@ -173,3 +193,6 @@ few_shot_posts:
       • Sessiya tugagach muhit butunlay o'chiriladi
 
       🔗 <a href="https://www.anthropic.com/engineering">Manba</a>  #AI #Research
+
+      ———
+      @meninguchunyangikanal
