@@ -28,6 +28,12 @@ APPROVAL_AUTO_THRESHOLD = 95.0
 # Shu muddat davomida yangilik kelmasa — manbalar buzilgan
 STALE_HOURS = 24
 
+# Botning pipeline bosqichlari. `runs` jadvali umumiy — boshqa agentlar
+# (masalan server monitor) ham o'z yozuvlarini shu yerga qo'yadi, va
+# `alert` ham bosqich sifatida yoziladi. Filtrsiz ular botning
+# hisobotida "pipeline bosqichi ishlamadi" bo'lib chiqib qolardi.
+PIPELINE_STAGES = ("collect", "dedup", "rank", "enrich", "write", "publish")
+
 
 def _since(hours: int) -> str:
     return (datetime.now(UTC) - timedelta(hours=hours)).isoformat(timespec="seconds")
@@ -220,17 +226,21 @@ def _currently_failing_stages(since: str) -> list[str]:
 
     Manbalar bilan bir xil mantiq: bosqich xato bergan bo'lsa ham,
     keyin muvaffaqiyatli ishlagan bo'lsa muammo hal bo'lgan.
+
+    Faqat botning o'z bosqichlari hisobga olinadi (PIPELINE_STAGES) —
+    `runs` jadvalini boshqa agentlar ham ishlatadi.
     """
+    placeholders = ", ".join("?" for _ in PIPELINE_STAGES)
     rows = query(
-        """
+        f"""
         SELECT stage,
                MAX(CASE WHEN ok = 0 THEN started_at END) AS last_fail,
                MAX(CASE WHEN ok = 1 THEN started_at END) AS last_ok
         FROM runs
-        WHERE started_at >= ?
+        WHERE started_at >= ? AND stage IN ({placeholders})
         GROUP BY stage
         """,
-        (since,),
+        (since, *PIPELINE_STAGES),
     )
 
     failing: list[str] = []

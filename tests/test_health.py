@@ -146,6 +146,31 @@ class TestStageRecovery:
         assert collect_metrics(24).failed_stages == ["write"]
 
 
+class TestOtherAgentsIgnored:
+    """`runs` jadvali umumiy — botning hisoboti begona yozuvlarni olmasin.
+
+    Server monitor ham shu jadvalga yozadi. Filtrsiz uning xatosi
+    botning alertida "pipeline bosqichi ishlamadi" bo'lib chiqardi.
+    """
+
+    def test_monitor_failure_is_not_a_bot_problem(self, migrated_db) -> None:
+        _add_run("monitor", ok=False, started_at=_ago(hours=1))
+
+        assert collect_metrics(24).failed_stages == []
+
+    def test_alert_records_are_ignored(self, migrated_db) -> None:
+        # notify.py cooldown uchun `runs` ga stage='alert' yozadi
+        _add_run("alert", ok=False, started_at=_ago(hours=1))
+
+        assert collect_metrics(24).failed_stages == []
+
+    def test_bot_stage_still_detected_alongside(self, migrated_db) -> None:
+        _add_run("monitor", ok=False, started_at=_ago(hours=2))
+        _add_run("rank", ok=False, started_at=_ago(hours=1))
+
+        assert collect_metrics(24).failed_stages == ["rank"]
+
+
 class TestApprovalRate:
     def test_no_reviews_returns_none(self, migrated_db) -> None:
         _add_post(status="draft")
