@@ -52,9 +52,10 @@ def _alert_recently_sent() -> bool:
 
 def _send(text: str) -> bool:
     """Xabarni admin chatga yuborish. Muvaffaqiyatli bo'lsa True."""
-    from bot.publisher.telegram import TelegramClient, admin_chat_id, is_configured, with_client
+    from core.telegram import TelegramClient, admin_chat_id, has_token, with_client
 
-    if not is_configured():
+    # Hisobot admin chatga ketadi — kanal sozlanmagan bo'lsa ham yuboriladi
+    if not has_token():
         log.info("Telegram sozlanmagan — xabar yuborilmadi")
         return False
 

@@ -341,5 +341,48 @@ class TestApprovalKeyboard:
         assert len({CB_APPROVE, CB_EDIT, CB_REJECT}) == 3
 
 
+class TestConfiguredVsToken:
+    """Bot kanalsiz post chiqara olmaydi, monitor esa kanalsiz ishlaydi.
+
+    Ikkala agent bitta tokenni bo'lishadi, lekin talablari boshqa:
+    alertlar admin chatga ketadi va kanalga bog'liq emas.
+    """
+
+    def test_bot_needs_channel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bot.publisher.telegram import is_configured
+
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+        monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
+
+        assert not is_configured()
+
+    def test_monitor_only_needs_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from core.telegram import has_token
+
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+        monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
+
+        assert has_token()
+
+    def test_both_true_when_fully_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bot.publisher.telegram import is_configured
+        from core.telegram import has_token
+
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+        monkeypatch.setenv("TELEGRAM_CHANNEL_ID", "-100")
+
+        assert has_token() and is_configured()
+
+    def test_no_token_means_nothing_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bot.publisher.telegram import is_configured
+        from core.telegram import has_token
+
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+        monkeypatch.setenv("TELEGRAM_CHANNEL_ID", "-100")
+
+        assert not has_token()
+        assert not is_configured()
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
