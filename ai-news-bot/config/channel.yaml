@@ -1,0 +1,204 @@
+# Kanal profili — Writer va Rank bosqichlari shu faylga tayanadi.
+
+channel:
+  # Postlar tili
+  language: uz
+  # Kanal username (Telegram). Publisher shu yerga joylaydi.
+  # Diqqat: haqiqiy yuborish manzili .env dagi TELEGRAM_CHANNEL_ID dan
+  # olinadi — bu yerdagi qiymat hujjat va approval xabarlari uchun.
+  username: "@meninguchunyangikanal"
+  # Kanal nomi (post ichida ishlatilmaydi, hujjat uchun)
+  name: "AI yangiliklari"
+
+  # Auditoriya profili — Rank bosqichida "kanalga moslik" bahosi uchun promptga kiradi
+  audience: |
+    O'zbek tilida so'zlashuvchi texnik auditoriya: dasturchilar, IT sohasi
+    mutaxassislari, AI bilan qiziquvchi talabalar va tadbirkorlar.
+    Ular AI vositalarini amalda ishlatishadi, yangi model relizlari va
+    real foydalanish holatlari bilan qiziqishadi. Akademik chuqurlik emas,
+    amaliy qiymat muhim.
+
+  # Qaysi mavzular qiziq / qiziq emas — Rank promptiga kiradi
+  topics_of_interest:
+    - Yangi model relizlari (GPT, Claude, Gemini, ochiq modellar)
+    - AI vositalari va dasturchi asboblari
+    - Open-source modellar va lokal ishga tushirish
+    - AI kompaniyalari haqidagi muhim biznes yangiliklar
+    - Amaliy qo'llanmalar va real natijalar
+
+  topics_to_avoid:
+    - Reklama va sponsorlik postlari
+    - Mish-mish va tasdiqlanmagan gaplar
+    - Chuqur akademik maqolalar amaliy qiymatsiz
+    - Kripto/NFT bilan aralash AI loyihalari
+
+posting:
+  # Kuniga maksimal post soni
+  max_posts_per_day: 6
+  # Rank bahosi shu qiymatdan past bo'lsa post yozilmaydi (1-10)
+  min_importance_score: 6
+  # Ikki post orasidagi minimal tanaffus (daqiqa)
+  min_interval_minutes: 45
+
+format:
+  # Telegram parse rejimi: HTML yoki MarkdownV2
+  parse_mode: HTML
+  # Post uzunligi chegarasi (belgilarda).
+  # 1024 — rasm bilan yuborilgan postning caption limiti. Rasmsiz post
+  # 4096 gacha bo'lishi mumkin, lekin bitta chegarada qolgan ma'qul:
+  # aks holda rasm topilmaganda post uzunligi keskin o'zgarib ketadi.
+  max_length: 1024
+  # Emoji siyosati: none | minimal | rich
+  emoji_policy: minimal
+  # Post oxirida manba havolasi bo'lsinmi
+  include_source_link: true
+  # Post oxirida kanal username'i ko'rsatilsinmi.
+  # Maqsad: post boshqa kanalga forward qilinganda yoki nusxa olinganda
+  # manba ko'rinib tursin — o'quvchi kanalni topa olsin.
+  include_channel_signature: true
+  # Imzo oldidagi ajratkich (bo'sh qoldirilsa ajratkich chiqmaydi)
+  signature_separator: "———"
+  # Doimiy hashtaglar (kategoriya hashtagi avtomatik qo'shiladi)
+  hashtags:
+    - "#AI"
+  # Kategoriya → hashtag. Rank bosqichi qo'ygan kategoriya ishlatiladi.
+  category_hashtags:
+    model_release: "#ModelRelease"
+    research: "#Research"
+    tool: "#Tool"
+    business: "#Biznes"
+    other: ""
+  # OG rasm topilsa postga qo'shilsinmi
+  include_image: true
+
+  # Telegram HTML'da faqat shu teglar ishlaydi. <ul>/<li>/<br>/<p> YO'Q —
+  # ro'yxat uchun "• " belgisi va qator uzilishi ishlatiladi.
+  allowed_tags: [b, i, u, s, a, code, pre, blockquote]
+
+  # Tafsilotlar ro'yxatidagi punktlar soni (validator tekshiradi).
+  # Ko'p punkt post ko'rinishini og'irlashtiradi va o'quvchi diqqatini
+  # tarqatadi — eng muhim 2-4 tasi qoldirilgani ma'qul.
+  min_bullets: 2
+  max_bullets: 4
+
+# ─────────────────────── Post tuzilishi ───────────────────────
+# Writer shu sxemaga amal qiladi. Kanal yangi bo'lgani uchun few-shot
+# namunalar sun'iy tayyorlangan (2026-07-26) — real postlar to'planganda
+# ular eng yaxshilari bilan almashtiriladi.
+post_structure:
+  # Har bir blok ixtiyoriy emas — tartib va vazifasi qat'iy
+  blocks:
+    - name: sarlavha
+      rule: |
+        🔹 belgisi + qalin sarlavha (<b>...</b>). Bir qator, 60-90 belgi.
+        Yangilikning mohiyatini aytadi, sarlavhani so'zma-so'z tarjima
+        qilmaydi. Savol belgisi va uch nuqta ishlatilmaydi.
+    - name: mohiyat
+      rule: |
+        2-3 jumla. Nima bo'ldi va asosiy raqam/fakt. Eng muhim ma'lumot
+        birinchi jumlada bo'lsin — o'quvchi faqat shuni o'qishi mumkin.
+    - name: tafsilotlar
+      rule: |
+        2-4 punkt, har biri "• " bilan boshlanadi va bitta qatorga sig'adi
+        (60-80 belgi). Faqat aniq fakt: raqam, narx, cheklov, mavjudlik.
+        Umumiy gaplar ("juda kuchli", "ajoyib imkoniyat") kiritilmaydi.
+    - name: nega_muhim
+      rule: |
+        "Nega muhim:" bilan boshlanuvchi 1-2 jumla — o'quvchi uchun amaliy
+        oqibat. Bu blok faqat haqiqatan aytadigan gap bo'lsa qo'shiladi;
+        mavzu oddiy bo'lsa tashlab ketiladi.
+    - name: havola
+      rule: |
+        🔗 <a href="...">Manba</a> keyin ikki bo'shliq va hashtaglar.
+    - name: imzo
+      rule: |
+        Bo'sh qator, ajratkich (———), yana bo'sh qatorsiz kanal username'i.
+        Bu blokni Writer o'zi yozmaydi — Publisher avtomatik qo'shadi,
+        shuning uchun matn uzunligini hisoblashda hisobga olinadi.
+
+# Uslub qoidalari — Writer promptiga to'g'ridan-to'g'ri kiradi
+style_rules:
+  - "O'zbek tilida, adabiy me'yorda. Diakritika to'g'ri: o', g', ' (tutuq belgisi)"
+  - "Texnik atamalar asl holida: prompt, benchmark, API, token, open-source"
+  - "Model va mahsulot nomlari tarjima qilinmaydi: Claude Opus 5, GPT-5.6"
+  - "Raqamlar aniq ko'rsatiladi — 'ancha arzon' emas, 'ikki barobar arzon'"
+  - "Reklama ohangi yo'q: 'inqilobiy', 'ajoyib', 'shov-shuv' kabi so'zlar ishlatilmaydi"
+  - "Tasdiqlanmagan ma'lumot berilmaydi — matnda yo'q narsa postda ham yo'q"
+  - "Birinchi shaxs ishlatilmaydi ('menimcha', 'biz o'ylaymizki')"
+  - "O'quvchiga murojaat qilinmaydi ('bilasizmi', 'tasavvur qiling')"
+
+# Writer uchun few-shot uslub namunalari.
+# Kanal yangi — bu namunalar real yangiliklar asosida etalon sifatida
+# yozilgan. Kanalda yaxshi postlar to'planganda ularni shu yerga ko'chiring
+# (eng yaxshi 5-10 tasi), sun'iy namunalarni olib tashlang.
+few_shot_posts:
+  - category: model_release
+    post: |
+      🔹 <b>Anthropic Claude Opus 5 ni taqdim etdi</b>
+
+      Yangi model Fable 5 darajasidagi imkoniyatlarni yarim narxda taklif
+      qiladi. Kodlash va bilim ishlari bo'yicha Frontier-Bench sinovida
+      birinchi o'rinni egalladi.
+
+      • Narx avvalgi Opus 4.8 bilan bir xil qoldi
+      • Claude Max'da asosiy model sifatida yoqilgan
+      • Kiberxavfsizlik masalalarida Mythos 5 dan orqada
+
+      Nega muhim: kundalik ishlatish uchun mo'ljallangan — narx va tezlik
+      nisbati endi yirik loyihalarda ham Opus'ni tanlash imkonini beradi.
+
+      🔗 <a href="https://www.anthropic.com/news/claude-opus-5">Manba</a>  #AI #ModelRelease
+
+      ———
+      @meninguchunyangikanal
+
+  - category: tool
+    post: |
+      🔹 <b>GitHub Copilot'ga Claude Opus 5 qo'shildi</b>
+
+      Model Copilot Chat va agent rejimida ishlaydi. Pro va Business
+      obunachilar uchun bugundan ochiq.
+
+      • VS Code, JetBrains va Visual Studio'da mavjud
+      • Agent rejimida ko'p faylli o'zgarishlar qo'llab-quvvatlanadi
+      • Model tanlash menyusidan qo'lda yoqiladi
+
+      🔗 <a href="https://github.blog">Manba</a>  #AI #Tool
+
+      ———
+      @meninguchunyangikanal
+
+  - category: business
+    post: |
+      🔹 <b>Mistral AI 1,7 mlrd yevro investitsiya jalb qildi</b>
+
+      Fransuz kompaniyasi yangi raundda ochiq modellarni rivojlantirish va
+      hisoblash quvvatini kengaytirishni maqsad qilgan.
+
+      • Raundni ASML boshqargan
+      • Kompaniya bahosi 11,7 mlrd yevroga yetdi
+      • Mablag' Yevropadagi ma'lumot markazlariga yo'naltiriladi
+
+      Nega muhim: ochiq modellar ekotizimi uchun yirik mablag' — AQSh
+      kompaniyalariga muqobil yo'nalish kuchaymoqda.
+
+      🔗 <a href="https://mistral.ai/news">Manba</a>  #AI #Biznes
+
+      ———
+      @meninguchunyangikanal
+
+  - category: research
+    post: |
+      🔹 <b>Anthropic Claude'ni izolyatsiyalash usulini ochib berdi</b>
+
+      Kompaniya agent rejimida ishlaydigan modelni tizimdan ajratish
+      arxitekturasini e'lon qildi. Har bir sessiya alohida muhitda ishlaydi.
+
+      • Fayl tizimiga kirish aniq ruxsat bilan cheklanadi
+      • Tarmoq so'rovlari oq ro'yxat orqali o'tadi
+      • Sessiya tugagach muhit butunlay o'chiriladi
+
+      🔗 <a href="https://www.anthropic.com/engineering">Manba</a>  #AI #Research
+
+      ———
+      @meninguchunyangikanal

@@ -1,0 +1,112 @@
+# Qaysi bosqichda qaysi model ishlatiladi.
+# Slug'lar OpenRouter formatida. Narxlar $/1M token (2026-07 holatiga).
+# Model almashtirish uchun faqat shu faylni tahrirlash yetadi.
+
+# Har bosqich uchun: model + fallback zanjiri.
+# Asosiy model xato bersa yoki mavjud bo'lmasa — keyingisiga o'tadi.
+stages:
+  rank:
+    # Arzon model 90% ishni qiladi: klasterlarni baholash, spam filtri.
+    #
+    # 2026-07-26 sinovi (8 ta real yangilik, 6 model):
+    #   gemini-3.1-flash-lite  — yagona model, korporativ PR postlarini
+    #                            is_spam=true deb belgiladi; eng tez (2.4s)
+    #   gemini-2.5-flash-lite  — 5x arzon, lekin eski qo'llanmani 7/9 baholadi
+    #   gpt-4.1-nano           — PR postini 7/7 baholadi (yaroqsiz filtr)
+    #   gpt-5-nano             — bo'sh javob qaytardi, zanjirdan chiqarildi
+    # Narx farqi oyiga ~$0.18 — spam filtri sifatidan muhimroq emas.
+    model: google/gemini-3.1-flash-lite
+    fallbacks:
+      - google/gemini-3.5-flash-lite
+      - google/gemini-2.5-flash-lite
+    max_tokens: 2000
+    # Baholash deterministik bo'lishi kerak
+    temperature: 0.0
+
+  enrich:
+    # Web sahifa matnidan kontekst ajratish
+    model: google/gemini-2.5-flash
+    fallbacks:
+      - google/gemini-3.1-flash-lite
+    max_tokens: 2000
+    temperature: 0.2
+
+  write:
+    # Post sifati = kanal obro'si, lekin eng qimmat model shart emas.
+    #
+    # 2026-07-26 til sinovi (3 yangilik × 4 model, `bot lang-test`):
+    #   sonnet-5      3/3 ok, $2.36/oy — eng ixcham va tabiiy o'zbekcha
+    #   gpt-5.6-luna  3/3 ok, $1.59/oy — batafsilroq, lekin ba'zi inglizcha
+    #                 so'zlar aralashadi (image, output)
+    #   opus-5        3/3 ok, $5.14/oy — sifat yaxshi, narx oqlanmaydi
+    #   gemini-3.1-pro 0/3  — manba havolasini qo'ymadi, zanjirdan chiqarildi
+    #
+    # Sonnet tanlandi: Luna 0.8$ arzon, lekin til tozaligi muhimroq.
+    model: anthropic/claude-sonnet-5
+    fallbacks:
+      - openai/gpt-5.6-luna
+      - anthropic/claude-opus-5
+    max_tokens: 2000
+    temperature: 0.7
+
+  monitor:
+    # Server diagnostikasi: log o'qish va qisqa xulosa. Kuchli model
+    # shart emas — vazifa aniq va javob 3-5 jumla.
+    # Faqat `fail` darajasidagi muammolar uchun chaqiriladi.
+    model: google/gemini-3.1-flash-lite
+    fallbacks:
+      - google/gemini-3.5-flash-lite
+    max_tokens: 600
+    temperature: 0.2
+
+# Til sinovi nomzodlari — `bot lang-test` shu ro'yxatni ishlatadi.
+# Yangi model chiqqanda shu yerga qo'shib qayta sinash mumkin.
+#
+# Oxirgi sinov: 2026-07-26. Natija yuqoridagi `write` izohida.
+language_test_candidates:
+  - anthropic/claude-sonnet-5      # 2.00/10.00 — hozirgi asosiy
+  - openai/gpt-5.6-luna            # 1.00/ 6.00 — eng arzon ishlaydigan
+  - anthropic/claude-opus-5        # 5.00/25.00 — sifat etaloni
+  - google/gemini-3.1-pro-preview  # 2.00/12.00 — havola qo'ymaydi
+
+# Narxlar ($/1M token). Xarajat hisobi shu jadvalga tayanadi.
+# OpenRouter javobidagi `usage` bilan birga ishlatiladi.
+pricing:
+  # Arzon (rank/enrich uchun)
+  openai/gpt-5-nano:              { input: 0.05, output: 0.40 }
+  google/gemini-2.5-flash-lite:   { input: 0.10, output: 0.40 }
+  openai/gpt-4.1-nano:            { input: 0.10, output: 0.40 }
+  openai/gpt-5.4-nano:            { input: 0.20, output: 1.25 }
+  google/gemini-3.1-flash-lite:   { input: 0.25, output: 1.50 }
+  google/gemini-2.5-flash:        { input: 0.30, output: 2.50 }
+  google/gemini-3.5-flash-lite:   { input: 0.30, output: 2.50 }
+  google/gemini-3-flash-preview:  { input: 0.50, output: 3.00 }
+  # O'rta / kuchli (writer uchun)
+  openai/gpt-5.6-luna:            { input: 1.00, output: 6.00 }
+  anthropic/claude-haiku-4.5:     { input: 1.00, output: 5.00 }
+  google/gemini-3.5-flash:        { input: 1.50, output: 9.00 }
+  anthropic/claude-sonnet-5:      { input: 2.00, output: 10.00 }
+  google/gemini-3.1-pro-preview:  { input: 2.00, output: 12.00 }
+  openai/gpt-5.6-terra:           { input: 2.50, output: 15.00 }
+  anthropic/claude-opus-5:        { input: 5.00, output: 25.00 }
+  openai/gpt-5.6-sol:             { input: 5.00, output: 30.00 }
+
+limits:
+  # Kunlik xarajat limiti ($). Oshsa bot to'xtaydi va alert yuboradi.
+  # Bu limit alohida limiti bo'lmagan bosqichlarga tegishli.
+  daily_cost_usd: 2.0
+
+  # Bosqich bo'yicha alohida limitlar. Ikki agent bitta bazani
+  # bo'lishadi — botning pipeline'i limitni to'ldirsa monitor
+  # diagnostikasi bloklanmasligi kerak (va aksincha).
+  stage_limits:
+    # 5 server, cooldown 4 soat → kuniga eng ko'pi 30 chaqiruv.
+    # Kutilgan sarf ~$0.03/kun; limit kutilmagan sikl (masalan
+    # cooldown bug'i) hisobni portlatmasligi uchun.
+    monitor: 0.3
+  # Bitta LLM chaqiruvi uchun maksimal urinishlar soni
+  max_retries: 3
+  # Retry orasidagi boshlang'ich kutish (soniya), har urinishda 2x oshadi
+  retry_base_delay: 2.0
+  # Bitta so'rov timeout (soniya)
+  request_timeout: 120
