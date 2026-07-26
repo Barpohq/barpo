@@ -1,0 +1,45 @@
+# Build konteksti — Docker daemon'ga uzatiladigan fayllar.
+#
+# Bularsiz kontekst 1GB dan oshadi (.venv 872MB, models_cache 137MB) va
+# har build boshida to'liq uzatiladi. Dockerfile ularning birortasini ham
+# ishlatmaydi: faqat pyproject.toml, README.md va paket kataloglari kerak.
+
+# Lokal virtual muhit — konteynerda paketlar qaytadan o'rnatiladi
+.venv/
+venv/
+
+# Embedding modeli keshi — konteynerda volume orqali ulanadi
+models_cache/
+
+# Baza va loglar — volume orqali ulanadi
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Git tarixi
+.git/
+.gitignore
+
+# Sirlar — konteynerga env_file orqali beriladi, image'ga tushmasin
+.env
+.env.*
+!.env.example
+
+# Python oraliq fayllari
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Testlar va hujjatlar — ishlash uchun kerak emas
+tests/
+docs/
+
+# Muharrir va OS fayllari
+.vscode/
+.idea/
+.DS_Store

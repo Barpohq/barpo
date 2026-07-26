@@ -21,7 +21,22 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Bog'liqliklarni alohida qatlamda: kod o'zgarganda qayta o'rnatilmaydi
 COPY pyproject.toml README.md ./
-RUN uv pip install --system --no-cache .
+
+# PyTorch — faqat CPU varianti.
+#
+# `sentence-transformers` torch'ni tortadi, u esa default holda CUDA
+# g'ildiraklarini oladi: nvidia-cublas 517MB, nvidia-cudnn 424MB,
+# nvidia-cusolver 213MB va h.k. — jami ~2.5GB. Bot embeddingni CPU'da
+# hisoblaydi va serverda GPU yo'q, ya'ni bularning hammasi keraksiz yuk:
+# build sekinlashadi, image ~3GB ga shishadi.
+#
+# CPU indeksi o'sha torch'ni CUDA'siz beradi (~200MB). Embedding tezligi
+# o'zgarmaydi — u baribir CPU'da ishlaydi.
+RUN uv pip install --system --no-cache \
+        --index-url https://download.pytorch.org/whl/cpu \
+        --index-strategy unsafe-best-match \
+        torch \
+    && uv pip install --system --no-cache .
 
 COPY core/ ./core/
 COPY bot/ ./bot/
