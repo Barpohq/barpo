@@ -31,6 +31,8 @@ class CycleReport:
     servers_checked: int = 0
     checks_total: int = 0
     problems: int = 0
+    alerts_sent: int = 0
+    alerts_resolved: int = 0
     failed_servers: list[str] = field(default_factory=list)
     results: list[CheckResult] = field(default_factory=list)
 
@@ -39,6 +41,10 @@ class CycleReport:
             f"{self.servers_checked} server, {self.checks_total} tekshiruv, "
             f"{self.problems} muammo"
         )
+        if self.alerts_sent:
+            text += f", {self.alerts_sent} alert"
+        if self.alerts_resolved:
+            text += f", {self.alerts_resolved} tiklandi"
         if self.failed_servers:
             text += f" (ulanmadi: {', '.join(self.failed_servers)})"
         return text
@@ -53,8 +59,47 @@ def check_one(server: Server) -> list[CheckResult]:
     return results
 
 
-def run_checks(servers: list[Server] | None = None) -> CycleReport:
-    """To'liq sikl: har serverni tekshirish va holatni saqlash.
+def _notify(
+    results: list[CheckResult], servers: list[Server], *, diagnose: bool
+) -> tuple[int, int]:
+    """Alertlarni yuborish va tuzalganlarini yopish.
+
+    Xato bo'lsa ham sikl davom etadi: xabar yuborilmasligi o'lchov
+    yig'ishni to'xtatmasligi kerak.
+    """
+    from monitor.notify import process_results, resolve_alerts
+    from monitor.state import current_states
+
+    sent = resolved = 0
+    checked_servers = {s.name for s in servers}
+
+    try:
+        sent = process_results(results, diagnose=diagnose)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Alert yuborishda xato")
+        log_error("monitor.notify", str(exc), traceback=traceback.format_exc())
+
+    try:
+        # Tiklanish faqat shu siklda tekshirilgan serverlar bo'yicha:
+        # tekshirilmagan serverning eski holati "tuzaldi" deb hisoblanmasin
+        healthy = [
+            s for s in current_states() if s.server in checked_servers and not s.is_problem
+        ]
+        resolved = resolve_alerts(healthy)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Tiklanish xabarlarida xato")
+        log_error("monitor.notify", str(exc), traceback=traceback.format_exc())
+
+    return sent, resolved
+
+
+def run_checks(
+    servers: list[Server] | None = None,
+    *,
+    notify: bool = False,
+    diagnose: bool = False,
+) -> CycleReport:
+    """To'liq sikl: tekshirish, saqlash va (so'ralsa) alert yuborish.
 
     Exception tashlamaydi — scheduler jobni o'chirib qo'ymasligi kerak.
     """
@@ -89,6 +134,11 @@ def run_checks(servers: list[Server] | None = None) -> CycleReport:
         report.problems += len(problems)
         for problem in problems:
             log.warning("%s/%s: %s", server.name, problem.name, problem.message)
+
+    if notify:
+        report.alerts_sent, report.alerts_resolved = _notify(
+            report.results, targets, diagnose=diagnose
+        )
 
     finish_run(
         run_id,

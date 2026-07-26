@@ -4,6 +4,7 @@ Buyruqlar:
     monitor servers          — serverlar ro'yxati va SSH ulanishini sinash
     monitor check            — bir marta tekshirish, natijani saqlash
     monitor status           — oxirgi ma'lum holat (yangi tekshiruvsiz)
+    monitor alerts           — alert tarixi
 """
 
 from __future__ import annotations
@@ -42,12 +43,22 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument(
         "--no-save", action="store_true", help="Natijani bazaga yozmaslik"
     )
+    check_parser.add_argument(
+        "--notify", action="store_true", help="Muammo bo'lsa Telegram'ga alert yuborish"
+    )
 
     # ── status ──
     status_parser = sub.add_parser("status", help="Oxirgi ma'lum holat (tekshirmasdan)")
     status_parser.add_argument("--server", help="Faqat shu server")
     status_parser.add_argument(
         "--problems", action="store_true", help="Faqat muammolarni ko'rsatish"
+    )
+
+    # ── alerts ──
+    alerts_parser = sub.add_parser("alerts", help="Alert tarixi")
+    alerts_parser.add_argument("--limit", type=int, default=20, help="Nechta (default: 20)")
+    alerts_parser.add_argument(
+        "--open", action="store_true", help="Faqat yopilmagan alertlar"
     )
 
     return parser
@@ -87,7 +98,7 @@ def cmd_servers() -> int:
     return 1 if failures else 0
 
 
-def cmd_check(server_name: str | None, no_save: bool) -> int:
+def cmd_check(server_name: str | None, no_save: bool, notify: bool) -> int:
     """Tekshiruvni bajarish, natijani saqlash va ko'rsatish."""
     from core import db
     from monitor.checks import check_server
@@ -99,16 +110,21 @@ def cmd_check(server_name: str | None, no_save: bool) -> int:
         print("Kuzatiladigan server yo'q (hammasi enabled: false?)")
         return 1
 
+    alerts = resolved = 0
     if no_save:
+        if notify:
+            print("--notify va --no-save birga ishlamaydi (alert holatga tayanadi)")
+            return 2
         results = []
         for server in servers:
             results.extend(check_server(server))
         problems = sum(1 for r in results if r.is_problem)
     else:
         db.check_schema()
-        report = run_checks(servers)
+        report = run_checks(servers, notify=notify)
         results = report.results
         problems = report.problems
+        alerts, resolved = report.alerts_sent, report.alerts_resolved
 
     current = ""
     for result in results:
@@ -120,6 +136,10 @@ def cmd_check(server_name: str | None, no_save: bool) -> int:
 
     print()
     print(f"{problems} ta muammo topildi." if problems else "Hammasi joyida.")
+    if alerts:
+        print(f"{alerts} ta alert yuborildi.")
+    if resolved:
+        print(f"{resolved} ta muammo tiklandi.")
     # Semantik exit code: cron va skriptlar uchun
     return 1 if problems else 0
 
@@ -154,6 +174,33 @@ def cmd_status(server_name: str | None, problems_only: bool) -> int:
     return 1 if problems else 0
 
 
+def cmd_alerts(limit: int, open_only: bool) -> int:
+    """Alert tarixini ko'rsatish."""
+    from core import db
+    from monitor.notify import open_alerts, recent_alerts
+
+    db.check_schema()
+    alerts = open_alerts() if open_only else recent_alerts(limit)
+
+    if not alerts:
+        print("Ochiq alert yo'q." if open_only else "Alert tarixi bo'sh.")
+        return 0
+
+    for alert in alerts:
+        state = "ochiq" if not alert.get("resolved_at") else "yopilgan"
+        mark = "🔴" if state == "ochiq" else "✓"
+        print(
+            f"{mark} #{alert['id']:<4} {alert['created_at']}  "
+            f"{alert['server']}/{alert['check_name']:<16} {state}"
+        )
+        print(f"     {alert['summary']}")
+        if alert.get("diagnosis"):
+            first_line = str(alert["diagnosis"]).splitlines()[0]
+            print(f"     💡 {first_line[:90]}")
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -170,9 +217,11 @@ def main(argv: list[str] | None = None) -> int:
             case "servers":
                 return cmd_servers()
             case "check":
-                return cmd_check(args.server, args.no_save)
+                return cmd_check(args.server, args.no_save, args.notify)
             case "status":
                 return cmd_status(args.server, args.problems)
+            case "alerts":
+                return cmd_alerts(args.limit, args.open)
             case _:
                 parser.error(f"Noma'lum buyruq: {args.command}")
                 return 2
