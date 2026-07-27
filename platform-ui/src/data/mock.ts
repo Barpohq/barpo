@@ -1,20 +1,44 @@
 // Mock ma'lumotlar — demo rejim. Raqamlar loyihaning real tarixidan olingan
 // (roadmap 2026-07-26: 247 klaster, 151 qabul, $0.037/post, approval 96%).
+//
+// TIPLAR endi @platforma/shared paketida (platform-shared/src/types.ts) —
+// backend ham xuddi shu tiplarni ishlatadi. Bu fayl ularni re-export qiladi,
+// shuning uchun sahifalardagi `import { Agent } from '../data/mock'` kabi
+// importlar avvalgidek ishlaydi. Backend ulanganda faqat DATA almashtiriladi.
 
-export type AgentStatus = 'running' | 'idle' | 'paused'
+// Shu faylda annotatsiya sifatida ishlatiladigan tiplar
+import type {
+  Agent,
+  AppManifest,
+  AuditEntry,
+  BuildPlan,
+  LlmCall,
+  Server,
+  Skill,
+  ToolCard,
+  WorkflowStep,
+} from '@platforma/shared'
 
-export interface Agent {
-  id: string
-  name: string
-  desc: string
-  status: AgentStatus
-  schedule: string
-  nextRun: string
-  todayCost: number
-  todayCalls: number
-  model: string
-  metrics: { label: string; value: string }[]
-}
+export type {
+  Agent,
+  AgentStatus,
+  AppManifest,
+  AuditEntry,
+  AuditLevel,
+  BuildPlan,
+  BuildStep,
+  ChatMessage,
+  ChatSession,
+  BuildSession,
+  DeployOption,
+  LlmCall,
+  Server,
+  Skill,
+  StatItem,
+  ToolCard,
+  Widget,
+  WorkflowStep,
+} from '@platforma/shared'
 
 export const agents: Agent[] = [
   {
@@ -53,20 +77,6 @@ export const agents: Agent[] = [
   },
 ]
 
-export interface Server {
-  id: string
-  name: string
-  role: string
-  region: string
-  status: 'healthy' | 'warning' | 'offline'
-  cpu: number
-  ram: number
-  disk: number
-  daemon: string
-  uptime: string
-  note?: string
-}
-
 export const servers: Server[] = [
   { id: 'frankfurt-1', name: 'frankfurt-1', role: 'Platforma yadrosi', region: 'Hetzner · FSN1', status: 'healthy', cpu: 23, ram: 41, disk: 37, daemon: 'v0.3.1 · ulangan', uptime: '84 kun' },
   { id: 'helsinki-1', name: 'helsinki-1', role: 'ai-news-bot', region: 'Hetzner · HEL1', status: 'warning', cpu: 12, ram: 58, disk: 84, daemon: 'v0.3.1 · ulangan', uptime: '31 kun', note: "Disk 84% — models_cache tozalash tavsiya etiladi" },
@@ -74,15 +84,6 @@ export const servers: Server[] = [
   { id: 'nyc-1', name: 'nyc-1', role: 'Proxy / fetch chiqish nuqtasi', region: 'DO · NYC3', status: 'healthy', cpu: 8, ram: 30, disk: 19, daemon: 'v0.3.1 · ulangan', uptime: '58 kun' },
   { id: 'berlin-1', name: 'berlin-1', role: 'Zaxira (backup)', region: 'Contabo · BER', status: 'healthy', cpu: 2, ram: 14, disk: 62, daemon: 'v0.3.1 · ulangan', uptime: '203 kun' },
 ]
-
-export interface WorkflowStep {
-  id: string
-  name: string
-  desc: string
-  status: 'done' | 'running' | 'waiting'
-  stat: string
-  detail: string
-}
 
 export const workflowSteps: WorkflowStep[] = [
   { id: 'collector', name: 'Collector', desc: 'RSS + HN + Reddit', status: 'done', stat: '412 element', detail: "32 manbadan yig'ildi, 3 manba Google News orqali" },
@@ -112,15 +113,6 @@ export const modelCosts = [
   { model: 'bge-m3 (lokal)', task: 'Embedding', cost: 0.0 },
 ]
 
-export interface LlmCall {
-  time: string
-  agent: string
-  model: string
-  task: string
-  tokens: string
-  cost: string
-}
-
 export const llmCalls: LlmCall[] = [
   { time: '12:04:18', agent: 'ai-news-bot', model: 'claude-opus-5', task: 'writer · post #5', tokens: '3.1k → 412', cost: '$0.0371' },
   { time: '12:03:52', agent: 'ai-news-bot', model: 'claude-opus-5', task: 'writer · post #4', tokens: '2.8k → 388', cost: '$0.0344' },
@@ -129,17 +121,6 @@ export const llmCalls: LlmCall[] = [
   { time: '11:50:12', agent: 'server-monitor', model: 'gemini-3-flash', task: 'diagnostika · helsinki-1 disk', tokens: '2.2k → 310', cost: '$0.0007' },
   { time: '06:02:33', agent: 'ai-news-bot', model: 'gemini-3-flash', task: 'rank · 34 klaster', tokens: '15.1k → 1.2k', cost: '$0.0052' },
 ]
-
-export type AuditLevel = "o'qish" | "o'zgartirish" | 'xavfli'
-
-export interface AuditEntry {
-  time: string
-  actor: string
-  action: string
-  target: string
-  level: AuditLevel
-  result: 'OK' | 'tasdiqlandi' | 'rad etildi' | 'kutmoqda'
-}
 
 export const auditLog: AuditEntry[] = [
   { time: '12:06', actor: 'ai-news-bot', action: 'Post nashr qilindi', target: 't.me/kanal/6', level: "o'zgartirish", result: 'tasdiqlandi' },
@@ -155,16 +136,6 @@ export const auditLog: AuditEntry[] = [
   { time: '05:55', actor: 'server-monitor', action: 'Restart taklifi', target: 'nyc-1 · nginx', level: "o'zgartirish", result: 'kutmoqda' },
   { time: '00:12', actor: 'berlin-1 daemon', action: 'Kunlik backup', target: 'sqlite → berlin-1', level: "o'zgartirish", result: 'tasdiqlandi' },
 ]
-
-export interface Skill {
-  id: string
-  name: string
-  desc: string
-  version: string
-  installed: boolean
-  category: string
-  permissions: { level: AuditLevel; text: string }[]
-}
 
 export const skills: Skill[] = [
   {
@@ -256,13 +227,7 @@ export const skills: Skill[] = [
   },
 ]
 
-// Chat uchun tayyor javoblar
-export interface ToolCard {
-  tool: string
-  args: string
-  result: string
-}
-
+// Chat uchun tayyor javoblar (faqat demo rejim — backend ulanganda o'chadi)
 export interface CannedReply {
   match: string[]
   toolCard?: ToolCard
@@ -343,33 +308,6 @@ export const botLogLines = [
 // Vidjetlar sxema (data) sifatida — host UI ularni dinamik render qiladi,
 // yangi ilova uchun frontend qayta build qilinmaydi.
 // ---------------------------------------------------------------------------
-
-export interface StatItem {
-  label: string
-  value: string
-  hint?: string
-  accent?: string
-}
-
-export type Widget =
-  | { type: 'stats'; items: StatItem[] }
-  | { type: 'bars'; title: string; items: { label: string; value: number; note?: string }[]; suffix?: string }
-  | { type: 'table'; title: string; columns: string[]; rows: string[][] }
-  | { type: 'logs'; title: string; lines: string[] }
-  | { type: 'note'; text: string }
-  | { type: 'deploy'; url: string; kind: 'domen' | 'port'; server: string; ssl?: string; extra?: string }
-  | { type: 'git'; repo: string; branch: string; commits: { hash: string; msg: string; time: string }[] }
-
-export interface AppManifest {
-  id: string
-  icon: string
-  name: string
-  tagline: string
-  version: string
-  service: string
-  status: 'running' | 'idle'
-  widgets: Widget[]
-}
 
 export const installedApps: AppManifest[] = [
   {
@@ -478,27 +416,6 @@ const xarajatBotManifest: AppManifest = {
 // bot, static sayt, full-stack. Har reja: qadamlar + (ixtiyoriy) deploy
 // tanlovi + tayyor manifest. Real versiyada bu orchestrator'dan oqib keladi.
 // ---------------------------------------------------------------------------
-
-export interface BuildStep {
-  text: string
-  kind: 'info' | 'tool' | 'out' | 'done'
-}
-
-export interface DeployOption {
-  label: string
-  steps: BuildStep[]
-  widget: Widget
-}
-
-export interface BuildPlan {
-  id: string
-  keywords: string[]
-  intro: string
-  toolCard: ToolCard
-  steps: BuildStep[]
-  choice?: { question: string; options: DeployOption[] }
-  manifest: AppManifest
-}
 
 const portfolioManifest: AppManifest = {
   id: 'portfolio-site',

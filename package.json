@@ -1,0 +1,17 @@
+{
+  "name": "ai-platfom",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "platform-ui",
+    "platform-shared",
+    "platform-server"
+  ],
+  "scripts": {
+    "dev:server": "bun --cwd platform-server run dev",
+    "dev:ui": "bun --cwd platform-ui run dev",
+    "test": "bun --cwd platform-server test",
+    "build": "bun --cwd platform-ui run build"
+  }
+}
