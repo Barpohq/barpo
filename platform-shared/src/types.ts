@@ -82,17 +82,71 @@ export interface AuditEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Skill do'koni
+// Skilllar
 // ---------------------------------------------------------------------------
+//
+// Model uch qatlamdan iborat — ularni ARALASHTIRMASLIK kerak:
+//
+//   MANBA   — ulangan GitHub repo (`anthropics/skills`). Bir manbada ko'p skill.
+//   SKILL   — repo ichida topilgan bitta `SKILL.md`. Katalogda ko'rinadi,
+//             lekin diskda hali yo'q — bu shunchaki "mavjud" degani.
+//   O'RNATISH — skill qayerda ishlashi: global (hamma joyda) yoki aniq
+//             loyihalarda. Bitta skill bir vaqtda bir necha loyihaga
+//             o'rnatilishi mumkin, shuning uchun bu alohida ro'yxat.
+//
+// Diskda skill FAQAT o'rnatilgandan keyin paydo bo'ladi (omborda), sessiya
+// boshida esa loyiha papkasiga nusxalanadi. Batafsil: platform-server/
+// src/skill-ombor.ts.
+
+/** Hozircha faqat GitHub. `tur` kelajakda kengayadi (gitlab, mahalliy papka). */
+export type SkillManbaTuri = 'github'
+
+export interface SkillManba {
+  id: string
+  tur: SkillManbaTuri
+  /** Foydalanuvchi kiritgan asl URL — UI'da shu ko'rsatiladi */
+  url: string
+  owner: string
+  repo: string
+  /** Branch yoki tag. Bo'sh bo'lsa repo'ning standart branch'i ishlatilgan. */
+  ref: string
+  /** Oxirgi sinxronlashdagi commit SHA — o'zgarganini shundan bilamiz */
+  commitSha: string | null
+  oxirgiSinxron: string | null
+  createdAt: string
+}
+
+/** Skill qayerda ishlaydi */
+export type SkillQamrov = 'global' | 'loyiha'
+
+export interface SkillOrnatish {
+  qamrov: SkillQamrov
+  /** `qamrov: 'loyiha'` bo'lganda majburiy, aks holda undefined */
+  projectId?: string
+}
 
 export interface Skill {
   id: string
-  name: string
-  desc: string
-  version: string
-  installed: boolean
-  category: string
-  permissions: { level: AuditLevel; text: string }[]
+  manbaId: string
+  /** Repo ichidagi yo'l — `document-skills/pdf/SKILL.md` */
+  yol: string
+  /** Frontmatter'dagi `name`, yo'q bo'lsa papka nomi */
+  nom: string
+  /** Frontmatter'dagi `description` — MAJBURIY, promptga shu tushadi */
+  tavsif: string
+  litsenziya?: string
+  /**
+   * Frontmatter'dagi `allowed-tools`.
+   *
+   * HOZIRCHA MAJBURLANMAYDI — o'rnatish modalida foydalanuvchiga
+   * ko'rsatiladi, xolos. Majburlash alohida bosqich (pi'da ham
+   * implementatsiya qilinmagan).
+   */
+  allowedTools?: string[]
+  /** Spec'ga mos kelmagan joylar — skill baribir yuklanadi, UI'da ko'rsatiladi */
+  ogohlantirishlar: string[]
+  /** Bo'sh massiv = o'rnatilmagan, faqat katalogda turibdi */
+  ornatilgan: SkillOrnatish[]
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +371,14 @@ export interface ChatSession {
   projectId?: string
   createdAt: string
   updatedAt: string
+  /**
+   * Suhbatdagi xabarlar soni. Faqat RO'YXAT so'rovida (`GET /api/chat/sessions`)
+   * to'ldiriladi — bitta sessiya so'ralganda ortiqcha hisob-kitob shart emas.
+   *
+   * UI shu bilan "bo'sh suhbat" ni ajratadi: sessiya yaratilib, birinchi
+   * xabar yuborilmasdan tashlab ketilishi oddiy holat.
+   */
+  xabarlarSoni?: number
 }
 
 // ---------------------------------------------------------------------------

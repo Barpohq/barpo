@@ -35,7 +35,8 @@ import type {
 } from '@platforma/shared'
 import { auditYoz } from './audit.ts'
 import { sessiyaIshPapkasi } from './ish-papkasi.ts'
-import { sessiyaLoyihaPapkasi, xabarlarOqi, xabarYoz } from './repo.ts'
+import { faolSkilllar, sessiyaLoyihaPapkasi, sessiyaOqi, xabarlarOqi, xabarYoz } from './repo.ts'
+import { loyihagaSinxronla } from './skill-ombor.ts'
 import { hub } from './ws/hub.ts'
 
 /**
@@ -52,6 +53,25 @@ import { hub } from './ws/hub.ts'
  */
 function sessiyaPapkasi(sessionId: string): string {
   return sessiyaIshPapkasi(sessionId, sessiyaLoyihaPapkasi(sessionId))
+}
+
+/**
+ * Sessiyada faol skilllarni ish papkasiga nusxalaydi.
+ *
+ * Faol = global o'rnatilganlar + shu sessiya loyihasiga o'rnatilganlar.
+ * Loyihasiz sessiyada faqat global (`projectId: null`).
+ *
+ * XATO TASHLAMAYDI: skill tayyorlanmasa suhbat baribir boshlanadi, faqat
+ * `<available_skills>` ro'yxati bo'sh bo'ladi. Bu qatlam qulaylik uchun —
+ * uning nosozligi butun sessiyani yiqitmasligi kerak.
+ */
+function skilllarniTayyorla(sessionId: string, papka: string): void {
+  try {
+    const sessiya = sessiyaOqi(sessionId)
+    loyihagaSinxronla(papka, faolSkilllar(sessiya?.projectId ?? null))
+  } catch {
+    // jim o'tamiz — sabab yuqoridagi izohda
+  }
 }
 
 /**
@@ -143,6 +163,12 @@ export async function javobOqizi(
   // bir loyihaning hamma suhbatlari bitta fayllar to'plamini ko'rsin.
   const papka = sessiyaPapkasi(sessionId)
   const { config: sozlamalar } = config({ ishPapkasi: papka })
+
+  // O'rnatilgan skilllarni ish papkasiga tushiramiz. Har oqim boshida
+  // qayta sinxronlanadi: foydalanuvchi suhbat davomida yangi skill
+  // o'rnatgan bo'lishi mumkin. Agent ro'yxatni `.platforma/skills/` dan
+  // o'zi o'qiydi (`skill-yuklash.ts`).
+  skilllarniTayyorla(sessionId, papka)
 
   const tarix = tarixniTayyorla(sessionId)
   const toolKartalari = new Map<string, ToolChaqiruv>()
@@ -333,7 +359,12 @@ export async function javobOqizi(
 
   // Javobni saqlash: bo'sh bo'lsa ham yozamiz (xato holatida sabab ko'rinsin)
   const saqlanadigan = xato ? xatoliMatn(toplangan, xato) : toplangan
-  if (saqlanadigan.length > 0 || toolCards.length > 0) {
+  // Sessiya oqim davomida o'chirilgan bo'lishi mumkin (DELETE /chat/sessions/:id
+  // avval `abort()` qiladi, lekin oqim shu nuqtaga baribir yetib keladi).
+  // Tekshirmasak `xabarYoz` foreign key xatosi tashlardi — u esa bu yerda
+  // ushlanmaydi, chunki `finally` allaqachon o'tgan.
+  const sessiyaBor = sessiyaOqi(sessionId) !== null
+  if (sessiyaBor && (saqlanadigan.length > 0 || toolCards.length > 0)) {
     xabarYoz({
       id: messageId,
       sessionId,

@@ -1,23 +1,30 @@
-import { useState, type ReactNode } from 'react'
-import OqimIndikatori from './components/OqimIndikatori'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import SuhbatlarRoyxati from './components/SuhbatlarRoyxati'
 import { installedApps, type AppManifest } from './data/mock'
+import { loyihalarOl } from './lib/api'
 import { hashQur, hashTahlil } from './lib/hash-yol'
 import { useIshlayotganlar } from './lib/ishlayotganlar'
+import { suhbatlarHolatiniSaqla, suhbatlarOchiqmi } from './lib/sidebar-saqlash'
+import { useSuhbatlar } from './lib/suhbatlar'
+import type { Project } from '@platforma/shared'
 import Agents from './pages/Agents'
 import Chat from './pages/Chat'
 import Servers from './pages/Servers'
 import Skills from './pages/Skills'
+import Suhbatlar from './pages/Suhbatlar'
 import Audit from './pages/Audit'
 import Terminal from './pages/Terminal'
 import AppView from './pages/AppView'
 
-type StaticPage = 'chat' | 'agents' | 'servers' | 'skills' | 'audit' | 'terminal'
+type StaticPage = 'chat' | 'suhbatlar' | 'agents' | 'servers' | 'skills' | 'audit' | 'terminal'
 type Page = StaticPage | `app:${string}`
 
 // Menyu ataylab qisqa: platforma oddiy PC'da ham ishlaydi, server bo'lsa
 // "Serverlar" sahifasi yetadi (ulash/uzish oson bo'lishi uchun).
+//
+// "Chat" bu ro'yxatda YO'Q — u alohida komponent (`SuhbatlarRoyxati`),
+// chunki ochiladigan suhbatlar ro'yxatini o'z ichiga oladi.
 const nav: { id: StaticPage; label: string; icon: ReactNode }[] = [
-  { id: 'chat', label: 'Chat', icon: <path d="M3 5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H8l-4 3v-3H5a2 2 0 0 1-2-2V5Z" /> },
   { id: 'agents', label: 'Agentlar', icon: <path d="M10 3a3 3 0 0 1 3 3v1h1a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1V6a3 3 0 0 1 3-3Zm-2 8h.01M12 11h.01" /> },
   { id: 'servers', label: 'Serverlar', icon: <path d="M3 4h14v4H3V4Zm0 8h14v4H3v-4Zm2-6h.01M5 14h.01" /> },
   { id: 'skills', label: "Skill do'koni", icon: <path d="M10 2 3 6v8l7 4 7-4V6l-7-4Zm0 4v12M3 6l7 4 7-4" /> },
@@ -25,7 +32,15 @@ const nav: { id: StaticPage; label: string; icon: ReactNode }[] = [
   { id: 'terminal', label: 'Terminal', icon: <path d="M3 4h14v12H3V4Zm3 3 3 3-3 3m5 0h4" /> },
 ]
 
-const staticPages: StaticPage[] = ['chat', 'agents', 'servers', 'skills', 'audit', 'terminal']
+const staticPages: StaticPage[] = [
+  'chat',
+  'suhbatlar',
+  'agents',
+  'servers',
+  'skills',
+  'audit',
+  'terminal',
+]
 
 /** Hash tahlili `lib/hash-yol.ts` da — sof funksiya, test bilan qoplangan */
 function initFromHash(): { pro: boolean; page: Page; sessionId: string | null } {
@@ -97,11 +112,39 @@ export default function App() {
   // Fonda ishlayotgan agent oqimlari — sidebar'da jonli ko'rsatiladi.
   // Bitta suhbatni ochgan bo'lsak ham hammasi ko'rinadi: `chat.status`
   // sessiya bo'yicha filtrlanmaydi (protocol.ts ga q.).
-  const { ishlayotganlar, sarlavhalar } = useIshlayotganlar()
+  const { ishlayotganlar } = useIshlayotganlar()
   const ishlayotganRoyxat = Object.entries(ishlayotganlar)
   const ruxsatKutayotganlar = ishlayotganRoyxat.filter(
     ([, holat]) => holat === 'ruxsat-kutmoqda',
   ).length
+
+  // Suhbatlar ro'yxati SHU YERDA bir marta yuklanadi va sidebar'ga ham,
+  // Suhbatlar sahifasiga ham beriladi. Har biri o'zi yuklasa ikki so'rov
+  // ketardi va o'chirish/qayta nomlash faqat bittasida ko'rinardi.
+  const {
+    suhbatlar,
+    yuklanmoqda: suhbatlarYuklanmoqda,
+    xato: suhbatlarXatosi,
+    yangila: suhbatlarniYangila,
+    ozgart: suhbatlarniOzgart,
+  } = useSuhbatlar()
+  /** Sidebar'dagi Chat ro'yxati ochiqmi — brauzerda eslab qolinadi */
+  const [suhbatlarOchiq, setSuhbatlarOchiq] = useState(suhbatlarOchiqmi)
+
+  // Loyihalar — Suhbatlar sahifasidagi filtr uchun. Xato bo'lsa jim
+  // qolamiz: filtr shunchaki ko'rinmaydi, ro'yxat baribir ishlaydi.
+  const [loyihalar, setLoyihalar] = useState<Project[]>([])
+  useEffect(() => {
+    let bekor = false
+    loyihalarOl()
+      .then((royxat) => {
+        if (!bekor) setLoyihalar(royxat)
+      })
+      .catch(() => undefined)
+    return () => {
+      bekor = true
+    }
+  }, [])
 
   /**
    * Hash'ni bitta joydan yozamiz — sahifa, rejim va ochiq suhbat uch xil
@@ -126,10 +169,45 @@ export default function App() {
     })
   }
 
-  /** Chat sessiya yaratganda/tozalaganda chaqiriladi */
-  function sessiyaOzgardi(sid: string | null) {
+  /**
+   * Chat sessiya yaratganda/tozalaganda chaqiriladi.
+   *
+   * `useCallback` — Chat uni ref'da saqlaydi, lekin barqaror nusxa
+   * bo'lgani ma'qul: keraksiz qayta renderlar kamayadi.
+   */
+  const sessiyaOzgardi = useCallback(
+    (sid: string | null) => {
+      setSessionId(sid)
+      hashYoz(pro, page, sid)
+      // Yangi suhbat yaratildi — ro'yxatga darhol tushsin. Server sarlavhani
+      // birinchi xabardan oladi, shuning uchun mahalliy qo'shish o'rniga
+      // qayta so'raymiz.
+      if (sid) suhbatlarniYangila()
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pro, page, suhbatlarniYangila],
+  )
+
+  /** Sidebar yoki Suhbatlar sahifasidan suhbat tanlandi */
+  function suhbatniOch(sid: string) {
+    setPageRaw('chat')
     setSessionId(sid)
-    hashYoz(pro, page, sid)
+    hashYoz(pro, 'chat', sid)
+  }
+
+  /** Yangi bo'sh suhbat — chat sahifasiga o'tib oynani tozalaydi */
+  function yangiSuhbatBoshla() {
+    setPageRaw('chat')
+    setSessionId(null)
+    hashYoz(pro, 'chat', null)
+    setYangiSuhbatSignali((n) => n + 1)
+  }
+
+  function suhbatlarniToggle() {
+    setSuhbatlarOchiq((ochiq) => {
+      suhbatlarHolatiniSaqla(!ochiq)
+      return !ochiq
+    })
   }
 
   // Yangi ilova manifesti keladi — sidebar va routing'ga darhol qo'shiladi.
@@ -176,10 +254,7 @@ export default function App() {
           <div className="thin-scroll flex-1 overflow-y-auto p-2">
             {/* Eng ko'p bajariladigan amal — ro'yxatdan ham tepada turadi */}
             <button
-              onClick={() => {
-                setPage('chat')
-                setYangiSuhbatSignali((n) => n + 1)
-              }}
+              onClick={yangiSuhbatBoshla}
               tabIndex={pro ? 0 : -1}
               className="mb-2 flex w-full items-center gap-2.5 rounded-lg border border-line px-3 py-2 text-left text-[13px] text-muted transition hover:border-lazur-dim hover:bg-panel2/60 hover:text-lazur"
             >
@@ -190,6 +265,22 @@ export default function App() {
             </button>
 
             <div className="space-y-0.5">
+              {/* Chat — ochiladigan ro'yxat bilan. Ichida oxirgi 5 suhbat,
+                  holatidan qat'i nazar; ishlayotganlari indikator bilan. */}
+              <SuhbatlarRoyxati
+                suhbatlar={suhbatlar}
+                ishlayotganlar={ishlayotganlar}
+                ochiqSessiya={sessionId}
+                ochiq={suhbatlarOchiq}
+                onToggle={suhbatlarniToggle}
+                onChatSahifasi={() => setPage('chat')}
+                onSuhbatOch={suhbatniOch}
+                onBarchasi={() => setPage('suhbatlar')}
+                faol={page === 'chat'}
+                yuklanmoqda={suhbatlarYuklanmoqda}
+                tabIndex={pro ? 0 : -1}
+              />
+
               {nav.map((n) => (
                 <button
                   key={n.id}
@@ -223,30 +314,9 @@ export default function App() {
               ))}
             </div>
 
-            {/* Jonli oqimlar — fonda ishlayotgan sessiyalar, real vaqtda */}
-            {ishlayotganRoyxat.length > 0 && (
-              <div className="mt-4 border-t border-line pt-3">
-                <div className="px-3 pb-1.5 text-[10px] font-semibold tracking-widest text-faint uppercase">
-                  Jonli oqimlar
-                </div>
-                <div className="space-y-0.5">
-                  {ishlayotganRoyxat.map(([sessionId, holat]) => (
-                    <button
-                      key={sessionId}
-                      onClick={() => setPage('agents')}
-                      tabIndex={pro ? 0 : -1}
-                      title={sarlavhalar[sessionId] ?? sessionId}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] text-muted transition hover:bg-panel2/60 hover:text-ink"
-                    >
-                      <OqimIndikatori holat={holat} />
-                      <span className="truncate font-mono text-xs">
-                        {sarlavhalar[sessionId] ?? 'Nomsiz suhbat'}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Eski "Jonli oqimlar" bo'limi olib tashlandi: fonda ishlayotgan
+                suhbatlar endi Chat ro'yxatida indikator bilan ko'rinadi,
+                umumiy soni esa Agentlar yonidagi badge'da. */}
 
             {/* Dinamik bo'lim — ilovalar o'z manifesti bilan shu yerga qo'shiladi */}
             <div className="mt-4 border-t border-line pt-3">
@@ -295,8 +365,22 @@ export default function App() {
               onInstallApp={installApp}
               openApp={openApp}
               yangiSuhbatSignali={yangiSuhbatSignali}
-              boshlangichSessiya={init.sessionId}
+              ochiqSessiya={sessionId}
               onSessiyaOzgardi={sessiyaOzgardi}
+            />
+          )}
+          {pro && page === 'suhbatlar' && (
+            <Suhbatlar
+              suhbatlar={suhbatlar}
+              ishlayotganlar={ishlayotganlar}
+              loyihalar={loyihalar}
+              ochiqSessiya={sessionId}
+              yuklanmoqda={suhbatlarYuklanmoqda}
+              xato={suhbatlarXatosi}
+              yangila={suhbatlarniYangila}
+              ozgart={suhbatlarniOzgart}
+              onSuhbatOch={suhbatniOch}
+              onYangiSuhbat={yangiSuhbatBoshla}
             />
           )}
           {pro && page === 'agents' && <Agents />}

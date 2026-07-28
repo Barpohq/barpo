@@ -15,10 +15,10 @@ const PORT = Number(process.env.PORT ?? 8787)
 // 1) Baza: ochish + migratsiyalar (db() ichida avtomatik) + seed
 const baza = db()
 const seed = seedQol(baza)
-if (seed.servers || seed.skills || seed.audit || seed.apps) {
+if (seed.servers || seed.audit || seed.apps) {
   console.log(
     `[seed] boshlang'ich ma'lumot yozildi: ${seed.servers} server · ` +
-      `${seed.skills} skill · ${seed.audit} audit · ${seed.apps} ilova`,
+      `${seed.audit} audit · ${seed.apps} ilova`,
   )
 }
 

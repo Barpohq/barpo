@@ -95,8 +95,13 @@ interface ChatProps {
    * effekt ishlamas edi.
    */
   yangiSuhbatSignali?: number
-  /** URL'dagi sessiya id (sahifa ochilganda) — bo'lsa o'sha suhbat tiklanadi */
-  boshlangichSessiya?: string | null
+  /**
+   * Ochilishi kerak bo'lgan suhbat — App boshqaradi (URL yoki sidebar
+   * tanlovi). O'zgarganda shu suhbat bazadan tiklanadi.
+   *
+   * `null` — yangi, hali saqlanmagan suhbat.
+   */
+  ochiqSessiya?: string | null
   /** Sessiya yaratilganda yoki tozalanganda — App hash'ni yangilaydi */
   onSessiyaOzgardi?: (sessionId: string | null) => void
 }
@@ -104,7 +109,7 @@ interface ChatProps {
 export default function Chat({
   pro,
   yangiSuhbatSignali,
-  boshlangichSessiya,
+  ochiqSessiya,
   onSessiyaOzgardi,
 }: ChatProps) {
   const [msgs, setMsgs] = useState<Msg[]>([])
@@ -113,6 +118,15 @@ export default function Chat({
   const [toast, setToast] = useState<string | null>(null)
 
   const [modellar, setModellar] = useState<ModelInfo[]>([])
+  /**
+   * `modellar` ning ref nusxasi — suhbat tiklash effekti uchun.
+   *
+   * Effekt `ochiqSessiya` ga bog'langan, ya'ni modellar ro'yxati o'zgarganda
+   * qayta ishlamaydi va o'zi yaratilgan paytdagi ro'yxatni yopib qoladi.
+   * Ref bu muammoni bog'liqlik qo'shmasdan hal qiladi.
+   */
+  const modellarRef = useRef<ModelInfo[]>([])
+  modellarRef.current = modellar
   const [tanlangan, setTanlangan] = useState<ModelInfo | null>(null)
   const [modelYuklanmoqda, setModelYuklanmoqda] = useState(true)
   const [modelXato, setModelXato] = useState<string | null>(null)
@@ -159,19 +173,42 @@ export default function Chat({
   const sessiyaXabarchi = useRef(onSessiyaOzgardi)
   sessiyaXabarchi.current = onSessiyaOzgardi
   /** Tiklash tugadimi — bo'lmasa "bo'sh chat" ekrani ko'rsatilmaydi */
-  const [tiklanmoqda, setTiklanmoqda] = useState(Boolean(boshlangichSessiya))
+  const [tiklanmoqda, setTiklanmoqda] = useState(Boolean(ochiqSessiya))
 
-  // --- URL'dagi sessiyani tiklash ---
+  // --- Ochiladigan suhbatni tiklash ---
   //
-  // Sahifa `#chat/<uuid>` bilan ochilgan: suhbatni bazadan qaytaramiz.
-  // Faqat bir marta, sahifa ochilishida — keyingi sessiya o'zgarishlari
-  // `send()` va `yangiSuhbat()` orqali boshqariladi.
+  // Ikki holatda ishga tushadi:
+  //   1) sahifa `#chat/<uuid>` bilan ochilgan;
+  //   2) foydalanuvchi sidebar yoki Suhbatlar sahifasidan boshqa suhbatni
+  //      tanladi — `ochiqSessiya` o'zgaradi va shu suhbat qayta yuklanadi.
+  //
+  // O'ZIMIZ yaratgan sessiya bu yerga kirmaydi: `send()` ichida `sessionId`
+  // allaqachon o'rnatilgan bo'ladi va quyidagi tenglik tekshiruvi effektni
+  // to'xtatadi — aks holda yangi suhbat darhol bazadan qayta o'qilardi.
   useEffect(() => {
-    if (!boshlangichSessiya) return
+    // Bo'sh chat — tozalash `yangiSuhbat()` da bo'lib bo'lgan
+    if (!ochiqSessiya) {
+      setTiklanmoqda(false)
+      return
+    }
+    // Allaqachon shu suhbat ochiq (masalan biz yaratgan) — qayta yuklamaymiz
+    if (ochiqSessiya === sessionIdRef.current) {
+      setTiklanmoqda(false)
+      return
+    }
+
     let bekor = false
+    setTiklanmoqda(true)
+    // Eski suhbat qoldiqlari yangisiga aralashmasin. Ayniqsa `ruxsatlar`:
+    // boshqa suhbatning javob kutayotgan kartasi bu yerda ko'rinib qolardi.
+    setMsgs([])
+    setRuxsatlar([])
+    setRuxsatJavoblari({})
+    kutilayotgan.current = null
+    setBusy(false)
 
     void (async () => {
-      const sessiya = await sessiyaOl(boshlangichSessiya)
+      const sessiya = await sessiyaOl(ochiqSessiya)
       if (bekor) return
 
       // URL eskirgan yoki sessiya o'chirilgan — jimgina bo'sh chatga tushamiz
@@ -183,31 +220,37 @@ export default function Chat({
 
       // Model tanlash effekti shu qiymatni kutadi
       tiklanganSessiya.current = { provider: sessiya.provider, model: sessiya.model }
+      // Modellar allaqachon yuklangan bo'lsa (suhbatlar orasida o'tayotganda
+      // shunday bo'ladi) model effekti qayta ishlamaydi — bu yerda tanlaymiz.
+      // Ro'yxat ref'dan olinadi: state bu closure uchun eskirgan bo'lishi
+      // mumkin, ref esa har doim joriy qiymatni beradi.
+      const mos = modellarRef.current.find(
+        (m) => m.provider === sessiya.provider && m.id === sessiya.model,
+      )
+      if (mos) setTanlangan(mos)
 
       try {
         const [xabarlar, rejimHolati] = await Promise.all([
-          xabarlarOl(boshlangichSessiya),
-          rejimOl(boshlangichSessiya).catch(() => null),
+          xabarlarOl(ochiqSessiya),
+          rejimOl(ochiqSessiya).catch(() => null),
         ])
         if (bekor) return
         setMsgs(xabarlar.map(xabarniMoslash))
-        if (rejimHolati) setRejim(rejimHolati)
+        setRejim(rejimHolati ?? { rejim: 'tasdiq' })
       } catch {
         // Xabarlar yuklanmasa ham sessiyani ochamiz — foydalanuvchi davom
         // ettira oladi, tarix esa keyingi yangilashda kelishi mumkin
       }
 
       if (bekor) return
-      setSessionId(boshlangichSessiya)
+      setSessionId(ochiqSessiya)
       setTiklanmoqda(false)
     })()
 
     return () => {
       bekor = true
     }
-    // Faqat sahifa ochilishida — qayta ishga tushmasligi ataylab
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [ochiqSessiya])
 
   // --- Modellarni yuklash ---
   useEffect(() => {

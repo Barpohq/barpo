@@ -17,6 +17,9 @@ import type {
   RejimHolati,
   RuxsatJavobi,
   RuxsatRejimi,
+  Skill,
+  SkillManba,
+  SkillQamrov,
 } from '@platforma/shared'
 
 export class ApiXatosi extends Error {
@@ -90,6 +93,43 @@ export async function sessiyaYarat(title?: string, projectId?: string): Promise<
     body: JSON.stringify({ title, projectId }),
   })
   return javob.session
+}
+
+/**
+ * Barcha suhbatlar — oxirgi faollik bo'yicha (yangisi birinchi).
+ *
+ * Har bir yozuvda `xabarlarSoni` bor: UI bo'sh suhbatlarni ajratadi.
+ */
+export async function sessiyalarOl(): Promise<ChatSession[]> {
+  const javob = await sorov<{ sessions: ChatSession[] }>('/api/chat/sessions')
+  return javob.sessions
+}
+
+/** Suhbat nomini o'zgartiradi. Faqat sarlavha — model va loyiha qulflangan. */
+export async function sessiyaSarlavhaOzgart(
+  sessionId: string,
+  title: string,
+): Promise<ChatSession> {
+  const javob = await sorov<{ session: ChatSession }>(`/api/chat/sessions/${sessionId}`, {
+    method: 'PATCH',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ title }),
+  })
+  return javob.session
+}
+
+/**
+ * Suhbatni o'chiradi — xabarlari bilan birga, qaytarib bo'lmaydi.
+ *
+ * Oqim ketayotgan bo'lsa server uni avval to'xtatadi.
+ */
+export function sessiyaOchir(
+  sessionId: string,
+): Promise<{ ochirildi: boolean; oqimToxtatildi: boolean }> {
+  return sorov<{ ochirildi: boolean; oqimToxtatildi: boolean }>(
+    `/api/chat/sessions/${sessionId}`,
+    { method: 'DELETE' },
+  )
 }
 
 /**
@@ -206,4 +246,76 @@ export async function loyihaYarat(name: string): Promise<Project> {
     body: JSON.stringify({ name }),
   })
   return javob.project
+}
+
+// ---------------------------------------------------------------------------
+// Skilllar
+// ---------------------------------------------------------------------------
+
+export interface SkillKatalogi {
+  skills: Skill[]
+  manbalar: SkillManba[]
+}
+
+export function skilllarniOl(): Promise<SkillKatalogi> {
+  return sorov<SkillKatalogi>('/api/skills')
+}
+
+export interface ManbaNatija {
+  manba: SkillManba
+  qoshildi: number
+  yangilandi: number
+  ochirildi: number
+  ogohlantirishlar: string[]
+}
+
+/** GitHub repo ulash — skilllar katalogga tushadi, DISKKA YUKLANMAYDI */
+export function manbaQosh(url: string): Promise<ManbaNatija> {
+  return sorov<ManbaNatija>('/api/skills/manba', {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ url }),
+  })
+}
+
+export function manbaSinxronla(
+  id: string,
+): Promise<Omit<ManbaNatija, 'manba'>> {
+  return sorov<Omit<ManbaNatija, 'manba'>>(`/api/skills/manba/${id}/sinxron`, {
+    method: 'POST',
+  })
+}
+
+export function manbaOchir(id: string): Promise<{ ok: boolean }> {
+  return sorov<{ ok: boolean }>(`/api/skills/manba/${id}`, { method: 'DELETE' })
+}
+
+/**
+ * Skillni o'rnatadi. `qamrov: 'loyiha'` bo'lsa `projectIds` majburiy —
+ * bir chaqiruvda bir necha loyihaga o'rnatish mumkin.
+ */
+export async function skillOrnat(
+  id: string,
+  qamrov: SkillQamrov,
+  projectIds?: string[],
+): Promise<Skill> {
+  const javob = await sorov<{ skill: Skill }>(`/api/skills/${id}/ornat`, {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ qamrov, projectIds }),
+  })
+  return javob.skill
+}
+
+export async function skillOrnatishniBekor(
+  id: string,
+  qamrov: SkillQamrov,
+  projectIds?: string[],
+): Promise<Skill | null> {
+  const javob = await sorov<{ skill: Skill | null }>(`/api/skills/${id}/ornat`, {
+    method: 'DELETE',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ qamrov, projectIds }),
+  })
+  return javob.skill
 }

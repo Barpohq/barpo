@@ -15,15 +15,21 @@ describe('migratsiyalar', () => {
     for (const kutilgan of [
       'schema_version',
       'servers',
-      'skills',
       'audit_log',
       'apps',
       'chat_sessions',
       'chat_messages',
       'build_sessions',
+      'projects',
+      'skill_manbalari',
+      'skilllar',
+      'skill_ornatish',
     ]) {
       expect(jadvallar).toContain(kutilgan)
     }
+
+    // 006-migratsiya eski mock jadvalini tashlagan bo'lishi kerak
+    expect(jadvallar).not.toContain('skills')
     db.close()
   })
 

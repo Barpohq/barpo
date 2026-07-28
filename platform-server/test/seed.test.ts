@@ -20,7 +20,6 @@ describe('seedQol', () => {
   test('birinchi chaqiruvda hamma jadval to\'ladi', () => {
     const natija = seedQol(db)
     expect(natija.servers).toBe(5)
-    expect(natija.skills).toBe(7)
     expect(natija.audit).toBe(12)
     expect(natija.apps).toBe(1)
   })
@@ -29,7 +28,7 @@ describe('seedQol', () => {
     seedQol(db)
     const ikkinchi = seedQol(db)
 
-    expect(ikkinchi).toEqual({ servers: 0, skills: 0, audit: 0, apps: 0 })
+    expect(ikkinchi).toEqual({ servers: 0, audit: 0, apps: 0 })
     expect(serverlarOqi(db)).toHaveLength(5)
     expect(ilovalarOqi(db)).toHaveLength(1)
   })

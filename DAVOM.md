@@ -9,7 +9,13 @@ backend, Bun + TypeScript (Hono)**, AI qatlami `pi-agent-core` ustiga qurilgan
 (pi — [earendil-works/pi](https://github.com/earendil-works/pi), terminal uchun
 coding agent; biz shu g'oyalarni web uchun moslashtiramiz).
 
-**Testlar:** 681/681 yashil (`bun test`). Barcha paketlar `tsc --noEmit` toza.
+**Testlar:** `bun test` — 702 o'tadi, `tsc` toza. **11 ta yiqiladi, ikkalasi
+ham shu bosqichdan tashqarida:** 6 tasi `platform-ai/test/muhit.test.ts`
+(fayl tizimi/symlink, avvaldan buzuq), 5 tasi tugallanmagan skill ishidan
+(`006-skilllar` migratsiyasi qo'shilgan, `db.test`/`seed.test`/`api.test`
+kutilgan jadval ro'yxati yangilanmagan). Suhbatlar bosqichining o'z testlari
+(chat, suhbatlar, sana, orchestrator, hash-yol, protokol, loyihalar,
+kontekst — 162 ta) to'liq yashil.
 
 **Ish uslubi o'zgardi (2026-07-28):** "avval to'liq tizim, keyin sayqal"
 rejasidan voz kechildi. Endi kerakli qism quriladi va ustida ko'ringan
@@ -42,6 +48,46 @@ cd platform-ui && bun run dev                # UI
 2. ~~AI agent qatlami: tool'lar, ruxsat, model tanlash~~ ✅
 3. ~~**Agent qatlamini pi darajasiga yetkazish**~~ ✅ (quyida)
 4. ~~**Loyiha (project) mantig'i + background agentlar ko'rinishi**~~ ✅ (quyida)
+5. ~~**Suhbatlar tarixi: sidebar ro'yxati + alohida sahifa**~~ ✅ (quyida)
+
+### 5-bosqichda nima qilindi (2026-07-28)
+
+4-bosqichda "qoldirilgan" deb belgilangan **sessiyalar ro'yxati UI'si**
+yopildi — eski chatlarni ochish endi mumkin.
+
+**Server:**
+
+- `GET /chat/sessions` endi `xabarlarSoni` ham qaytaradi (LEFT JOIN) — UI
+  "bo'sh suhbat" ni ajratadi.
+- `PATCH /chat/sessions/:id` — faqat sarlavha (model/loyiha qulflangan).
+  `updated_at` GA TEGMAYDI: ro'yxat oxirgi faollik bo'yicha saralanadi,
+  qayta nomlash suhbatni tepaga ko'tarmasligi kerak.
+- `DELETE /chat/sessions/:id` — xabarlar CASCADE bilan ketadi. Oqim
+  ketayotgan bo'lsa avval `abort()` qilinadi.
+- `orchestrator.ts`: javob saqlashdan oldin sessiya borligi tekshiriladi.
+  Bu MAJBURIY — `abort()` sinxron emas, oqim `finally` dan keyingi
+  `xabarYoz()` ga baribir yetib keladi va foreign key xatosi tashlardi
+  (u yerda ushlanmaydi).
+
+**UI:**
+
+- Sidebar'da "Chat" endi accordion: ichida oxirgi 5 suhbat, **holatidan
+  qat'i nazar**, ishlayotganlari `OqimIndikatori` bilan. Ochiq/yopiq holat
+  `localStorage` da (default — yopiq).
+- Eski "Jonli oqimlar" bo'limi OLIB TASHLANDI — endi takrorlanish bo'lardi.
+  Yopiq accordion yonida jonli nuqta, umumiy soni Agentlar badge'ida.
+- `pages/Suhbatlar.tsx` — qidiruv, loyiha filtri, sana guruhlash, inline
+  qayta nomlash, tasdiq modali bilan o'chirish.
+- `useSuhbatlar()` App'da BIR MARTA chaqiriladi va props orqali beriladi:
+  sidebar va sahifa bitta manbani ko'rsin (aks holda o'chirish faqat
+  bittasida ko'rinardi).
+- `Chat.tsx`: `boshlangichSessiya` → `ochiqSessiya`. Ilgari suhbat faqat
+  sahifa ochilishida tiklanardi; endi prop o'zgarganda qayta yuklanadi,
+  ya'ni ochiq chat turganda boshqasiga o'tish mumkin.
+
+**Sinalgan:** brauzerda to'liq zanjir (accordion → suhbat ochish → boshqasiga
+o'tish → refresh → yangi suhbat), qayta nomlash va o'chirish server bilan
+tasdiqlab.
 
 ### 4-bosqichda nima qilindi (2026-07-28)
 
@@ -75,8 +121,8 @@ cd platform-ui && bun run dev                # UI
   sessiya boshlangach qulflanadi.
 
 **Qoldirilgan:** loyihani o'chirish (papka taqdiri — tasdiq talab qiladi),
-sessiyalar ro'yxati UI'si (loyihaning eski chatlarini ochish hali mumkin
-emas), alohida Projects sahifasi, mavjud tashqi papkaga ulanish.
+alohida Projects sahifasi, mavjud tashqi papkaga ulanish.
+(~~sessiyalar ro'yxati UI'si~~ — 5-bosqichda yopildi.)
 
 ### 3-bosqichda nima qilindi
 

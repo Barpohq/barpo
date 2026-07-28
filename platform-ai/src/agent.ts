@@ -44,6 +44,7 @@ import {
   type SaqlanganXabar,
 } from './kontekst.ts'
 import { kontekstniPromptga, loyihaKontekstiniOqi } from './loyiha-konteksti.ts'
+import { skilllarniOqi, skilllarniPromptga } from './skill-yuklash.ts'
 import { ChegaralanganMuhit } from './muhit.ts'
 import type { RejimBoshqaruvchi } from './rejim.ts'
 import { qidiruvToollariXom } from './qidiruv-toollari.ts'
@@ -137,10 +138,18 @@ const NATIJA_CHEGARASI = 2000
  * ko'rinmasin degan qoida yo'q, lekin tartib niyatni aniq ko'rsatadi —
  * platforma qoidalari asos, loyiha ko'rsatmasi ular ustiga qo'shiladi.
  *
- * Bu matn KLASSIFIKATORGA BORMAYDI — u alohida prompt (`klassifikator.ts`)
- * bilan ishlaydi va bu funksiyani umuman chaqirmaydi.
+ * `skilllar` — ish papkasidagi `.platforma/skills/` ro'yxati
+ * (`skill-yuklash.ts`). Faqat nom+tavsif+yo'l tushadi, to'liq matnni model
+ * `read` bilan o'zi oladi.
+ *
+ * Ikkala matn ham KLASSIFIKATORGA BORMAYDI — u alohida prompt
+ * (`klassifikator.ts`) bilan ishlaydi va bu funksiyani umuman chaqirmaydi.
  */
-export const AGENT_SISTEM_PROMPT = (ishPapkasi: string, loyihaKonteksti?: string) =>
+export const AGENT_SISTEM_PROMPT = (
+  ishPapkasi: string,
+  loyihaKonteksti?: string,
+  skilllar?: string,
+) =>
   [
     "Sen platformaning AI yordamchisisan. Foydalanuvchi bilan o'zbek tilida",
     "muloqot qil (agar u boshqa tilda yozmasa). Javoblaring aniq va qisqa bo'lsin.",
@@ -169,6 +178,7 @@ export const AGENT_SISTEM_PROMPT = (ishPapkasi: string, loyihaKonteksti?: string
     'boshqa yo\'l taklif qil. Ruxsatni chetlab o\'tishga URINMA.',
     '',
     'Faylni tahrirlashdan oldin uni o\'qi. Bir vaqtda bitta tool ishlatasan.',
+    ...(skilllar ? [skilllar] : []),
     ...(loyihaKonteksti ? [loyihaKonteksti] : []),
   ].join('\n')
 
@@ -315,11 +325,16 @@ export async function* agentOqimi(
       // ko'rsatma. Klassifikatorga bormaydi (loyiha-konteksti.ts ga q.).
       const loyihaKonteksti = loyihaKontekstiniOqi(sozlama.ishPapkasi)
 
+      // O'rnatilgan skilllar ro'yxati (`.platforma/skills/`). Papkani sessiya
+      // boshida server tayyorlaydi — bu yerda faqat o'qiymiz.
+      const skilllar = skilllarniPromptga(skilllarniOqi(sozlama.ishPapkasi))
+
       const agent = new Agent({
         initialState: {
           systemPrompt: AGENT_SISTEM_PROMPT(
             sozlama.ishPapkasi,
             loyihaKonteksti ? kontekstniPromptga(loyihaKonteksti) : undefined,
+            skilllar ?? undefined,
           ),
           model,
           tools: toollarniTayyorla(toolKonteksti, sozlamalar.agent.toollar.yoqilgan),

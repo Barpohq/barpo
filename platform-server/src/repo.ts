@@ -13,6 +13,10 @@ import type {
   Project,
   Server,
   Skill,
+  SkillManba,
+  SkillManbaTuri,
+  SkillOrnatish,
+  SkillQamrov,
   ToolCard,
   ToolChaqiruv,
 } from '@platforma/shared'
@@ -47,31 +51,258 @@ export function serverlarOqi(baza?: Database): Server[] {
 // ---------------------------------------------------------------------------
 // Skilllar
 // ---------------------------------------------------------------------------
+//
+// Uch jadval: manba (repo) → skill (katalog yozuvi) → o'rnatish (qamrov).
+// Batafsil model izohi: migrations/006-skilllar.ts.
+
+interface ManbaQator {
+  id: string
+  tur: SkillManbaTuri
+  url: string
+  owner: string
+  repo: string
+  ref: string
+  commit_sha: string | null
+  oxirgi_sinxron: string | null
+  created_at: string
+}
+
+function manbaQatordan(q: ManbaQator): SkillManba {
+  return {
+    id: q.id,
+    tur: q.tur,
+    url: q.url,
+    owner: q.owner,
+    repo: q.repo,
+    ref: q.ref,
+    commitSha: q.commit_sha,
+    oxirgiSinxron: q.oxirgi_sinxron,
+    createdAt: q.created_at,
+  }
+}
+
+export function manbalarOqi(baza?: Database): SkillManba[] {
+  const d = baza ?? globalDb()
+  return d
+    .query<ManbaQator, []>('SELECT * FROM skill_manbalari ORDER BY created_at')
+    .all()
+    .map(manbaQatordan)
+}
+
+export function manbaOqi(id: string, baza?: Database): SkillManba | null {
+  const d = baza ?? globalDb()
+  const q = d.query<ManbaQator, [string]>('SELECT * FROM skill_manbalari WHERE id = ?').get(id)
+  return q ? manbaQatordan(q) : null
+}
+
+/**
+ * Manbani yaratadi yoki mavjudini qaytaradi.
+ *
+ * Takroriy ulash XATO EMAS: foydalanuvchi bir repo'ni ikki marta qo'shsa,
+ * "allaqachon bor" deb yiqilishdan ko'ra mavjudini qaytargan tuzukroq —
+ * natija baribir u kutgan holat (repo ulangan).
+ */
+export function manbaYarat(
+  m: Omit<SkillManba, 'id' | 'commitSha' | 'oxirgiSinxron' | 'createdAt'>,
+  baza?: Database,
+): SkillManba {
+  const d = baza ?? globalDb()
+  const mavjud = d
+    .query<ManbaQator, [string, string, string]>(
+      'SELECT * FROM skill_manbalari WHERE owner = ? AND repo = ? AND ref = ?',
+    )
+    .get(m.owner, m.repo, m.ref)
+  if (mavjud) return manbaQatordan(mavjud)
+
+  const id = crypto.randomUUID()
+  const hozir = new Date().toISOString()
+  d.prepare(
+    `INSERT INTO skill_manbalari (id, tur, url, owner, repo, ref, commit_sha, oxirgi_sinxron, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
+  ).run(id, m.tur, m.url, m.owner, m.repo, m.ref, hozir)
+
+  return { ...m, id, commitSha: null, oxirgiSinxron: null, createdAt: hozir }
+}
+
+/** Manba va uning HAMMA skilllari (CASCADE orqali o'rnatishlar ham) o'chadi */
+export function manbaOchir(id: string, baza?: Database): boolean {
+  const d = baza ?? globalDb()
+  return d.prepare('DELETE FROM skill_manbalari WHERE id = ?').run(id).changes > 0
+}
 
 interface SkillQator {
   id: string
-  name: string
-  desc: string
-  version: string
-  installed: number
-  category: string
-  permissions: string
+  manba_id: string
+  yol: string
+  nom: string
+  tavsif: string
+  litsenziya: string | null
+  allowed_tools: string | null
+  ogohlantirishlar: string
 }
 
+/**
+ * `skilllar` + `skill_ornatish` ni birlashtirib qaytaradi.
+ *
+ * O'rnatishlar alohida so'rov bilan olinadi va xotirada bog'lanadi (JOIN
+ * emas): JOIN bir skillni har o'rnatish uchun takrorlab yuborardi va uni
+ * qayta yig'ish kerak bo'lardi. Skilllar soni yuzlab — bu tezlik muammosi emas.
+ */
+function skilllarniYig(qatorlar: SkillQator[], d: Database): Skill[] {
+  const ornatishlar = new Map<string, SkillOrnatish[]>()
+  for (const o of d
+    .query<{ skill_id: string; qamrov: SkillQamrov; project_id: string | null }, []>(
+      'SELECT skill_id, qamrov, project_id FROM skill_ornatish',
+    )
+    .all()) {
+    const royxat = ornatishlar.get(o.skill_id) ?? []
+    royxat.push({ qamrov: o.qamrov, projectId: o.project_id ?? undefined })
+    ornatishlar.set(o.skill_id, royxat)
+  }
+
+  return qatorlar.map((q) => ({
+    id: q.id,
+    manbaId: q.manba_id,
+    yol: q.yol,
+    nom: q.nom,
+    tavsif: q.tavsif,
+    litsenziya: q.litsenziya ?? undefined,
+    allowedTools: q.allowed_tools ? (JSON.parse(q.allowed_tools) as string[]) : undefined,
+    ogohlantirishlar: JSON.parse(q.ogohlantirishlar) as string[],
+    ornatilgan: ornatishlar.get(q.id) ?? [],
+  }))
+}
+
+/** Butun katalog — o'rnatilgani ham, o'rnatilmagani ham */
 export function skilllarOqi(baza?: Database): Skill[] {
   const d = baza ?? globalDb()
-  return d
-    .query<SkillQator, []>('SELECT * FROM skills ORDER BY rowid')
-    .all()
-    .map((q) => ({
-      id: q.id,
-      name: q.name,
-      desc: q.desc,
-      version: q.version,
-      installed: q.installed === 1,
-      category: q.category,
-      permissions: JSON.parse(q.permissions) as Skill['permissions'],
-    }))
+  const qatorlar = d.query<SkillQator, []>('SELECT * FROM skilllar ORDER BY nom').all()
+  return skilllarniYig(qatorlar, d)
+}
+
+export function skillOqi(id: string, baza?: Database): Skill | null {
+  const d = baza ?? globalDb()
+  const q = d.query<SkillQator, [string]>('SELECT * FROM skilllar WHERE id = ?').get(id)
+  return q ? (skilllarniYig([q], d)[0] ?? null) : null
+}
+
+/**
+ * Loyihada FAOL skilllar: global o'rnatilganlar + shu loyihaga
+ * o'rnatilganlar. `projectId` null bo'lsa (loyihasiz sessiya) faqat global.
+ *
+ * Sessiya boshida `.platforma/skills/` shu ro'yxatga qarab quriladi.
+ */
+export function faolSkilllar(projectId: string | null, baza?: Database): Skill[] {
+  const d = baza ?? globalDb()
+  const qatorlar = d
+    .query<SkillQator, [string | null]>(
+      `SELECT DISTINCT s.* FROM skilllar s
+         JOIN skill_ornatish o ON o.skill_id = s.id
+        WHERE o.qamrov = 'global' OR o.project_id = ?
+        ORDER BY s.nom`,
+    )
+    .all(projectId)
+  return skilllarniYig(qatorlar, d)
+}
+
+/**
+ * Sinxronlash natijasini bazaga yozadi: topilganlar UPSERT qilinadi,
+ * yo'qolganlar o'chiriladi.
+ *
+ * UPSERT (INSERT emas) ATAYLAB: qayta sinxronlashda skill `id` si o'zgarmasa,
+ * unga bog'langan o'rnatishlar saqlanadi. Aks holda foydalanuvchi har
+ * sinxrondan keyin hammasini qayta o'rnatishga majbur bo'lardi.
+ */
+export function skilllarniSinxronla(
+  manbaId: string,
+  topilgan: Omit<Skill, 'id' | 'manbaId' | 'ornatilgan'>[],
+  commitSha: string | null,
+  baza?: Database,
+): { qoshildi: number; yangilandi: number; ochirildi: number } {
+  const d = baza ?? globalDb()
+  const natija = { qoshildi: 0, yangilandi: 0, ochirildi: 0 }
+
+  d.transaction(() => {
+    const eskiYollar = new Set(
+      d
+        .query<{ yol: string }, [string]>('SELECT yol FROM skilllar WHERE manba_id = ?')
+        .all(manbaId)
+        .map((q) => q.yol),
+    )
+
+    const st = d.prepare(
+      `INSERT INTO skilllar (id, manba_id, yol, nom, tavsif, litsenziya, allowed_tools, ogohlantirishlar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (manba_id, yol) DO UPDATE SET
+            nom = excluded.nom,
+            tavsif = excluded.tavsif,
+            litsenziya = excluded.litsenziya,
+            allowed_tools = excluded.allowed_tools,
+            ogohlantirishlar = excluded.ogohlantirishlar`,
+    )
+
+    for (const s of topilgan) {
+      st.run(
+        crypto.randomUUID(),
+        manbaId,
+        s.yol,
+        s.nom,
+        s.tavsif,
+        s.litsenziya ?? null,
+        s.allowedTools ? JSON.stringify(s.allowedTools) : null,
+        JSON.stringify(s.ogohlantirishlar),
+      )
+      if (eskiYollar.delete(s.yol)) natija.yangilandi++
+      else natija.qoshildi++
+    }
+
+    // Repo'dan olib tashlangan skilllar — CASCADE o'rnatishlarni ham tozalaydi
+    const ochir = d.prepare('DELETE FROM skilllar WHERE manba_id = ? AND yol = ?')
+    for (const yol of eskiYollar) {
+      ochir.run(manbaId, yol)
+      natija.ochirildi++
+    }
+
+    d.prepare('UPDATE skill_manbalari SET commit_sha = ?, oxirgi_sinxron = ? WHERE id = ?').run(
+      commitSha,
+      new Date().toISOString(),
+      manbaId,
+    )
+  })()
+
+  return natija
+}
+
+/** Idempotent — allaqachon o'rnatilgan bo'lsa jim o'tadi */
+export function skillOrnat(
+  skillId: string,
+  qamrov: SkillQamrov,
+  projectId: string | null,
+  baza?: Database,
+): void {
+  const d = baza ?? globalDb()
+  d.prepare(
+    `INSERT INTO skill_ornatish (id, skill_id, qamrov, project_id, created_at)
+          VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT DO NOTHING`,
+  ).run(crypto.randomUUID(), skillId, qamrov, projectId, new Date().toISOString())
+}
+
+export function skillOrnatishniOchir(
+  skillId: string,
+  qamrov: SkillQamrov,
+  projectId: string | null,
+  baza?: Database,
+): boolean {
+  const d = baza ?? globalDb()
+  return (
+    d
+      .prepare(
+        `DELETE FROM skill_ornatish
+          WHERE skill_id = ? AND qamrov = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
+      )
+      .run(skillId, qamrov, projectId).changes > 0
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -269,12 +500,25 @@ function sessiyaQatordan(q: SessiyaQator): ChatSession {
   }
 }
 
+/**
+ * Barcha sessiyalar, oxirgi faollik bo'yicha (yangisi tepada).
+ *
+ * `xabarlarSoni` qo'shiladi — UI "bo'sh suhbat" ni ajrata olsin: sessiya
+ * yaratilib, birinchi xabar yuborilmasdan tashlab ketilishi oddiy holat.
+ * `LEFT JOIN`: xabarsiz sessiya ham ro'yxatda qoladi (0 bilan).
+ */
 export function sessiyalarOqi(baza?: Database): ChatSession[] {
   const d = baza ?? globalDb()
   return d
-    .query<SessiyaQator, []>('SELECT * FROM chat_sessions ORDER BY updated_at DESC')
+    .query<SessiyaQator & { xabarlar: number }, []>(
+      `SELECT s.*, COUNT(m.id) AS xabarlar
+         FROM chat_sessions s
+         LEFT JOIN chat_messages m ON m.session_id = s.id
+        GROUP BY s.id
+        ORDER BY s.updated_at DESC`,
+    )
     .all()
-    .map(sessiyaQatordan)
+    .map((q) => ({ ...sessiyaQatordan(q), xabarlarSoni: q.xabarlar }))
 }
 
 export function sessiyaOqi(id: string, baza?: Database): ChatSession | null {
@@ -338,6 +582,33 @@ export function sessiyaModelQulfla(
 export function sessiyaModelniOzgart(id: string, model: string, baza?: Database): void {
   const d = baza ?? globalDb()
   d.prepare('UPDATE chat_sessions SET model = ? WHERE id = ?').run(model, id)
+}
+
+/**
+ * Sarlavhani qo'lda o'zgartiradi.
+ *
+ * `updated_at` ATAYLAB tegilmaydi: ro'yxat oxirgi FAOLLIK bo'yicha
+ * saralanadi, nomni tahrirlash esa suhbatni tepaga ko'tarmasligi kerak.
+ *
+ * `false` — bunday sessiya yo'q.
+ */
+export function sessiyaSarlavhaOzgart(id: string, title: string, baza?: Database): boolean {
+  const d = baza ?? globalDb()
+  const natija = d.prepare('UPDATE chat_sessions SET title = ? WHERE id = ?').run(title, id)
+  return natija.changes > 0
+}
+
+/**
+ * Sessiyani butunlay o'chiradi. Xabarlar `ON DELETE CASCADE` bilan
+ * o'zi ketadi (001-migratsiya), `build_sessions.session_id` esa NULL bo'ladi
+ * — qurilish tarixi suhbat o'chirilgani uchun yo'qolmasligi kerak.
+ *
+ * `false` — bunday sessiya yo'q edi.
+ */
+export function sessiyaOchir(id: string, baza?: Database): boolean {
+  const d = baza ?? globalDb()
+  const natija = d.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id)
+  return natija.changes > 0
 }
 
 // ---------------------------------------------------------------------------

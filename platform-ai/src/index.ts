@@ -78,6 +78,23 @@ export {
   type LoyihaKonteksti,
 } from './loyiha-konteksti.ts'
 
+// --- Skilllar: SKILL.md tahlili va promptga ulash ---
+
+export {
+  NOM_CHEGARASI,
+  skillFayliniTahlil,
+  TAVSIF_CHEGARASI,
+  type SkillFayl,
+} from './skill-fayl.ts'
+
+export {
+  SKILL_PAPKASI,
+  SKILL_SONI_CHEGARASI,
+  skilllarniOqi,
+  skilllarniPromptga,
+  type YuklanganSkill,
+} from './skill-yuklash.ts'
+
 // --- Kontekst: tool natijalari saqlanishi va siqish ---
 
 export {

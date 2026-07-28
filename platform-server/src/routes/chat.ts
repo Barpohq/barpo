@@ -19,7 +19,9 @@ import {
   loyihaOqi,
   sessiyaModelniOzgart,
   sessiyaModelQulfla,
+  sessiyaOchir,
   sessiyaOqi,
+  sessiyaSarlavhaOzgart,
   sessiyaYarat,
   sessiyalarOqi,
   xabarlarOqi,
@@ -94,6 +96,59 @@ chatRoutes.get('/chat/sessions/:id/messages', (c) => {
   const id = c.req.param('id')
   if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
   return c.json({ messages: xabarlarOqi(id) })
+})
+
+/** Sarlavha uzunligi chegarasi — sidebar va ro'yxatda bir qatorga sig'sin */
+const SARLAVHA_MAX = 200
+
+/**
+ * Sarlavhani qayta nomlash. Hozircha faqat `title` o'zgartiriladi: model
+ * va loyiha suhbat boshlangach qulflanadi (`/chat/send` ga q.), ularni bu
+ * yerdan almashtirish kontekstni buzardi.
+ */
+chatRoutes.patch('/chat/sessions/:id', async (c) => {
+  const id = c.req.param('id')
+  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+
+  let tana: { title?: unknown }
+  try {
+    tana = (await c.req.json()) as { title?: unknown }
+  } catch {
+    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+  }
+
+  if (typeof tana.title !== 'string') {
+    return c.json({ error: 'title majburiy' }, 400)
+  }
+  const title = tana.title.trim()
+  if (title.length === 0) {
+    return c.json({ error: "Sarlavha bo'sh bo'lmasligi kerak" }, 400)
+  }
+  if (title.length > SARLAVHA_MAX) {
+    return c.json(
+      { error: 'Sarlavha juda uzun', detail: `Eng ko'pi ${SARLAVHA_MAX} belgi` },
+      400,
+    )
+  }
+
+  sessiyaSarlavhaOzgart(id, title)
+  return c.json({ session: sessiyaOqi(id) })
+})
+
+/**
+ * Suhbatni o'chirish. Xabarlar bazada CASCADE bilan ketadi.
+ *
+ * Oqim ketayotgan bo'lsa avval to'xtatiladi: aks holda agent o'chirilgan
+ * sessiyaga javob yozishga urinardi (`xabarYoz` foreign key xatosi berardi)
+ * va WS'ga mavjud bo'lmagan suhbat eventlari kelaverardi.
+ */
+chatRoutes.delete('/chat/sessions/:id', (c) => {
+  const id = c.req.param('id')
+  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+
+  const oqimToxtatildi = oqimBormi(id) ? oqimniToxtat(id) : false
+  sessiyaOchir(id)
+  return c.json({ ochirildi: true, oqimToxtatildi })
 })
 
 interface YuborishTanasi {
