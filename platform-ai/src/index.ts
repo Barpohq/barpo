@@ -51,6 +51,7 @@ export {
   AGENT_SISTEM_PROMPT,
   agentOqimi,
   klassifikatorTarixi,
+  oxirgiUserIndeksi,
   type AgentHodisasi,
   type AgentSozlamalari,
 } from './agent.ts'
@@ -67,6 +68,38 @@ export {
 
 export { chegaraMi, chegaralarniAjrat } from './chegara.ts'
 
+// --- Kontekst: tool natijalari saqlanishi va siqish ---
+
+export {
+  eskilarniTashla,
+  kesishNuqtasi,
+  kontekstniQur,
+  kontekstTokenlari,
+  siq,
+  siqishKerakmi,
+  toolNatijalariniQisqart,
+  type SaqlanganXabar,
+  type SiqishNatijasi,
+  type SiqishSozlamalari,
+  type TarixSozlamalari,
+} from './kontekst.ts'
+
+// --- Tool hook'lari ---
+
+export {
+  keyinZanjiri,
+  kuzatuvHooki,
+  maxfiyniYashirHooki,
+  oldinZanjiri,
+  qoshimchaTaqiqHooki,
+  uzunlikHooki,
+  type KeyinNatijasi,
+  type OldinNatijasi,
+  type ToolChaqiruvKonteksti,
+  type ToolHooki,
+  type ToolNatijaKonteksti,
+} from './hooklar.ts'
+
 export {
   amalniBahola,
   KLASSIFIKATOR_PROMPT,
@@ -82,6 +115,7 @@ export {
   JAMI_BLOK_CHEGARASI,
   KETMA_KET_BLOK_CHEGARASI,
   RejimBoshqaruvchi,
+  rejimBoshqaruvchilarSoni,
   rejimBoshqaruvchisi,
   rejimBoshqaruvchisiniYop,
   rejimlarniTozala,
@@ -89,11 +123,16 @@ export {
   type RejimOzgarishi,
 } from './rejim.ts'
 
-export { ChegaralanganMuhit, type ChegaralanganMuhitSozlamalari } from './muhit.ts'
+export {
+  ChegaralanganMuhit,
+  STANDART_BUYRUQ_TIMEOUT_MS,
+  type ChegaralanganMuhitSozlamalari,
+} from './muhit.ts'
 
 export {
   RUXSAT_KUTISH_MS,
   RuxsatBoshqaruvchi,
+  ruxsatBoshqaruvchilarSoni,
   ruxsatBoshqaruvchisi,
   ruxsatBoshqaruvchisiniYop,
   ruxsatlarniTozala,
@@ -102,3 +141,68 @@ export {
   type RuxsatSorash,
   type SorovKuzatuvchi,
 } from './ruxsat.ts'
+
+export {
+  REESTR_CHEGARASI,
+  REESTR_TTL_MS,
+  SessiyaReestri,
+  type Yopiladigan,
+} from './reestr.ts'
+
+// --- Qidiruv tool'lari: grep / find / ls ---
+
+export {
+  chegaraniTekshir,
+  FIND_CHEGARASI,
+  globMosKeladimi,
+  globniRegexpga,
+  GREP_CHEGARASI,
+  ichkarimi,
+  ikkilikmi,
+  LS_CHEGARASI,
+  moslikTartibi,
+  nisbiyYol,
+  QATOR_CHEGARASI,
+  qatorniTayyorla,
+  rgKeshiniOrnat,
+  rgMavjudmi,
+  TASHLANADIGAN_PAPKALAR,
+  yolTartibi,
+  type ChegaraNatijasi,
+  type GrepMosligi,
+  type PapkaElementi,
+  type QidiruvNatijasi,
+} from './qidiruv-asos.ts'
+
+export {
+  ChegaraXatosi,
+  findNode,
+  findQidir,
+  findRg,
+  grepNode,
+  grepQidir,
+  grepRg,
+  lsRoyxat,
+  NaqshXatosi,
+  type FindSozlamalari,
+  type GrepSozlamalari,
+  type LsSozlamalari,
+} from './qidiruv-motor.ts'
+
+export {
+  findNatijasiniMatnga,
+  findToolYarat,
+  grepNatijasiniMatnga,
+  grepToolYarat,
+  lsNatijasiniMatnga,
+  lsToolYarat,
+  olchamniMatnga,
+  QIDIRUV_PROMPT_QISMI,
+  qidiruvToollari,
+  qidiruvToollariXom,
+  type FindToolKirishi,
+  type GrepToolKirishi,
+  type LsToolKirishi,
+  type QidiruvTafsiloti,
+  type QidiruvTooli,
+} from './qidiruv-toollari.ts'

@@ -46,6 +46,8 @@ export interface KlassifikatorSorovi {
     statikSabab?: string
   }
   ishPapkasi: string
+  /** Configdagi `ruxsat.klassifikatorModeli` — berilmasa avtomatik tanlanadi */
+  model?: string | null
 }
 
 export type KlassifikatorNatijasi =
@@ -103,9 +105,15 @@ export const KLASSIFIKATOR_PROMPT = [
  */
 export function klassifikatorModeliniTanla(
   modellar: ModelInfo[],
+  /**
+   * Configdagi `ruxsat.klassifikatorModeli`. Env o'zgaruvchisidan PAST
+   * turadi: env — vaqtinchalik nosozlikni chetlab o'tish uchun, config esa
+   * doimiy sozlama, shuning uchun env ustun bo'lishi kerak.
+   */
+  configModeli?: string | null,
 ): { provider: string; model: string } | undefined {
-  const majburiy = process.env.PLATFORMA_KLASSIFIKATOR_MODEL?.trim()
-  if (majburiy) {
+  for (const majburiy of [process.env.PLATFORMA_KLASSIFIKATOR_MODEL?.trim(), configModeli?.trim()]) {
+    if (!majburiy) continue
     const [provider, ...qolgan] = majburiy.split('/')
     const model = qolgan.join('/')
     if (provider && model) return { provider, model }
@@ -189,7 +197,7 @@ export async function amalniBahola(
   let tanlov: { provider: string; model: string } | undefined
   try {
     const kesh = keshdagiNatija()
-    tanlov = klassifikatorModeliniTanla(kesh?.models ?? [])
+    tanlov = klassifikatorModeliniTanla(kesh?.models ?? [], sorov.model)
     if (!tanlov) return { qaror: 'nosoz', xabar: 'klassifikator uchun model topilmadi' }
 
     const models = await modelsKolleksiyasi()

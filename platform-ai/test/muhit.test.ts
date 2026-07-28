@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RuxsatBoshqaruvchi } from '../src/ruxsat.ts'
-import { ChegaralanganMuhit } from '../src/muhit.ts'
+import { ChegaralanganMuhit, STANDART_BUYRUQ_TIMEOUT_MS } from '../src/muhit.ts'
 import type { RuxsatJavobi, RuxsatSorovi } from '@platforma/shared'
 
 let ish: string
@@ -28,6 +28,20 @@ function soxtaRuxsat(javob: RuxsatJavobi): RuxsatBoshqaruvchi {
 
 function muhitYarat(javob: RuxsatJavobi): ChegaralanganMuhit {
   return new ChegaralanganMuhit({ ishPapkasi: ish, ruxsat: soxtaRuxsat(javob) })
+}
+
+/**
+ * `exec` ga qanday sozlama uzatilganini yozib oladigan soxta ichki muhit.
+ * Faqat `exec` va `cleanup` kerak — qolgan metodlar bu testlarda chaqirilmaydi.
+ */
+function soxtaIchki(yozuv: { timeout?: number }[]) {
+  return {
+    exec: async (_buyruq: string, options?: { timeout?: number }) => {
+      yozuv.push({ timeout: options?.timeout })
+      return { ok: true as const, value: { stdout: '', stderr: '', exitCode: 0 } }
+    },
+    cleanup: async () => undefined,
+  } as unknown as ConstructorParameters<typeof ChegaralanganMuhit>[0]['ichki']
 }
 
 beforeEach(() => {
@@ -216,4 +230,110 @@ describe('remove — ichkarida ham so\'raladi', () => {
     expect(sorovlar).toHaveLength(1)
     expect(sorovlar[0]?.amal).toBe('remove')
   })
+})
+
+describe('cp/mv — mavjud fayl ustiga yozish', () => {
+  test('mavjud fayl ustiga nusxalash ruxsat so\'raydi', async () => {
+    const m = muhitYarat('rad')
+    writeFileSync(join(ish, 'manba.txt'), 'yangi')
+    // `ichki.txt` beforeEach da yaratilgan — ustiga yozilishi kerak emas
+    const r = await m.exec('cp manba.txt ichki.txt')
+    expect(r.ok).toBe(false)
+    expect(sorovlar).toHaveLength(1)
+    expect(sorovlar[0]?.sabab).toContain('ustiga yozadi')
+
+    // Eski mazmun joyida
+    const oqish = await m.readTextFile('ichki.txt')
+    expect(oqish.ok && oqish.value).toBe('ichki mazmun')
+  })
+
+  test('yangi nomga nusxalash so\'rovsiz ishlaydi', async () => {
+    const m = muhitYarat('rad')
+    const r = await m.exec('cp ichki.txt nusxa.txt')
+    expect(r.ok).toBe(true)
+    expect(sorovlar).toHaveLength(0)
+  })
+
+  test('yangi nomga ko\'chirish so\'rovsiz ishlaydi', async () => {
+    const m = muhitYarat('rad')
+    const r = await m.exec('mv ichki.txt boshqa-nom.txt')
+    expect(r.ok).toBe(true)
+    expect(sorovlar).toHaveLength(0)
+  })
+
+  test('mavjud fayl ustiga ko\'chirish ruxsat berilsa bajariladi', async () => {
+    const m = muhitYarat('ruxsat')
+    writeFileSync(join(ish, 'manba.txt'), 'yangi mazmun')
+    const r = await m.exec('mv manba.txt ichki.txt')
+    expect(r.ok).toBe(true)
+    expect(sorovlar).toHaveLength(1)
+
+    const oqish = await m.readTextFile('ichki.txt')
+    expect(oqish.ok && oqish.value).toBe('yangi mazmun')
+  })
+})
+
+describe('buyruq timeout', () => {
+  test('standart timeout oqilona chegarada', () => {
+    // Juda kichik bo'lsa oddiy build/test yiqiladi, juda katta bo'lsa
+    // sessiya uzoq qotib qoladi
+    expect(STANDART_BUYRUQ_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000)
+    expect(STANDART_BUYRUQ_TIMEOUT_MS).toBeLessThanOrEqual(10 * 60 * 1000)
+  })
+
+  test('timeout berilmasa standart qiymat ichki muhitga uzatiladi', async () => {
+    const uzatilgan: { timeout?: number }[] = []
+    const m = new ChegaralanganMuhit({
+      ishPapkasi: ish,
+      ruxsat: soxtaRuxsat('rad'),
+      ichki: soxtaIchki(uzatilgan),
+    })
+
+    await m.exec('ls')
+    // `ShellExecOptions.timeout` SONIYADA
+    expect(uzatilgan[0]?.timeout).toBe(STANDART_BUYRUQ_TIMEOUT_MS / 1000)
+  })
+
+  test('chaqiruvchi bergan timeout ustun turadi', async () => {
+    const uzatilgan: { timeout?: number }[] = []
+    const m = new ChegaralanganMuhit({
+      ishPapkasi: ish,
+      ruxsat: soxtaRuxsat('rad'),
+      ichki: soxtaIchki(uzatilgan),
+    })
+
+    await m.exec('ls', { timeout: 5 })
+    expect(uzatilgan[0]?.timeout).toBe(5)
+  })
+
+  test('sozlamadagi timeout standartni almashtiradi', async () => {
+    const uzatilgan: { timeout?: number }[] = []
+    const m = new ChegaralanganMuhit({
+      ishPapkasi: ish,
+      ruxsat: soxtaRuxsat('rad'),
+      ichki: soxtaIchki(uzatilgan),
+      buyruqTimeoutMs: 30_000,
+    })
+
+    await m.exec('ls')
+    expect(uzatilgan[0]?.timeout).toBe(30)
+  })
+
+  test('uzoq davom etadigan buyruq timeout bilan uziladi', async () => {
+    // Haqiqiy uzilishni tekshiramiz: `sleep` xavfsiz ro'yxatda emas,
+    // shuning uchun ruxsat beruvchi boshqaruvchi kerak.
+    const m = new ChegaralanganMuhit({
+      ishPapkasi: ish,
+      ruxsat: soxtaRuxsat('ruxsat'),
+      buyruqTimeoutMs: 1000,
+    })
+
+    const boshlandi = Date.now()
+    const r = await m.exec('sleep 30')
+    const ketgan = Date.now() - boshlandi
+
+    // Cheksiz kutmadi — timeout ishladi
+    expect(ketgan).toBeLessThan(15_000)
+    expect(r.ok).toBe(false)
+  }, 20_000)
 })

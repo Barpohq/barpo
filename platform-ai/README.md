@@ -208,6 +208,78 @@ tool bajarilishi o'zi to'xtab turadi, alohida holat mashinasi kerak emas.
 | `klassifikator.ts` | auto rejim: "so'ralganidan chetga chiqdimi?" |
 | `chegara.ts` | suhbatdagi cheklovlarni ajratish |
 | `rejim.ts` | tasdiq/auto, blok hisoblagichlari, fallback |
+| `kontekst.ts` | tool natijalari saqlanishi + kontekst siqish |
+| `hooklar.ts` | tool oldi/keyin hook zanjiri |
+| `qidiruv-*.ts` | `grep`/`find`/`ls` tool'lari (rg + Node backend) |
+
+## Kontekst: tool natijalari va siqish
+
+Ikki muammo `kontekst.ts` da yechiladi.
+
+### 1. Tool natijalari tarixda saqlanadi
+
+Ilgari tarix `{role, text}` juftliklaridan iborat edi — tool natijalari
+LLM'ga qaytmasdi va agent **har turn xotirasini yo'qotardi**:
+
+```
+1-xabar: "package.json ni o'qi"  → agent read qiladi, javob beradi
+2-xabar: "versiyani ayt"          → agent faylni QAYTA o'qishga majbur
+```
+
+Endi `AgentMessage[]` xom holda bazada saqlanadi (`chat_messages.agent_messages`,
+004-migratsiya) va keyingi turn'da qaytariladi. Eski xabarlarda bu ustun
+`NULL` — u holda tarix `text` dan quriladi, ya'ni mavjud suhbatlar buzilmaydi.
+
+### 2. Kontekst cheksiz o'smaydi
+
+`contextWindow - zaxiraTokenlar` dan oshsa siqish boshlanadi:
+
+| Bosqich | Nima bo'ladi |
+|---|---|
+| 1. LLM xulosasi | eski qism xulosalanadi, yangisi o'zgarishsiz qoladi |
+| 2. Zaxira yo'l | xulosalash ishlamasa eng eskilari tashlanadi |
+| 3. Qattiq chegara | `maksXabar` har holda qo'llanadi |
+
+**Kesish hech qachon `toolResult` dan boshlanmaydi** — u o'zini chaqirgan
+assistant xabari bilan birga qolishi shart, aks holda providerga "javobi bor,
+savoli yo'q" kontekst boradi va so'rov rad etiladi. Bu test bilan majburlanadi.
+
+Siqish uchun standart holatda **asosiy chat modeli** ishlatiladi: yomon xulosa
+jimgina noto'g'ri xulqqa olib keladi, arzon model bilan tejash bu xavfga
+arzimaydi. `agent.siqish.modeli` bilan almashtirsa bo'ladi.
+
+## Hook'lar
+
+`hooklar.ts` — tool chaqiruvidan oldin va keyin aralashish nuqtasi.
+
+```ts
+const hook: ToolHooki = {
+  nom: 'misol',
+  oldin: ({ nom, args }) => (nom === 'bash' ? { blokla: true, sabab: '...' } : undefined),
+  keyin: ({ natija }) => ({ natija: natija.replace(/sir/g, '***') }),
+}
+```
+
+Tayyor hook'lar: `maxfiyniYashirHooki` (kalit/token yashirish),
+`uzunlikHooki`, `qoshimchaTaqiqHooki` (configdagi taqiqlar), `kuzatuvHooki`.
+
+> **Hook xavfsizlik qatlamini ALMASHTIRMAYDI.** Qat'iy taqiq, ish papkasi
+> chegarasi va klassifikator hook'lardan oldin ishlaydi va hook orqali bekor
+> qilinmaydi. Hook faqat **qo'shimcha** cheklov qo'ya oladi — ruxsatni
+> kengaytira olmaydi. Sabab: hook config'dan keladi, config esa loyiha fayli
+> orqali begona odam yozgan bo'lishi mumkin.
+
+`oldin` hook xatosi **toolni bloklaydi** (fail-closed): maxfiy ma'lumotni
+yashiradigan hook ishlamasa, natijani filtrsiz o'tkazish xavfliroq.
+
+## Sozlamalar
+
+Xulq `@platforma/config` orqali boshqariladi — `~/.platforma/config.json`
+va loyihadagi `.platforma/config.json`. Tafsilot: `platform-config/README.md`.
+
+Asosiylari: `agent.siqish.*` (kontekst siqish), `agent.toollar.yoqilgan`
+(qaysi tool'lar mavjud), `agent.toollar.bashTimeoutSekund`,
+`ruxsat.rejim`, `ruxsat.qoshimchaTaqiqlar`.
 
 ## Qaror zanjiri
 
@@ -240,18 +312,30 @@ qoladi. Interfeys shu uchun to'liq delegatsiya qilingan.
 **Doimiy ruxsatlar.** Hozir "har doim ruxsat" naqshi sessiya bilan birga
 unutiladi. Sozlamalar UI'si bilan ular saqlanishi mumkin.
 
+**Skills.** `pi-agent-core` da `loadSkills()` va
+`formatSkillsForSystemPrompt()` tayyor — `SKILL.md` fayllari orqali agentga
+qo'shimcha ko'nikma berish. Alohida bosqich sifatida rejalashtirilgan.
+
+**AgentHarness.** Hozir quyi qatlam `Agent` ishlatiladi. `AgentHarness` ga
+o'tish sessiya daraxti, `steer()`/`followUp()` (oqim davomida yo'naltirish)
+va provider retry'ni tayyor holda beradi.
+
 ## Testlar
 
 ```bash
 bun test
 ```
 
-170 test. Tarmoqqa chiqmaydi (Ollama sinovlaridan tashqari — u shartli:
-server ishlamasa test o'zini o'tkazib yuboradi). Xavfsizlik testlari
+Tarmoqqa chiqmaydi (Ollama va `rg` sinovlaridan tashqari — ular shartli:
+dastur yo'q bo'lsa test o'zini o'tkazib yuboradi). Xavfsizlik testlari
 `ChegaralanganMuhit`, `buyruqniBahola` va klassifikator izolyatsiyasini
 to'g'ridan-to'g'ri sinaydi — LLM ishtirokisiz, ya'ni chegara kod darajasida
 majburlanishi tekshiriladi.
 
-`klassifikator-izolyatsiya.test.ts` alohida ahamiyatga ega: u tool natijalari
-klassifikator promptiga tushmasligini majburlaydi. Bu buzilsa prompt injection
-himoyasi yo'qoladi.
+Alohida ahamiyatga ega uchta test:
+
+| Fayl | Nimani majburlaydi |
+|---|---|
+| `klassifikator-izolyatsiya.test.ts` | tool natijalari klassifikator promptiga tushmaydi — buzilsa prompt injection himoyasi yo'qoladi |
+| `kontekst.test.ts` | kesish `toolResult` dan boshlanmaydi — buzilsa provider so'rovni rad etadi |
+| `qidiruv-bir-xillik.test.ts` | `rg` va Node backend'lari **aynan bir xil** natija beradi — buzilsa agent foydalanuvchi PC'siga qarab boshqacha ishlaydi |

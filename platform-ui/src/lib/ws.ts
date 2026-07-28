@@ -19,6 +19,15 @@ class WsKlient {
   private soket: WebSocket | null = null
   private tinglovchilar = new Set<Tinglovchi>()
   private kanallar = new Set<string>()
+  /**
+   * Hozir kuzatilayotgan chat sessiyasi.
+   *
+   * Serverga `sub` bilan yuboriladi — shunda u chat eventlarini shu sessiya
+   * bo'yicha filtrlaydi va boshqa oynadagi suhbat bu yerga oqib kelmaydi.
+   * Qayta ulanishda tiklanishi uchun shu yerda saqlanadi (server obunani
+   * eslab qolmaydi).
+   */
+  private sessionId: string | undefined
   private urinish = 0
   private taymer: ReturnType<typeof setTimeout> | null = null
   private yopilgan = false
@@ -32,9 +41,11 @@ class WsKlient {
 
     soket.onopen = () => {
       this.urinish = 0
-      // Obunalarni tiklaymiz — server eski ulanishning obunasini bilmaydi
+      // Obunalarni tiklaymiz — server eski ulanishning obunasini bilmaydi.
+      // Sessiya ham qayta yuboriladi, aks holda yangi ulanish filtrsiz qolib
+      // begona sessiyalarning eventlarini olib kelardi.
       if (this.kanallar.size > 0) {
-        this.yubor({ type: 'sub', channels: [...this.kanallar] })
+        this.yubor({ type: 'sub', channels: [...this.kanallar], sessionId: this.sessionId })
       }
     }
 
@@ -81,12 +92,35 @@ class WsKlient {
     const yangilar = kanallar.filter((k) => !this.kanallar.has(k))
     for (const k of kanallar) this.kanallar.add(k)
     if (yangilar.length > 0 && this.soket?.readyState === WebSocket.OPEN) {
-      this.yubor({ type: 'sub', channels: yangilar })
+      this.yubor({ type: 'sub', channels: yangilar, sessionId: this.sessionId })
     }
     return () => {
       for (const k of kanallar) this.kanallar.delete(k)
       // Serverda obunani bekor qilish eventi yo'q — keyingi ulanishda tiklanmaydi
     }
+  }
+
+  /**
+   * Qaysi chat sessiyasi kuzatilayotganini serverga bildiradi.
+   *
+   * Sessiya yaratilgach (birinchi xabarda) chaqiriladi. Shundan keyin server
+   * bu ulanishga faqat shu sessiyaning chat eventlarini yuboradi.
+   *
+   * `undefined` berilsa filtr olib tashlanadi — mijoz yana hamma sessiyani
+   * ko'radi (masalan "yangi suhbat" bosilib, sessiya hali yaratilmagan payt).
+   */
+  sessiyaniKuzat(sessionId: string | undefined): void {
+    if (this.sessionId === sessionId) return
+    this.sessionId = sessionId
+    // Kanallar ham qayta yuboriladi — server ularni `add` qiladi, takrorlanishi
+    // zarar qilmaydi. Sessiyani tozalash uchun `null` yuboriladi: `undefined`
+    // JSON'da maydonni butunlay yo'qotadi, server esa uni "o'zgarishsiz
+    // qoldir" deb tushunadi.
+    this.yubor({
+      type: 'sub',
+      channels: [...this.kanallar],
+      sessionId: sessionId ?? null,
+    })
   }
 
   /** Server eventlarini tinglaydi. Bekor qiluvchi funksiya qaytaradi. */

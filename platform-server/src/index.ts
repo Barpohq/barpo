@@ -28,7 +28,11 @@ if (seed.servers || seed.skills || seed.audit || seed.apps) {
 hub.handlerQosh(chatSendHandleri)
 
 // 3) Server: HTTP so'rovlari Hono'ga, /ws upgrade qilinadi
-const server = Bun.serve<UlanishHolati, Record<string, never>>({
+//
+// Ikkinchi generik parametr — `routes` yo'llari (satr literal birlashmasi).
+// Biz `routes` ishlatmaymiz: barcha yo'llar `fetch` orqali Hono'ga boradi.
+// Shuning uchun `never` beriladi — "hech qanday route yo'q" degani.
+const server = Bun.serve<UlanishHolati, never>({
   port: PORT,
 
   fetch(req, srv) {

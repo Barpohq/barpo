@@ -306,6 +306,26 @@ export interface ChatMessage {
   toolCard?: ToolCard
   /** Agent shu javob davomida bajargan tool chaqiruvlari, tartib bo'yicha */
   toolCards?: ToolChaqiruv[]
+  /**
+   * LLM ko'radigan to'liq kontekst — pi-agent-core ning `AgentMessage[]`
+   * massivi xom holda (tool call'lar, tool NATIJALARI, thinking bloklari).
+   *
+   * `text` dan farqi: `text` — UI ko'rsatadigan toza javob matni,
+   * bu esa keyingi turn'da LLM'ga qaytariladigan tarix. Tool natijalari
+   * faqat shu yerda bo'ladi, ya'ni usiz agent har turn xotirasini yo'qotadi.
+   *
+   * Tip `unknown[]`: `@platforma/shared` AI paketiga bog'lanmasligi kerak
+   * (UI ham shu tiplarni import qiladi). Aniq tip serverda tiklanadi.
+   *
+   * Eski xabarlarda (004-migratsiyadan oldin) `undefined` — u holda tarix
+   * `text` dan quriladi.
+   */
+  agentMessages?: unknown[]
+  /**
+   * Provider aytgan kontekst hajmi (token). Compaction qarori shunga
+   * tayanadi — butun tarixni qayta hisoblash o'rniga aniq raqam.
+   */
+  contextTokens?: number
   createdAt: string
 }
 

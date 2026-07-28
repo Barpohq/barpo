@@ -291,3 +291,64 @@ describe('chegaraviy holatlar', () => {
     expect(() => bahola('echo "yopilmagan')).not.toThrow()
   })
 })
+
+describe('cp/mv — ustiga yozish', () => {
+  /** Berilgan yo'llar "mavjud" deb hisoblanadigan baholovchi */
+  const mavjudlar = (...yollar: string[]) => {
+    const toplam = new Set(yollar.map((y) => (y.startsWith('/') ? y : `${ISH}/${y}`)))
+    return (b: string) =>
+      buyruqniBahola(b, { ishPapkasi: ISH, mavjudmi: (yol) => toplam.has(yol) })
+  }
+
+  test('nishon mavjud bo\'lsa xavfli — ustiga yozadi', () => {
+    const b = mavjudlar('b.txt')('cp a.txt b.txt')
+    expect(b.toifa).toBe('xavfli')
+    expect(b.sabab).toContain('ustiga yozadi')
+  })
+
+  test('mv ham xuddi shunday', () => {
+    expect(mavjudlar('yangi.ts')('mv eski.ts yangi.ts').toifa).toBe('xavfli')
+  })
+
+  test('nishon yangi bo\'lsa xavfsiz — oddiy nusxalash', () => {
+    expect(mavjudlar()('cp shablon.ts yangi.ts').toifa).toBe('xavfsiz')
+    expect(mavjudlar()('mv eski-nom.ts yangi-nom.ts').toifa).toBe('xavfsiz')
+  })
+
+  test('absolut nishon ham to\'g\'ri tekshiriladi', () => {
+    expect(mavjudlar(`${ISH}/b.txt`)(`cp a.txt ${ISH}/b.txt`).toifa).toBe('xavfli')
+    expect(mavjudlar()(`cp a.txt ${ISH}/yangi.txt`).toifa).toBe('xavfsiz')
+  })
+
+  test('bayroqlar nishon deb hisoblanmaydi', () => {
+    // `-r` argument emas — nishon baribir `nusxa/`
+    expect(mavjudlar()('cp -r manba nusxa').toifa).toBe('xavfsiz')
+    expect(mavjudlar('nusxa')('cp -r manba nusxa').toifa).toBe('xavfli')
+  })
+
+  test('mavjudlik tekshiruvchisi berilmasa ehtiyotkor — xavfli', () => {
+    // "bilmasak xavfsiz" degan taxmin oq ro'yxat modeliga zid
+    expect(bahola('cp a.txt b.txt').toifa).toBe('xavfli')
+    expect(bahola('mv a.txt b.txt').toifa).toBe('xavfli')
+  })
+
+  test('glob/almashtirish bo\'lsa ehtiyotkor — xavfli', () => {
+    // Qaysi fayllarga tegishini statik tahlil bilmaydi
+    expect(mavjudlar()('cp a.txt *.bak').toifa).toBe('xavfli')
+    expect(mavjudlar()('cp a.txt $NISHON').toifa).toBe('xavfli')
+  })
+
+  test('nishonsiz buzuq buyruq yiqilmaydi', () => {
+    expect(() => mavjudlar()('cp')).not.toThrow()
+    expect(() => mavjudlar()('cp faqat-bitta')).not.toThrow()
+  })
+
+  test('ish papkasidan tashqaridagi nishon baribir xavfli', () => {
+    // Tashqi yo'l tekshiruvi ustiga yozish tekshiruvidan oldin ishlaydi
+    expect(mavjudlar()('cp a.txt /etc/passwd').toifa).toBe('xavfli')
+  })
+
+  test('ketma-ket buyruqda ham ushlanadi', () => {
+    expect(mavjudlar('b.txt')('ls && cp a.txt b.txt').toifa).toBe('xavfli')
+  })
+})

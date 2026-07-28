@@ -55,10 +55,34 @@ export interface ChatChoiceEvent {
   optionIndex: number
 }
 
-/** Kanallarga obuna bo'lish — faqat kerakli eventlar keladi */
+/**
+ * Kanallarga obuna bo'lish — faqat kerakli eventlar keladi.
+ *
+ * `sessionId` — mijoz QAYSI chat sessiyasini kuzatayotgani. Berilsa, shu
+ * mijozga faqat o'sha sessiyaning chat eventlari boradi (`chat.delta`,
+ * `chat.tool`, `chat.permission` va h.k.). Ikki brauzer oynasi ikki xil
+ * suhbatni ochsa, biri ikkinchisining javobini KO'RMAYDI.
+ *
+ * Berilmasa eski xulq saqlanadi: mijoz kanaldagi hamma sessiyaning
+ * eventlarini oladi. Orqaga moslik uchun ataylab shunday — `sub` yuboradigan
+ * eski mijozlar (va sessiyaga bog'lanmagan diagnostika vositalari) ishlashda
+ * davom etadi. Sessiyali izolyatsiya kerak bo'lsa mijoz uni ANIQ so'raydi.
+ */
 export interface SubEvent {
   type: 'sub'
   channels: string[]
+  /**
+   * Kuzatilayotgan chat sessiyasi.
+   *
+   *   string    — shu sessiyaning chat eventlari kuzatiladi;
+   *   null      — filtrni ATAYLAB olib tashlash (yana hamma sessiya ko'rinadi);
+   *   maydon yo'q — oldingi tanlov o'zgarishsiz qoladi (mijoz faqat yangi
+   *                 kanal qo'shayotgan bo'lishi mumkin).
+   *
+   * `null` va "maydon yo'q" farqlanadi, chunki JSON'da `undefined` maydonni
+   * butunlay yo'qotadi — "tozala" niyatini bildirishning boshqa yo'li yo'q.
+   */
+  sessionId?: string | null
 }
 
 /**
@@ -301,6 +325,35 @@ export function eventKanali(event: ServerEvent): Channel | null {
       return CHANNELS.terminal
     case 'hello':
       return null // hello har doim yuboriladi, kanaldan qat'i nazar
+  }
+}
+
+/**
+ * Event qaysi chat sessiyasiga tegishli — sessiyaga bog'liq bo'lmasa `null`.
+ *
+ * Hub shu funksiya bo'yicha ikkinchi filtrni qo'llaydi: sessiyali eventni
+ * faqat o'sha sessiyani kuzatayotgan (yoki umuman sessiya ko'rsatmagan)
+ * mijozga yuboradi.
+ *
+ * MUHIM: yangi sessiyali event qo'shilsa, uni SHU YERGA ham qo'shish kerak.
+ * Aks holda u hamma mijozga tarqalib, sessiyalar orasida ma'lumot sizadi.
+ * `switch` ataylab to'liq sanab o'tadi — yangi event turi qo'shilganda
+ * TypeScript `ServerEvent` union'i bo'yicha eslatib turadi.
+ */
+export function eventSessiyasi(event: ServerEvent): string | null {
+  switch (event.type) {
+    case 'chat.delta':
+    case 'chat.toolcard':
+    case 'chat.tool':
+    case 'chat.permission':
+    case 'chat.klassifikator':
+    case 'chat.rejim':
+    case 'chat.done':
+    case 'chat.error':
+      return event.sessionId
+    default:
+      // build.*, app.*, audit.*, terminal.*, hello — sessiyaga bog'liq emas
+      return null
   }
 }
 

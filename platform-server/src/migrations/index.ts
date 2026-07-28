@@ -17,5 +17,6 @@ export interface Migratsiya {
 import { migratsiya as m001 } from './001-boshlangich.ts'
 import { migratsiya as m002 } from './002-chat-model.ts'
 import { migratsiya as m003 } from './003-tool-cards.ts'
+import { migratsiya as m004 } from './004-agent-xabarlari.ts'
 
-export const migratsiyalar: Migratsiya[] = [m001, m002, m003]
+export const migratsiyalar: Migratsiya[] = [m001, m002, m003, m004]

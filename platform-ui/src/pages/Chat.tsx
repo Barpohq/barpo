@@ -77,6 +77,15 @@ export default function Chat({ pro }: ChatProps) {
   const [modelXato, setModelXato] = useState<string | null>(null)
 
   const [sessionId, setSessionId] = useState<string | null>(null)
+  /**
+   * `sessionId` ning ref nusxasi — WS tinglovchisi uchun.
+   *
+   * Tinglovchi `useEffect` da BIR MARTA ro'yxatdan o'tadi, shuning uchun u
+   * o'zi yaratilgan paytdagi state'ni yopib qoladi ("stale closure"). Ref
+   * har doim joriy qiymatni beradi, tinglovchini qayta ro'yxatdan
+   * o'tkazmasdan.
+   */
+  const sessionIdRef = useRef<string | null>(null)
   /** Javob kutayotgan ruxsat so'rovlari va allaqachon berilgan javoblar */
   const [ruxsatlar, setRuxsatlar] = useState<RuxsatSorovi[]>([])
   const [ruxsatJavoblari, setRuxsatJavoblari] = useState<Record<string, RuxsatJavobi>>({})
@@ -122,10 +131,27 @@ export default function Chat({ pro }: ChatProps) {
   }, [])
 
   // --- WS: javob oqimini tinglash ---
+  //
+  // IKKI QATLAMLI HIMOYA (sessiya izolyatsiyasi):
+  //   1) serverga `sub.sessionId` yuboriladi — u begona sessiya eventlarini
+  //      umuman yubormaydi (pastdagi `sessiyaniKuzat` effekti);
+  //   2) shunga qaramay kelgan eventning `sessionId` si tekshiriladi.
+  // Ikkinchisi ortiqcha emas: sessiya yaratilgunga qadar (birinchi xabar
+  // yuborilayotgan payt) filtr hali o'rnatilmagan bo'lishi mumkin, qayta
+  // ulanish paytida ham qisqa oyna bor. Server xatosi UI'da begona matn
+  // bo'lib ko'rinmasligi kerak.
   useEffect(() => {
     ws.ulan()
     const obunaBekor = ws.obuna(['chat'])
     const kuzatBekor = ws.kuzat((event) => {
+      // Sessiyali chat eventi boshqa suhbatga tegishli bo'lsa — e'tiborsiz.
+      // `sessionIdRef` ishlatiladi (state emas): bu tinglovchi bir marta
+      // ro'yxatdan o'tadi va eski state'ni yopib qolib ketardi.
+      if ('sessionId' in event && event.type.startsWith('chat.')) {
+        const joriy = sessionIdRef.current
+        if (joriy !== null && event.sessionId !== joriy) return
+      }
+
       switch (event.type) {
         case 'chat.delta':
           setMsgs((m) =>
@@ -203,6 +229,14 @@ export default function Chat({ pro }: ChatProps) {
       kuzatBekor()
     }
   }, [])
+
+  // Sessiya o'zgarganda: ref'ni yangilaymiz va serverga qaysi sessiyani
+  // kuzatayotganimizni aytamiz. Shundan keyin boshqa oynadagi suhbatning
+  // eventlari bu ulanishga umuman kelmaydi.
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+    ws.sessiyaniKuzat(sessionId ?? undefined)
+  }, [sessionId])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })

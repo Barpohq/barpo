@@ -14,6 +14,7 @@
 
 import type { KlassifikatorQarori, RuxsatJavobi, RuxsatSorovi, RuxsatTuri } from '@platforma/shared'
 import { amalniBahola, type KlassifikatorXabari } from './klassifikator.ts'
+import { SessiyaReestri } from './reestr.ts'
 import type { RejimBoshqaruvchi } from './rejim.ts'
 
 /** Javob kutish muddati */
@@ -50,6 +51,8 @@ export interface KlassifikatorKonteksti {
   suhbat: KlassifikatorXabari[]
   ishPapkasi: string
   signal?: AbortSignal
+  /** Configdagi `ruxsat.klassifikatorModeli` — berilmasa avtomatik tanlanadi */
+  model?: string | null
 }
 
 /**
@@ -66,8 +69,21 @@ export class RuxsatBoshqaruvchi {
   private qarorKuzatuvchilar = new Set<QarorKuzatuvchi>()
   private klassifikatorKonteksti: KlassifikatorKonteksti | undefined
   private yopilgan = false
+  /**
+   * Javob kutish muddati. Configdan keladi; berilmasa `RUXSAT_KUTISH_MS`.
+   *
+   * Muddat tugasa so'rov RAD etiladi — hech qachon avtomatik ruxsatga
+   * aylanmaydi. Shuning uchun uni configdan boshqarish xavfsiz: eng yomon
+   * holatda foydalanuvchi javob berishga ulgurmaydi va amal bajarilmaydi.
+   */
+  private kutishMs = RUXSAT_KUTISH_MS
 
   constructor(readonly sessionId: string) {}
+
+  /** Javob kutish muddatini configdan o'rnatadi */
+  kutishMuddatiniOrnat(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.kutishMs = ms
+  }
 
   /**
    * Klassifikator kontekstini o'rnatadi. Har javob oqimi boshida `agent.ts`
@@ -133,6 +149,7 @@ export class RuxsatBoshqaruvchi {
             statikSabab: sorash.sabab,
           },
           ishPapkasi: kontekst.ishPapkasi,
+          model: kontekst.model,
         },
         kontekst.signal,
       )
@@ -166,7 +183,7 @@ export class RuxsatBoshqaruvchi {
       const taymer = setTimeout(() => {
         this.kutayotganlar.delete(sorov.id)
         yech('rad')
-      }, RUXSAT_KUTISH_MS)
+      }, this.kutishMs)
       // Node'da timer jarayonni ushlab turmasin
       taymer.unref?.()
 
@@ -226,25 +243,31 @@ export class RuxsatBoshqaruvchi {
   }
 }
 
-/** Sessiya bo'yicha boshqaruvchilar reestri */
-const boshqaruvchilar = new Map<string, RuxsatBoshqaruvchi>()
+/**
+ * Sessiya bo'yicha boshqaruvchilar reestri.
+ *
+ * TTL + LRU bilan — batafsil asos `reestr.ts` boshidagi izohda. Qisqasi:
+ * chat sessiyalari bazada abadiy qoladi va "o'chirildi" hodisasi yo'q,
+ * shuning uchun faolsizlik bo'yicha tozalash yagona ishonchli yo'l.
+ */
+const boshqaruvchilar = new SessiyaReestri<RuxsatBoshqaruvchi>(
+  (sessionId) => new RuxsatBoshqaruvchi(sessionId),
+)
 
 export function ruxsatBoshqaruvchisi(sessionId: string): RuxsatBoshqaruvchi {
-  let mavjud = boshqaruvchilar.get(sessionId)
-  if (!mavjud) {
-    mavjud = new RuxsatBoshqaruvchi(sessionId)
-    boshqaruvchilar.set(sessionId, mavjud)
-  }
-  return mavjud
+  return boshqaruvchilar.ol(sessionId)
 }
 
 export function ruxsatBoshqaruvchisiniYop(sessionId: string): void {
-  boshqaruvchilar.get(sessionId)?.yop()
-  boshqaruvchilar.delete(sessionId)
+  boshqaruvchilar.yop(sessionId)
+}
+
+/** Hozir saqlanayotgan ruxsat boshqaruvchilari soni — diagnostika uchun */
+export function ruxsatBoshqaruvchilarSoni(): number {
+  return boshqaruvchilar.soni
 }
 
 /** Testlar uchun: hamma boshqaruvchini tozalash */
 export function ruxsatlarniTozala(): void {
-  for (const b of boshqaruvchilar.values()) b.yop()
-  boshqaruvchilar.clear()
+  boshqaruvchilar.tozala()
 }

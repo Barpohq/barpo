@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Platforma sozlamalari",
+  "description": "Platformaning AI agenti, tool'lari va ruxsat tizimi sozlamalari. Bu fayl generatsiya qilinadi — qo'lda tahrirlamang, platform-config/src/sxema.ts ni o'zgartiring.",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "tarix": {
+          "type": "object",
+          "properties": {
+            "maksXabar": {
+              "description": "LLM'ga yuboriladigan eng ko'p xabar soni. Bundan eskilari tashlanadi (compaction yoqilgan bo'lsa avval siqiladi).",
+              "default": 200,
+              "type": "number",
+              "minimum": 10,
+              "maximum": 5000
+            },
+            "toolNatijasiChegarasi": {
+              "description": "Tarixga saqlanadigan bitta tool natijasining eng katta uzunligi (belgi). Uzun `read`/`bash` chiqishlari kontekstni bosib ketmasin.",
+              "default": 4000,
+              "type": "number",
+              "minimum": 200,
+              "maximum": 100000
+            }
+          },
+          "additionalProperties": false
+        },
+        "siqish": {
+          "type": "object",
+          "properties": {
+            "yoqilgan": {
+              "description": "Kontekst to'lganda tarixni avtomatik siqish. O'chirilsa uzun suhbat context window'ga sig'may qoladi.",
+              "default": true,
+              "type": "boolean"
+            },
+            "zaxiraTokenlar": {
+              "description": "Context window'ning summary prompti va javob uchun ajratilgan qismi. Kontekst (window - zaxira) dan oshsa siqish boshlanadi.",
+              "default": 16384,
+              "type": "number",
+              "minimum": 1000,
+              "maximum": 200000
+            },
+            "saqlanadiganTokenlar": {
+              "description": "Siqishdan keyin o'zgarishsiz saqlanadigan eng yangi kontekst hajmi. Kattaroq qiymat — yaqin tarix aniqroq, lekin siqish kamroq foyda beradi.",
+              "default": 20000,
+              "type": "number",
+              "minimum": 1000,
+              "maximum": 200000
+            },
+            "modeli": {
+              "description": "Siqish uchun model, `provider/model` shaklida. `null` bo'lsa asosiy chat modeli ishlatiladi (summary sifati muhim, shuning uchun standart shunday).",
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "toollar": {
+          "type": "object",
+          "properties": {
+            "yoqilgan": {
+              "description": "Agentga beriladigan tool'lar. Ro'yxatdan olib tashlangan tool umuman ko'rinmaydi — agent uning borligini bilmaydi.",
+              "default": [
+                "read",
+                "write",
+                "edit",
+                "bash",
+                "grep",
+                "find",
+                "ls"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "bashTimeoutSekund": {
+              "description": "Bitta `bash` buyrug'i uchun eng uzun bajarilish vaqti. Cheksiz kutish web sessiyasini qotiradi.",
+              "default": 120,
+              "type": "number",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "natijaChegarasi": {
+              "description": "UI'ga yuboriladigan tool natijasining eng katta uzunligi (belgi). Tarixga saqlanadigan chegara alohida sozlanadi.",
+              "default": 2000,
+              "type": "number",
+              "minimum": 200,
+              "maximum": 50000
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ruxsat": {
+      "type": "object",
+      "properties": {
+        "rejim": {
+          "description": "Yangi sessiyaning boshlang'ich ruxsat rejimi. `tasdiq` — har xavfli amal so'raladi; `auto` — klassifikator hal qiladi.",
+          "default": "tasdiq",
+          "type": "string",
+          "enum": [
+            "tasdiq",
+            "auto"
+          ]
+        },
+        "kutishSoniya": {
+          "description": "Ruxsat so'roviga javob kutish muddati. Muddat tugasa so'rov RAD etiladi — agent abadiy osilib qolmasin.",
+          "default": 300,
+          "type": "number",
+          "minimum": 10,
+          "maximum": 3600
+        },
+        "klassifikatorModeli": {
+          "description": "Auto rejim klassifikatori uchun model, `provider/model` shaklida. `null` bo'lsa avtomatik tanlanadi (tez va sinalgan modellar ustuvor).",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ketmaKetBlokChegarasi": {
+          "description": "Klassifikator ketma-ket shuncha marta bloklasa auto rejim o'chadi — agent so'ralganidan chetga chiqayotgan bo'lishi mumkin.",
+          "default": 3,
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "jamiBlokChegarasi": {
+          "description": "Sessiya davomida jami shuncha blokdan keyin auto rejim o'chadi.",
+          "default": 20,
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "qoshimchaTaqiqlar": {
+          "description": "Qo'shimcha taqiqlangan buyruq nomlari. O'rnatilgan qat'iy taqiq ro'yxatiga QO'SHILADI, uni almashtirmaydi — xavfsizlik chegarasini pasaytirib bo'lmaydi.",
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "sessiya": {
+      "type": "object",
+      "properties": {
+        "ishPapkasi": {
+          "description": "Agent tool'lari ishlaydigan papkalar ildizi. `null` bo'lsa `~/.platforma/ishlar/` ishlatiladi.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "faolsizlikDaqiqa": {
+          "description": "Shuncha vaqt faolsiz sessiyaning xotiradagi resurslari (ruxsat holati, rejim) tozalanadi. Suhbat tarixi bazada qoladi.",
+          "default": 60,
+          "type": "number",
+          "minimum": 1,
+          "maximum": 10080
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "additionalProperties": false
+}

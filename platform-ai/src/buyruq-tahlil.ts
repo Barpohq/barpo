@@ -187,8 +187,40 @@ const XAVFSIZ_BUYRUQLAR = new Set([
   'go', 'cargo', 'rustc', 'java', 'mvn', 'gradle',
   'tsc', 'eslint', 'oxlint', 'prettier', 'biome', 'vitest', 'jest',
   'make', 'cmake',
-  // Papka yaratish (o'chirish EMAS)
-  'mkdir', 'touch', 'cp', 'mv',
+  // Papka/fayl yaratish (o'chirish EMAS).
+  // `cp` va `mv` bu yerda YO'Q — pastdagi USTIGA_YOZUVCHILAR izohiga qarang.
+  'mkdir', 'touch',
+])
+
+/**
+ * Ustiga yozib yuborishi mumkin bo'lgan buyruqlar.
+ *
+ * Nega alohida toifa? `cp` va `mv` oldin `XAVFSIZ_BUYRUQLAR` ro'yxatida edi,
+ * lekin ular MAVJUD faylni jimgina yo'q qiladi:
+ *   cp a.txt b.txt   → b.txt ning eski mazmuni qaytarib bo'lmaydigan holda ketdi
+ *   mv a.txt b.txt   → b.txt ketdi, ustiga a.txt ning mazmuni b.txt bo'lib qoldi
+ * `rm` xavfli sanalib, `mv` xavfsiz sanalishi mantiqsiz: ikkalasi ham
+ * foydalanuvchining ishini yo'q qila oladi.
+ *
+ * Lekin ularni butunlay `XAVFLI_BUYRUQLAR` ga ko'chirish ham noto'g'ri
+ * bo'lardi: `cp shablon.ts yangi.ts` yoki `mv eski-nom.ts yangi-nom.ts`
+ * kabi amallar kundalik ish oqimining oddiy qismi va har safar ruxsat
+ * so'rash foydalanuvchini charchatadi ("ruxsat charchog'i" — bir necha
+ * marta bosgandan keyin odam o'qimay tasdiqlay boshlaydi, ya'ni himoya
+ * o'z ma'nosini yo'qotadi).
+ *
+ * Shuning uchun oraliq yechim: NISHON MAVJUD BO'LSA xavfli, bo'lmasa
+ * xavfsiz. Mavjudlikni tekshirish `BuyruqTahlilSozlamalari.mavjudmi`
+ * orqali beriladi (statik tahlil fayl tizimini o'zi ochmaydi — bu modul
+ * sof funksiya bo'lib qolishi kerak, testlar shunga tayanadi).
+ *
+ * Tekshiruvchi berilmasa EHTIYOTKOR yo'l tanlanadi: nishoni bor `cp`/`mv`
+ * xavfli sanaladi. Sabab — "bilmasak xavfsiz" degan taxmin aynan shu
+ * modulning butun modeliga zid (oq ro'yxat modeli).
+ */
+const USTIGA_YOZUVCHILAR = new Map<string, string>([
+  ['cp', "mavjud fayl ustiga yozadi"],
+  ['mv', "mavjud fayl ustiga yozadi"],
 ])
 
 /**
@@ -266,6 +298,17 @@ const OZGARUVCHI_PREFIKS = /^[A-Za-z_][A-Za-z0-9_]*=/
 export interface BuyruqTahlilSozlamalari {
   /** Ish papkasi — undan tashqaridagi yo'llar ruxsat so'raydi */
   ishPapkasi: string
+  /**
+   * Yo'l allaqachon mavjudmi. `cp`/`mv` nishonini tekshirish uchun —
+   * mavjud fayl ustiga yozish xavfli, yangi fayl yaratish xavfsiz.
+   *
+   * Sinxron: tahlil funksiyasi sof va sinxron bo'lib qolishi kerak
+   * (`buyruqniBahola` ni test qilish oson bo'lsin). Chaqiruvchi
+   * (`ChegaralanganMuhit`) `existsSync` beradi.
+   *
+   * Berilmasa nishoni bor `cp`/`mv` ehtiyot yuzasidan xavfli sanaladi.
+   */
+  mavjudmi?: (yol: string) => boolean
 }
 
 /**
@@ -464,7 +507,26 @@ export function buyruqniBahola(buyruq: string, sozlama: BuyruqTahlilSozlamalari)
       }
     }
 
-    // 3b) git — kichik buyruqqa qarab hal qilinadi
+    // 3b) `cp`/`mv` — nishon mavjud bo'lsa ustiga yozadi, ya'ni xavfli.
+    //
+    // ATAYLAB tashqi yo'l tekshiruvidan KEYIN turadi: `cp a.txt /etc/passwd`
+    // avvalo "ish papkasidan tashqariga chiqish" sifatida ushlanishi kerak,
+    // nishonning mavjudligidan qat'i nazar.
+    const ustigaYozuvchiSabab = USTIGA_YOZUVCHILAR.get(nom)
+    if (ustigaYozuvchiSabab) {
+      const ustigaNishon = ustigaYozishNishoni(bolak, nom, sozlama)
+      if (ustigaNishon) {
+        return {
+          toifa: 'xavfli',
+          sabab: `\`${nom}\` — ${ustigaYozuvchiSabab}: ${ustigaNishon}`,
+          naqsh,
+        }
+      }
+      // Nishon yangi — bu oddiy nusxalash/nomlash, xavfsiz
+      continue
+    }
+
+    // 3c) git — kichik buyruqqa qarab hal qilinadi
     if (nom === 'git') {
       const kichik = gitKichikBuyrugi(bolak)
       if (kichik && XAVFSIZ_GIT.has(kichik)) continue
@@ -489,6 +551,52 @@ export function buyruqniBahola(buyruq: string, sozlama: BuyruqTahlilSozlamalari)
 
   if (notanish) return notanish
   return { toifa: 'xavfsiz', naqsh: naqshYasa(buyruqNomi(bolaklar[0]!), bolaklar[0]!) }
+}
+
+/**
+ * `cp`/`mv` bo'lagida ustiga yoziladigan nishonni topadi.
+ *
+ * Nishon — OXIRGI yo'l argumenti (`cp a b`, `cp a b c/` da `c/`). Bayroqlar
+ * (`-r`, `--force`) tashlab yuboriladi.
+ *
+ * Qaytish qiymati:
+ *   string    — nishon mavjud (yoki tekshirib bo'lmadi) → ruxsat so'ralsin
+ *   null      — nishon yangi, xavfsiz
+ *
+ * Ehtiyotkor holatlar (hammasi "xavfli" tomonga og'adi):
+ *   - `mavjudmi` berilmagan → tekshirib bo'lmadi, nishon qaytariladi;
+ *   - argument almashtirish/globa (`*`, `$`, `` ` ``) bor → qaysi fayllarga
+ *     tegishini bilmaymiz, nishon qaytariladi;
+ *   - nishon papka → ichida bir xil nomli fayl bo'lishi mumkin, nishon
+ *     qaytariladi (papkaga nusxalash eng ko'p ustiga yozadigan holat).
+ */
+function ustigaYozishNishoni(
+  bolak: string,
+  nom: string,
+  sozlama: BuyruqTahlilSozlamalari,
+): string | null {
+  const sozlar = bolak.split(/\s+/).filter(Boolean)
+  const nomIndeksi = sozlar.findIndex((s) => (s.split('/').pop() ?? s) === nom)
+  if (nomIndeksi < 0) return null
+
+  const argumentlar = sozlar
+    .slice(nomIndeksi + 1)
+    .filter((s) => !s.startsWith('-'))
+    .map((s) => s.replace(/^['"]|['"]$/g, ''))
+
+  // Manba va nishon bo'lishi kerak: `cp a` — buzuq buyruq, tegmaymiz
+  if (argumentlar.length < 2) return null
+
+  const nishon = argumentlar[argumentlar.length - 1]!
+
+  // Kengaytiriladigan narsalar — statik tahlil qiymatni bilmaydi
+  if (/[*?$`{}[\]]/.test(nishon)) return nishon
+
+  if (!sozlama.mavjudmi) return nishon
+
+  // Nisbiy yo'l ish papkasiga nisbatan hisoblanadi (buyruq shu yerda bajariladi)
+  const toliq = nishon.startsWith('/') ? nishon : `${sozlama.ishPapkasi}/${nishon}`
+  return sozlama.mavjudmi(toliq) ? nishon : null
 }
 
 /**

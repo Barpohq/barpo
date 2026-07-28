@@ -28,8 +28,30 @@ import {
   type Result,
   type ShellExecOptions,
 } from '@earendil-works/pi-agent-core/node'
+import { existsSync } from 'node:fs'
 import { buyruqniBahola } from './buyruq-tahlil.ts'
 import type { RuxsatBoshqaruvchi } from './ruxsat.ts'
+
+/**
+ * `bash` tool'ining standart timeout'i.
+ *
+ * Nega kerak? `exec()` ga timeout berilmasa buyruq CHEKSIZ osilib qolishi
+ * mumkin: `npm install` tarmoqni kutadi, `vite dev` yoki `tail -f` esa
+ * umuman tugamaydi, interaktiv buyruq (`git rebase -i`, parol so'rovi) ham
+ * kirish kutib turadi. CLI'da bu holatni odam Ctrl+C bilan uzadi — web
+ * platformasida esa uzadigan hech kim yo'q: agent loop `await` da qotadi,
+ * sessiya "javob oqmoqda" holatida muzlab qoladi va foydalanuvchi faqat
+ * "To'xtatish" bosib chiqa oladi.
+ *
+ * 2 daqiqa tanlandi: `bun install`, `tsc`, o'rtacha test to'plami shu vaqtga
+ * sig'adi, lekin cheksiz kutish ham bo'lmaydi.
+ *
+ * KELAJAKDA: bu qiymat config qatlamidan olinadi (loyihaga qarab uzunroq
+ * build'lar uchun oshirilishi kerak bo'ladi). Hozircha konstanta — o'zgartirish
+ * uchun bitta joy yetarli. `ChegaralanganMuhitSozlamalari.buyruqTimeoutMs`
+ * orqali allaqachon almashtirsa bo'ladi, config faqat shu qiymatni beradi.
+ */
+export const STANDART_BUYRUQ_TIMEOUT_MS = 2 * 60 * 1000
 
 /** Yo'l tekshiruvidan o'tmagan amal uchun xato */
 function radXatosi(yol: string, sabab: string): FileError {
@@ -42,12 +64,19 @@ export interface ChegaralanganMuhitSozlamalari {
   ruxsat: RuxsatBoshqaruvchi
   /** Test uchun ichki muhitni almashtirish */
   ichki?: ExecutionEnv
+  /**
+   * Buyruq uchun standart timeout (ms). Berilmasa
+   * `STANDART_BUYRUQ_TIMEOUT_MS`. Chaqiruvchi `exec` da aniq timeout bersa
+   * o'shanisi ustun turadi.
+   */
+  buyruqTimeoutMs?: number
 }
 
 export class ChegaralanganMuhit implements ExecutionEnv {
   readonly cwd: string
   private ichki: ExecutionEnv
   private ruxsat: RuxsatBoshqaruvchi
+  private buyruqTimeoutMs: number
   /** Shu oqimda allaqachon ruxsat berilgan yo'llar — qayta so'ralmaydi */
   private ruxsatEtilgan = new Set<string>()
 
@@ -55,6 +84,7 @@ export class ChegaralanganMuhit implements ExecutionEnv {
     this.cwd = sozlama.ishPapkasi
     this.ichki = sozlama.ichki ?? new NodeExecutionEnv({ cwd: sozlama.ishPapkasi })
     this.ruxsat = sozlama.ruxsat
+    this.buyruqTimeoutMs = sozlama.buyruqTimeoutMs ?? STANDART_BUYRUQ_TIMEOUT_MS
   }
 
   // -------------------------------------------------------------------------
@@ -242,7 +272,13 @@ export class ChegaralanganMuhit implements ExecutionEnv {
     command: string,
     options?: ShellExecOptions,
   ): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
-    const baho = buyruqniBahola(command, { ishPapkasi: this.cwd })
+    const baho = buyruqniBahola(command, {
+      ishPapkasi: this.cwd,
+      // `cp`/`mv` nishoni allaqachon bormi — bor bo'lsa ustiga yozadi, ya'ni
+      // ruxsat so'raladi. Sinxron `existsSync`: tahlil sinxron, buyruq esa
+      // baribir shu jarayonda kutib turadi.
+      mavjudmi: (yol) => existsSync(yol),
+    })
 
     // Qat'iy taqiq — klassifikatorga ham, foydalanuvchiga ham bormaydi.
     // Bu yagona shartsiz kafolat: qolgan hamma himoya ehtimoliy.
@@ -275,8 +311,18 @@ export class ChegaralanganMuhit implements ExecutionEnv {
       }
     }
 
-    // Buyruq har doim ish papkasida boshlanadi
-    return this.ichki.exec(command, { ...options, cwd: options?.cwd ?? this.cwd })
+    // Buyruq har doim ish papkasida boshlanadi.
+    //
+    // Timeout: `ShellExecOptions.timeout` — SONIYADA va standart holatda
+    // umuman yo'q (cheksiz kutish). Chaqiruvchi aniq qiymat bergan bo'lsa
+    // o'shanisi qoladi, aks holda standart chegara qo'yamiz — aks holda
+    // tugamaydigan buyruq (`tail -f`, `vite dev`, parol so'ragan buyruq)
+    // butun sessiyani qotiradi.
+    return this.ichki.exec(command, {
+      ...options,
+      cwd: options?.cwd ?? this.cwd,
+      timeout: options?.timeout ?? Math.ceil(this.buyruqTimeoutMs / 1000),
+    })
   }
 
   async cleanup(): Promise<void> {

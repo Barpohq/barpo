@@ -14,6 +14,7 @@
 // rejimda ekanini bilishi kerak.
 
 import type { RuxsatRejimi } from '@platforma/shared'
+import { SessiyaReestri } from './reestr.ts'
 
 /** Ketma-ket blok chegarasi */
 export const KETMA_KET_BLOK_CHEGARASI = 3
@@ -39,8 +40,28 @@ export class RejimBoshqaruvchi {
   private ketmaKetBlok = 0
   private jamiBlok = 0
   private kuzatuvchilar = new Set<RejimKuzatuvchi>()
+  /**
+   * Blok chegaralari. Configdan keladi; berilmasa modul konstantalari.
+   *
+   * Nega konstruktorda emas, alohida metodda? Boshqaruvchi reestr orqali
+   * sessiya bo'yicha yaratiladi va o'sha payt config hali ma'lum bo'lmasligi
+   * mumkin (masalan ish papkasi aniqlanmagan). Chaqiruvchi keyinroq
+   * `chegaralarniOrnat()` bilan aniqlashtiradi.
+   */
+  private ketmaKetChegara = KETMA_KET_BLOK_CHEGARASI
+  private jamiChegara = JAMI_BLOK_CHEGARASI
 
   constructor(readonly sessionId: string) {}
+
+  /**
+   * Blok chegaralarini configdan o'rnatadi.
+   * Hisoblagichlar tegilmaydi — chegara o'zgarishi sessiyani qayta
+   * boshlamasligi kerak.
+   */
+  chegaralarniOrnat(ketmaKet: number, jami: number): void {
+    if (Number.isFinite(ketmaKet) && ketmaKet > 0) this.ketmaKetChegara = ketmaKet
+    if (Number.isFinite(jami) && jami > 0) this.jamiChegara = jami
+  }
 
   get rejim(): RuxsatRejimi {
     return this._rejim
@@ -101,15 +122,15 @@ export class RejimBoshqaruvchi {
     this.ketmaKetBlok += 1
     this.jamiBlok += 1
 
-    if (this.ketmaKetBlok >= KETMA_KET_BLOK_CHEGARASI) {
+    if (this.ketmaKetBlok >= this.ketmaKetChegara) {
       this.autoniOchir(
-        `klassifikator ketma-ket ${KETMA_KET_BLOK_CHEGARASI} marta bloklandi — ` +
+        `klassifikator ketma-ket ${this.ketmaKetChegara} marta bloklandi — ` +
           'agent so\'ralganidan chetga chiqayotgan bo\'lishi mumkin',
       )
       return true
     }
-    if (this.jamiBlok >= JAMI_BLOK_CHEGARASI) {
-      this.autoniOchir(`sessiyada jami ${JAMI_BLOK_CHEGARASI} marta bloklandi`)
+    if (this.jamiBlok >= this.jamiChegara) {
+      this.autoniOchir(`sessiyada jami ${this.jamiChegara} marta bloklandi`)
       return true
     }
     return false
@@ -153,24 +174,32 @@ export class RejimBoshqaruvchi {
 // Sessiya bo'yicha reestr
 // ---------------------------------------------------------------------------
 
-const boshqaruvchilar = new Map<string, RejimBoshqaruvchi>()
+/**
+ * TTL + LRU bilan — asos `reestr.ts` boshidagi izohda.
+ *
+ * Bu yerda saqlanadigan holat (rejim va blok hisoblagichlari) sessiyaga
+ * tegishli vaqtinchalik ma'lumot. Tozalangach sessiya standart `tasdiq`
+ * rejimiga qaytadi — bu XAVFSIZ tomon: unutilgan holat hech qachon
+ * "auto yoqilgan" bo'lib tiklanmaydi.
+ */
+const boshqaruvchilar = new SessiyaReestri<RejimBoshqaruvchi>(
+  (sessionId) => new RejimBoshqaruvchi(sessionId),
+)
 
 export function rejimBoshqaruvchisi(sessionId: string): RejimBoshqaruvchi {
-  let mavjud = boshqaruvchilar.get(sessionId)
-  if (!mavjud) {
-    mavjud = new RejimBoshqaruvchi(sessionId)
-    boshqaruvchilar.set(sessionId, mavjud)
-  }
-  return mavjud
+  return boshqaruvchilar.ol(sessionId)
 }
 
 export function rejimBoshqaruvchisiniYop(sessionId: string): void {
-  boshqaruvchilar.get(sessionId)?.yop()
-  boshqaruvchilar.delete(sessionId)
+  boshqaruvchilar.yop(sessionId)
+}
+
+/** Hozir saqlanayotgan rejim boshqaruvchilari soni — diagnostika uchun */
+export function rejimBoshqaruvchilarSoni(): number {
+  return boshqaruvchilar.soni
 }
 
 /** Testlar uchun */
 export function rejimlarniTozala(): void {
-  for (const b of boshqaruvchilar.values()) b.yop()
-  boshqaruvchilar.clear()
+  boshqaruvchilar.tozala()
 }

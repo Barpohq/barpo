@@ -241,6 +241,8 @@ interface XabarQator {
   text: string
   tool_card: string | null
   tool_cards: string | null
+  agent_messages: string | null
+  context_tokens: number | null
   created_at: string
 }
 
@@ -252,7 +254,22 @@ function xabarQatordan(q: XabarQator): ChatMessage {
     text: q.text,
     toolCard: q.tool_card ? (JSON.parse(q.tool_card) as ToolCard) : undefined,
     toolCards: q.tool_cards ? (JSON.parse(q.tool_cards) as ToolChaqiruv[]) : undefined,
+    // Buzuq JSON butun sessiyani o'qib bo'lmaydigan qilmasin: bu ustun
+    // faqat LLM konteksti uchun, u yo'qolsa suhbat `text` bilan davom etadi.
+    agentMessages: jsonOqi(q.agent_messages),
+    contextTokens: q.context_tokens ?? undefined,
     createdAt: q.created_at,
+  }
+}
+
+/** Xom JSON ustunini o'qiydi. Buzuq bo'lsa `undefined` — xato tashlamaydi. */
+function jsonOqi(xom: string | null): unknown[] | undefined {
+  if (!xom) return undefined
+  try {
+    const tahlil = JSON.parse(xom) as unknown
+    return Array.isArray(tahlil) ? tahlil : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -278,12 +295,15 @@ export function xabarYoz(
     text: xabar.text,
     toolCard: xabar.toolCard,
     toolCards: xabar.toolCards,
+    agentMessages: xabar.agentMessages,
+    contextTokens: xabar.contextTokens,
     createdAt: xabar.createdAt ?? new Date().toISOString(),
   }
 
   d.prepare(
-    `INSERT INTO chat_messages (id, session_id, role, text, tool_card, tool_cards, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chat_messages
+       (id, session_id, role, text, tool_card, tool_cards, agent_messages, context_tokens, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     toliq.id,
     toliq.sessionId,
@@ -291,6 +311,8 @@ export function xabarYoz(
     toliq.text,
     toliq.toolCard ? JSON.stringify(toliq.toolCard) : null,
     toliq.toolCards?.length ? JSON.stringify(toliq.toolCards) : null,
+    toliq.agentMessages?.length ? JSON.stringify(toliq.agentMessages) : null,
+    toliq.contextTokens ?? null,
     toliq.createdAt,
   )
 
