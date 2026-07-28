@@ -92,6 +92,21 @@ export async function sessiyaYarat(title?: string, projectId?: string): Promise<
   return javob.session
 }
 
+/**
+ * Bitta sessiya — URL'dan tiklash uchun.
+ *
+ * `null` qaytadi (throw emas) agar sessiya topilmasa: URL eskirgan yoki
+ * noto'g'ri bo'lishi oddiy holat, chaqiruvchi shunchaki bo'sh chatga tushadi.
+ */
+export async function sessiyaOl(sessionId: string): Promise<ChatSession | null> {
+  try {
+    const javob = await sorov<{ session: ChatSession }>(`/api/chat/sessions/${sessionId}`)
+    return javob.session
+  } catch {
+    return null
+  }
+}
+
 export async function xabarlarOl(sessionId: string): Promise<ChatMessage[]> {
   const javob = await sorov<{ messages: ChatMessage[] }>(`/api/chat/sessions/${sessionId}/messages`)
   return javob.messages

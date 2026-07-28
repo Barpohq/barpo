@@ -10,9 +10,10 @@
 // qulflanadi. Sessiya tarixi UI'si (eski suhbatlar ro'yxati) keyingi
 // bosqichda qo'shiladi.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AppManifest,
+  ChatMessage,
   ModelInfo,
   Project,
   RejimHolati,
@@ -35,9 +36,12 @@ import {
   loyihaYarat as loyihaYaratSorov,
   modellarOl,
   oqimniToxtat,
+  rejimOl,
   rejimOrnat as rejimOrnatSorov,
   ruxsatJavobiYubor,
+  sessiyaOl,
   sessiyaYarat,
+  xabarlarOl,
   xabarYubor,
 } from '../lib/api'
 import { useIshlayotganlar } from '../lib/ishlayotganlar'
@@ -55,6 +59,22 @@ interface Msg {
   xato?: string
 }
 
+/**
+ * Bazadagi xabarni UI shakliga o'tkazadi (URL'dan tiklashda).
+ *
+ * `oqmoqda` qo'yilmaydi: tarixdan kelgan xabar allaqachon tugagan. Sahifa
+ * yopilganda oqim davom etayotgan bo'lsa ham, qayta ochilganda uni kuzatib
+ * bo'lmaydi — matn esa bazada saqlangan.
+ */
+function xabarniMoslash(x: ChatMessage): Msg {
+  return {
+    id: x.id,
+    role: x.role,
+    text: x.text,
+    toolCards: x.toolCards,
+  }
+}
+
 /** Kiritish maydoni shundan oshmaydi — ~8 qator, keyin ichida aylanadi */
 const KIRITISH_MAX_BALANDLIK = 200
 
@@ -69,9 +89,24 @@ interface ChatProps {
   pro: boolean
   onInstallApp: (m: AppManifest) => void
   openApp: (id: string) => void
+  /**
+   * Tashqaridan (sidebar) "yangi suhbat" signali. Har oshganda oyna
+   * tozalanadi. Hisoblagich, chunki bir xil qiymat qayta yuborilsa
+   * effekt ishlamas edi.
+   */
+  yangiSuhbatSignali?: number
+  /** URL'dagi sessiya id (sahifa ochilganda) — bo'lsa o'sha suhbat tiklanadi */
+  boshlangichSessiya?: string | null
+  /** Sessiya yaratilganda yoki tozalanganda — App hash'ni yangilaydi */
+  onSessiyaOzgardi?: (sessionId: string | null) => void
 }
 
-export default function Chat({ pro }: ChatProps) {
+export default function Chat({
+  pro,
+  yangiSuhbatSignali,
+  boshlangichSessiya,
+  onSessiyaOzgardi,
+}: ChatProps) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -108,6 +143,71 @@ export default function Chat({ pro }: ChatProps) {
   const kiritishRef = useRef<HTMLTextAreaElement>(null)
   // Hozir javob kutilayotgan xabar id'si — WS eventlari shu bo'yicha topiladi
   const kutilayotgan = useRef<string | null>(null)
+  /**
+   * URL'dan tiklanayotgan sessiyaning provider/modeli.
+   *
+   * Ref, chunki modellar yuklash effekti bilan poyga bor: ikkalasi parallel
+   * ketadi va qaysi biri oldin tugashi noma'lum. State bo'lsa model effekti
+   * eski qiymatni ko'rishi mumkin edi.
+   */
+  const tiklanganSessiya = useRef<{ provider?: string; model?: string } | null>(null)
+  /**
+   * `onSessiyaOzgardi` ning barqaror nusxasi. App uni har renderda qayta
+   * yaratadi — to'g'ridan-to'g'ri bog'lansa `send` ham har renderda qayta
+   * quriladi va uni ishlatuvchi effektlar keraksiz qayta ishga tushardi.
+   */
+  const sessiyaXabarchi = useRef(onSessiyaOzgardi)
+  sessiyaXabarchi.current = onSessiyaOzgardi
+  /** Tiklash tugadimi — bo'lmasa "bo'sh chat" ekrani ko'rsatilmaydi */
+  const [tiklanmoqda, setTiklanmoqda] = useState(Boolean(boshlangichSessiya))
+
+  // --- URL'dagi sessiyani tiklash ---
+  //
+  // Sahifa `#chat/<uuid>` bilan ochilgan: suhbatni bazadan qaytaramiz.
+  // Faqat bir marta, sahifa ochilishida — keyingi sessiya o'zgarishlari
+  // `send()` va `yangiSuhbat()` orqali boshqariladi.
+  useEffect(() => {
+    if (!boshlangichSessiya) return
+    let bekor = false
+
+    void (async () => {
+      const sessiya = await sessiyaOl(boshlangichSessiya)
+      if (bekor) return
+
+      // URL eskirgan yoki sessiya o'chirilgan — jimgina bo'sh chatga tushamiz
+      if (!sessiya) {
+        sessiyaXabarchi.current?.(null)
+        setTiklanmoqda(false)
+        return
+      }
+
+      // Model tanlash effekti shu qiymatni kutadi
+      tiklanganSessiya.current = { provider: sessiya.provider, model: sessiya.model }
+
+      try {
+        const [xabarlar, rejimHolati] = await Promise.all([
+          xabarlarOl(boshlangichSessiya),
+          rejimOl(boshlangichSessiya).catch(() => null),
+        ])
+        if (bekor) return
+        setMsgs(xabarlar.map(xabarniMoslash))
+        if (rejimHolati) setRejim(rejimHolati)
+      } catch {
+        // Xabarlar yuklanmasa ham sessiyani ochamiz — foydalanuvchi davom
+        // ettira oladi, tarix esa keyingi yangilashda kelishi mumkin
+      }
+
+      if (bekor) return
+      setSessionId(boshlangichSessiya)
+      setTiklanmoqda(false)
+    })()
+
+    return () => {
+      bekor = true
+    }
+    // Faqat sahifa ochilishida — qayta ishga tushmasligi ataylab
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // --- Modellarni yuklash ---
   useEffect(() => {
@@ -117,9 +217,19 @@ export default function Chat({ pro }: ChatProps) {
         if (bekor) return
         setModellar(javob.models)
 
+        // URL'dan tiklanayotgan suhbat bo'lsa — uning modeli ustun. Sessiya
+        // provideri qulflangan, boshqa model bilan davom ettirib bo'lmaydi.
+        const tiklanayotgan = tiklanganSessiya.current
+        const sessiyaModeli =
+          tiklanayotgan &&
+          javob.models.find(
+            (m) => m.provider === tiklanayotgan.provider && m.id === tiklanayotgan.model,
+          )
+
         // Oldin tanlangani hali mavjudmi — bo'lmasa birinchisini olamiz
         const saqlangan = saqlangandanOqi()
         const topilgan =
+          sessiyaModeli ||
           (saqlangan &&
             javob.models.find((m) => m.provider === saqlangan.provider && m.id === saqlangan.model)) ||
           javob.models[0] ||
@@ -305,6 +415,8 @@ export default function Chat({ pro }: ChatProps) {
           const sessiya = await sessiyaYarat(text.slice(0, 60), loyiha?.id)
           sid = sessiya.id
           setSessionId(sid)
+          // URL'ga yozamiz — endi sahifa yangilansa suhbat tiklanadi
+          sessiyaXabarchi.current?.(sid)
           // Sessiyagacha tanlangan rejimni serverga yetkazamiz
           if (rejim.rejim === 'auto') {
             try {
@@ -406,28 +518,53 @@ export default function Chat({ pro }: ChatProps) {
     setMsgs((m) => m.map((x) => (x.oqmoqda ? { ...x, oqmoqda: false } : x)))
   }
 
-  const empty = msgs.length === 0
+  // Tiklash paytida "Nima quramiz?" ko'rsatilmaydi — aks holda saqlangan
+  // suhbat yuklanguncha bo'sh ekran miltillab o'tadi
+  const empty = msgs.length === 0 && !tiklanmoqda
   const qulflangan = sessionId !== null
   /** Shu oyna kuzatmayotgan, lekin fonda ishlayotgan sessiyalar */
   const fondagilar = Object.entries(ishlayotganlar).filter(([id]) => id !== sessionId)
-  const tanlanganYorliq = useMemo(
-    () => (tanlangan ? `${tanlangan.providerName} · ${tanlangan.name}` : null),
-    [tanlangan],
-  )
+
+  /**
+   * Oynani yangi suhbatga tayyorlaydi.
+   *
+   * Fondagi sessiya TO'XTATILMAYDI — u ishlashda davom etadi va "Jonli
+   * oqimlar" ro'yxatidan qaytib ochish mumkin. Bu yerda faqat shu oyna
+   * tozalanadi.
+   */
+  function yangiSuhbat() {
+    setSessionId(null)
+    sessiyaXabarchi.current?.(null)
+    setMsgs([])
+    setRuxsatlar([])
+    setRuxsatJavoblari({})
+    // Rejim tanlovi saqlanadi, lekin "o'chdi" sababi tozalanadi
+    setRejim((r) => ({ rejim: r.rejim }))
+    // LOYIHA TANLOVI ATAYLAB SAQLANADI: "loyiha ichida yangi chat ochish"
+    // eng ko'p kerak bo'ladigan yo'l. Boshqa loyihaga o'tish uchun
+    // tanlagich endi qulfsiz.
+    kutilayotgan.current = null
+    setBusy(false)
+  }
+
+  // Sidebar'dagi "Yangi suhbat" tugmasi. Boshlang'ich qiymatda (0) ishlamasin
+  // — faqat haqiqiy bosishlarda.
+  const oldingiSignal = useRef(yangiSuhbatSignali)
+  useEffect(() => {
+    if (yangiSuhbatSignali === undefined) return
+    if (oldingiSignal.current === yangiSuhbatSignali) return
+    oldingiSignal.current = yangiSuhbatSignali
+    yangiSuhbat()
+    // yangiSuhbat har renderda qayta yaratiladi — signalgagina bog'lanamiz
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yangiSuhbatSignali])
 
   return (
     <div className={`flex h-full flex-col ${pro ? '' : 'mx-auto w-full max-w-3xl'}`}>
-      {/* Tanlangan loyiha — agent tool'lari qaysi papkada ishlayotgani
-          har doim ko'rinib tursin */}
-      {loyiha && (
-        <div className="flex items-center gap-2 border-b border-line bg-panel px-4 py-1.5">
-          <span className="font-mono text-[10px] tracking-widest text-faint uppercase">
-            Loyiha
-          </span>
-          <span className="truncate font-mono text-[11px] text-lazur">{loyiha.name}</span>
-          <span className="truncate font-mono text-[10px] text-faint">{loyiha.papka}</span>
-        </div>
-      )}
+      {/* Chat tepasida sarlavha qatori yo'q — suhbat mazmuni o'zi ko'rinib
+          turadi. "Yangi suhbat" sidebar'da (pro) va pastdagi boshqaruv
+          panelida (ikkala rejimda). Loyiha nomi ham pastdagi panelda,
+          to'liq papka yo'li esa uning hover popup'ida. */}
 
       {/* Fondagi boshqa suhbatlar — bu oynada ularning javobi ko'rinmaydi,
           lekin ishlayotgani (ayniqsa ruxsat kutayotgani) bilinib tursin */}
@@ -576,7 +713,9 @@ export default function Chat({ pro }: ChatProps) {
           </form>
 
           <div className="mt-2 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
+            {/* Uchala tanlagich bitta kapsulada — qator yaxlit ko'rinadi,
+                ular bir-biriga bog'liq sozlamalar ekani seziladi */}
+            <div className="flex min-w-0 items-center gap-1 rounded-xl border border-line/60 bg-panel/40 p-1">
               <ModelTanlagich
                 modellar={modellar}
                 tanlangan={tanlangan}
@@ -585,11 +724,13 @@ export default function Chat({ pro }: ChatProps) {
                 yuklanmoqda={modelYuklanmoqda}
                 xato={modelXato}
               />
+              <span className="h-4 w-px shrink-0 bg-line/60" aria-hidden />
               <RejimAlmashtirgich
                 holat={rejim}
                 onOzgart={(r) => void rejimniOzgart(r)}
                 bandmi={busy}
               />
+              <span className="h-4 w-px shrink-0 bg-line/60" aria-hidden />
               <LoyihaTanlagich
                 loyihalar={loyihalar}
                 tanlangan={loyiha}
@@ -598,30 +739,17 @@ export default function Chat({ pro }: ChatProps) {
                 qulflangan={qulflangan}
               />
             </div>
+            {/* Suhbat boshlangach — yangisiga o'tish. Oddiy rejimda bu yagona
+                yo'l (sidebar faqat pro'da bor). Joriy sessiya to'xtatilmaydi:
+                fonda ishlashda davom etadi. */}
             {qulflangan && (
               <button
-                onClick={() => {
-                  setSessionId(null)
-                  setMsgs([])
-                  setRuxsatlar([])
-                  setRuxsatJavoblari({})
-                  // Rejim tanlovi saqlanadi, lekin "o'chdi" sababi tozalanadi
-                  setRejim((r) => ({ rejim: r.rejim }))
-                  // LOYIHA TANLOVI ATAYLAB SAQLANADI: "loyiha ichida yangi
-                  // chat ochish" eng ko'p kerak bo'ladigan yo'l. Boshqa
-                  // loyihaga o'tish uchun tanlagich endi qulfsiz.
-                  kutilayotgan.current = null
-                  setBusy(false)
-                }}
+                onClick={yangiSuhbat}
+                title="Joriy suhbat fonda ishlashda davom etadi"
                 className="shrink-0 font-mono text-[11px] text-faint transition hover:text-lazur"
               >
                 + yangi suhbat
               </button>
-            )}
-            {!qulflangan && tanlanganYorliq && (
-              <span className="shrink-0 font-mono text-[11px] text-faint">
-                provider suhbat boshlangach qulflanadi
-              </span>
             )}
           </div>
         </div>

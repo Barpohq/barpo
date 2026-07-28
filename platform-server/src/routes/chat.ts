@@ -77,6 +77,19 @@ chatRoutes.get('/chat/running', (c) => {
   return c.json({ running })
 })
 
+/**
+ * Bitta sessiya — URL'dan tiklash uchun.
+ *
+ * Sahifa `#chat/<uuid>` bilan ochilganda UI shu yerdan sessiyaning modelini
+ * va loyihasini oladi (xabarlar alohida so'rovda). Sessiya o'chirilgan yoki
+ * URL noto'g'ri bo'lsa 404 — UI uni bo'sh chatga tushish signali deb biladi.
+ */
+chatRoutes.get('/chat/sessions/:id', (c) => {
+  const sessiya = sessiyaOqi(c.req.param('id'))
+  if (!sessiya) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  return c.json({ session: sessiya })
+})
+
 chatRoutes.get('/chat/sessions/:id/messages', (c) => {
   const id = c.req.param('id')
   if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import OqimIndikatori from './components/OqimIndikatori'
 import { installedApps, type AppManifest } from './data/mock'
+import { hashQur, hashTahlil } from './lib/hash-yol'
 import { useIshlayotganlar } from './lib/ishlayotganlar'
 import Agents from './pages/Agents'
 import Chat from './pages/Chat'
@@ -26,12 +27,14 @@ const nav: { id: StaticPage; label: string; icon: ReactNode }[] = [
 
 const staticPages: StaticPage[] = ['chat', 'agents', 'servers', 'skills', 'audit', 'terminal']
 
-function initFromHash(): { pro: boolean; page: Page } {
-  const h = window.location.hash.replace('#', '')
-  const [mode, ...rest] = h.split('/')
-  const p = rest.join('/')
-  const page: Page = staticPages.includes(p as StaticPage) || p.startsWith('app:') ? (p as Page) : 'chat'
-  return mode === 'pro' ? { pro: true, page } : { pro: false, page: 'chat' }
+/** Hash tahlili `lib/hash-yol.ts` da — sof funksiya, test bilan qoplangan */
+function initFromHash(): { pro: boolean; page: Page; sessionId: string | null } {
+  const { pro, yol, sessionId } = hashTahlil(window.location.hash)
+  const page: Page =
+    staticPages.includes(yol as StaticPage) || yol.startsWith('app:') ? (yol as Page) : 'chat'
+
+  // Oddiy rejimda faqat chat bor, lekin sessiya URL'i baribir ishlashi kerak
+  return pro ? { pro: true, page, sessionId } : { pro: false, page: 'chat', sessionId }
 }
 
 function ProToggle({ pro, onToggle }: { pro: boolean; onToggle: () => void }) {
@@ -84,6 +87,13 @@ export default function App() {
   const [pro, setPro] = useState(init.pro)
   const [page, setPageRaw] = useState<Page>(init.page)
   const [apps, setApps] = useState<AppManifest[]>(installedApps)
+  /** Sidebar'dagi "Yangi suhbat" — har bosishda oshadi, Chat kuzatadi */
+  const [yangiSuhbatSignali, setYangiSuhbatSignali] = useState(0)
+  /**
+   * URL'dagi ochiq suhbat. Chat sessiya yaratganda/tozalaganda xabar beradi,
+   * biz hash'ni yangilaymiz — shunda sahifa refresh'da o'sha suhbat tiklanadi.
+   */
+  const [sessionId, setSessionId] = useState<string | null>(init.sessionId)
   // Fonda ishlayotgan agent oqimlari — sidebar'da jonli ko'rsatiladi.
   // Bitta suhbatni ochgan bo'lsak ham hammasi ko'rinadi: `chat.status`
   // sessiya bo'yicha filtrlanmaydi (protocol.ts ga q.).
@@ -93,17 +103,33 @@ export default function App() {
     ([, holat]) => holat === 'ruxsat-kutmoqda',
   ).length
 
+  /**
+   * Hash'ni bitta joydan yozamiz — sahifa, rejim va ochiq suhbat uch xil
+   * joydan o'zgaradi, har biri o'zicha yozsa sessiya id yo'qolib ketardi.
+   */
+  function hashYoz(p: boolean, sahifa: Page, sid: string | null) {
+    const yangi = hashQur(p, sahifa, sid)
+    if (window.location.hash.replace('#', '') !== yangi) window.location.hash = yangi
+  }
+
   function setPage(p: Page) {
     setPageRaw(p)
-    window.location.hash = `pro/${p}`
+    hashYoz(true, p, sessionId)
   }
 
   function togglePro() {
     setPro((p) => {
-      window.location.hash = p ? '' : `pro/${page}`
+      const yangiSahifa = p ? 'chat' : page
       if (p) setPageRaw('chat')
+      hashYoz(!p, yangiSahifa, sessionId)
       return !p
     })
+  }
+
+  /** Chat sessiya yaratganda/tozalaganda chaqiriladi */
+  function sessiyaOzgardi(sid: string | null) {
+    setSessionId(sid)
+    hashYoz(pro, page, sid)
   }
 
   // Yangi ilova manifesti keladi — sidebar va routing'ga darhol qo'shiladi.
@@ -148,6 +174,21 @@ export default function App() {
           aria-hidden={!pro}
         >
           <div className="thin-scroll flex-1 overflow-y-auto p-2">
+            {/* Eng ko'p bajariladigan amal — ro'yxatdan ham tepada turadi */}
+            <button
+              onClick={() => {
+                setPage('chat')
+                setYangiSuhbatSignali((n) => n + 1)
+              }}
+              tabIndex={pro ? 0 : -1}
+              className="mb-2 flex w-full items-center gap-2.5 rounded-lg border border-line px-3 py-2 text-left text-[13px] text-muted transition hover:border-lazur-dim hover:bg-panel2/60 hover:text-lazur"
+            >
+              <svg viewBox="0 0 20 20" className="size-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+                <path d="M10 4v12M4 10h12" />
+              </svg>
+              Yangi suhbat
+            </button>
+
             <div className="space-y-0.5">
               {nav.map((n) => (
                 <button
@@ -248,7 +289,16 @@ export default function App() {
         </nav>
 
         <main className="thin-scroll min-w-0 flex-1 overflow-y-auto">
-          {(!pro || page === 'chat') && <Chat pro={pro} onInstallApp={installApp} openApp={openApp} />}
+          {(!pro || page === 'chat') && (
+            <Chat
+              pro={pro}
+              onInstallApp={installApp}
+              openApp={openApp}
+              yangiSuhbatSignali={yangiSuhbatSignali}
+              boshlangichSessiya={init.sessionId}
+              onSessiyaOzgardi={sessiyaOzgardi}
+            />
+          )}
           {pro && page === 'agents' && <Agents />}
           {pro && page === 'servers' && <Servers />}
           {pro && page === 'skills' && <Skills />}

@@ -232,3 +232,39 @@ describe('GET /api/chat/sessions — model maydonlari', () => {
     expect(topilgan?.model).toBe('anthropic/claude-haiku-4.5')
   })
 })
+
+// URL'dan suhbatni tiklash uchun: sahifa `#chat/<uuid>` bilan ochilganda UI
+// shu marshrutdan sessiyaning modelini va loyihasini oladi.
+describe('GET /api/chat/sessions/:id — URL dan tiklash', () => {
+  test('mavjud sessiyani qaytaradi', async () => {
+    const s = sessiyaYarat('tiklanadigan', db)
+
+    const javob = await app.request(`/api/chat/sessions/${s.id}`)
+    expect(javob.status).toBe(200)
+
+    const { session } = (await javob.json()) as { session: ChatSession }
+    expect(session.id).toBe(s.id)
+    expect(session.title).toBe('tiklanadigan')
+  })
+
+  test('modelni qaytaradi — UI shu bilan provayderni tiklaydi', async () => {
+    const s = sessiyaYarat('modelli', db)
+    sessiyaModelQulfla(s.id, 'openai-codex', 'gpt-5.6-luna', db)
+
+    const javob = await app.request(`/api/chat/sessions/${s.id}`)
+    const { session } = (await javob.json()) as { session: ChatSession }
+
+    expect(session.provider).toBe('openai-codex')
+    expect(session.model).toBe('gpt-5.6-luna')
+  })
+
+  test("yo'q sessiya uchun 404 — UI buni bo'sh chatga tushish signali deb biladi", async () => {
+    const javob = await app.request('/api/chat/sessions/00000000-0000-4000-8000-000000000000')
+    expect(javob.status).toBe(404)
+  })
+
+  test("id o'rniga axlat kelsa ham 500 emas, 404", async () => {
+    const javob = await app.request('/api/chat/sessions/uuid-emas')
+    expect(javob.status).toBe(404)
+  })
+})
