@@ -9,7 +9,18 @@
 //   4) UI tomonda switch'ga yangi case qo'shing.
 // Boshqa joyni o'zgartirish shart emas.
 
-import type { AppManifest, AuditEntry, BuildStep, ToolCard } from './types.ts'
+import type {
+  AppManifest,
+  AuditEntry,
+  BuildStep,
+  KlassifikatorQarori,
+  RejimHolati,
+  RuxsatJavobi,
+  RuxsatRejimi,
+  RuxsatSorovi,
+  ToolCard,
+  ToolChaqiruv,
+} from './types.ts'
 
 export const PROTOCOL_VERSION = '0.1.0'
 
@@ -17,11 +28,23 @@ export const PROTOCOL_VERSION = '0.1.0'
 // Client → server
 // ---------------------------------------------------------------------------
 
+/** Chat uchun tanlangan model — provider bilan birga */
+export interface ModelTanlovi {
+  provider: string
+  model: string
+}
+
 /** Foydalanuvchi chatga xabar yubordi */
 export interface ChatSendEvent {
   type: 'chat.send'
   sessionId: string
   text: string
+  /**
+   * Faqat sessiyaning BIRINCHI xabarida hisobga olinadi — shunda sessiya
+   * provideri qulflanadi. Keyingi xabarlarda boshqa provider yuborilsa
+   * server rad etadi (chat.error).
+   */
+  model?: ModelTanlovi
 }
 
 /** Qurilish oqimidagi tanlov (masalan "domen" yoki "port preview") */
@@ -38,7 +61,32 @@ export interface SubEvent {
   channels: string[]
 }
 
-export type ClientEvent = ChatSendEvent | ChatChoiceEvent | SubEvent
+/**
+ * Foydalanuvchi ruxsat so'roviga javob berdi.
+ * `hardoim` — ruxsat beriladi va naqsh sessiya davomida eslab qolinadi.
+ */
+export interface ChatPermissionReplyEvent {
+  type: 'chat.permission.reply'
+  sessionId: string
+  sorovId: string
+  javob: RuxsatJavobi
+}
+
+/**
+ * Foydalanuvchi ruxsat rejimini o'zgartirdi (yoki auto ni qayta yoqdi).
+ */
+export interface ChatRejimSetEvent {
+  type: 'chat.rejim.set'
+  sessionId: string
+  rejim: RuxsatRejimi
+}
+
+export type ClientEvent =
+  | ChatSendEvent
+  | ChatChoiceEvent
+  | ChatPermissionReplyEvent
+  | ChatRejimSetEvent
+  | SubEvent
 
 // ---------------------------------------------------------------------------
 // Server → client
@@ -58,7 +106,7 @@ export interface ChatDeltaEvent {
   delta: string
 }
 
-/** Javob ichidagi tool kartasi */
+/** Javob ichidagi tool kartasi (eski demo oqimi) */
 export interface ChatToolCardEvent {
   type: 'chat.toolcard'
   sessionId: string
@@ -66,11 +114,74 @@ export interface ChatToolCardEvent {
   toolCard: ToolCard
 }
 
+/**
+ * Agent tool chaqiruvining holati o'zgardi.
+ * Bitta `id` uchun bir necha marta keladi: ishlamoqda → tugadi/xato.
+ * UI `id` bo'yicha mavjud kartani yangilaydi.
+ */
+export interface ChatToolEvent {
+  type: 'chat.tool'
+  sessionId: string
+  messageId: string
+  tool: ToolChaqiruv
+}
+
+/**
+ * Agent xavfli amalga urindi — foydalanuvchidan ruxsat so'ralmoqda.
+ * Javob `chat.permission.reply` bilan qaytariladi. Javob kelmasa
+ * server 5 daqiqadan keyin o'zi rad etadi.
+ */
+export interface ChatPermissionEvent {
+  type: 'chat.permission'
+  sessionId: string
+  messageId: string
+  sorov: RuxsatSorovi
+}
+
+/**
+ * Klassifikator amal bo'yicha qaror chiqardi (auto rejim).
+ * UI'da tool kartasi ostida kichik yorliq bo'lib ko'rinadi.
+ */
+export interface ChatKlassifikatorEvent {
+  type: 'chat.klassifikator'
+  sessionId: string
+  messageId: string
+  qaror: KlassifikatorQarori
+}
+
+/**
+ * Ruxsat rejimi o'zgardi — foydalanuvchi o'zi almashtirdi yoki auto
+ * fallback tufayli o'chdi (klassifikator nosoz / blok chegarasi).
+ */
+export interface ChatRejimEvent {
+  type: 'chat.rejim'
+  sessionId: string
+  holat: RejimHolati
+}
+
 /** Javob tugadi */
 export interface ChatDoneEvent {
   type: 'chat.done'
   sessionId: string
   messageId: string
+  /** Sarflangan tokenlar va narx — mavjud bo'lsa */
+  usage?: {
+    input: number
+    output: number
+    cost: number
+  }
+}
+
+/**
+ * Javob oqimi xato bilan uzildi. `chat.done` o'rniga keladi — ikkalasi
+ * bir vaqtda kelmaydi, shuning uchun UI "javob kutmoqda" holatini shu
+ * eventda ham tugatishi kerak.
+ */
+export interface ChatErrorEvent {
+  type: 'chat.error'
+  sessionId: string
+  messageId: string
+  error: string
 }
 
 /** Qurilishning navbatdagi qadami */
@@ -132,7 +243,12 @@ export type ServerEvent =
   | HelloEvent
   | ChatDeltaEvent
   | ChatToolCardEvent
+  | ChatToolEvent
+  | ChatPermissionEvent
+  | ChatKlassifikatorEvent
+  | ChatRejimEvent
   | ChatDoneEvent
+  | ChatErrorEvent
   | BuildStepEvent
   | BuildChoiceEvent
   | BuildDoneEvent
@@ -164,7 +280,12 @@ export function eventKanali(event: ServerEvent): Channel | null {
   switch (event.type) {
     case 'chat.delta':
     case 'chat.toolcard':
+    case 'chat.tool':
+    case 'chat.permission':
+    case 'chat.klassifikator':
+    case 'chat.rejim':
     case 'chat.done':
+    case 'chat.error':
       return CHANNELS.chat
     case 'build.step':
     case 'build.choice':
@@ -187,5 +308,11 @@ export function eventKanali(event: ServerEvent): Channel | null {
 export function clientEventMi(qiymat: unknown): qiymat is ClientEvent {
   if (typeof qiymat !== 'object' || qiymat === null) return false
   const tur = (qiymat as { type?: unknown }).type
-  return tur === 'chat.send' || tur === 'chat.choice' || tur === 'sub'
+  return (
+    tur === 'chat.send' ||
+    tur === 'chat.choice' ||
+    tur === 'chat.permission.reply' ||
+    tur === 'chat.rejim.set' ||
+    tur === 'sub'
+  )
 }

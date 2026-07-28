@@ -6,12 +6,13 @@
   "workspaces": [
     "platform-ui",
     "platform-shared",
-    "platform-server"
+    "platform-server",
+    "platform-ai"
   ],
   "scripts": {
     "dev:server": "bun --cwd platform-server run dev",
     "dev:ui": "bun --cwd platform-ui run dev",
-    "test": "bun --cwd platform-server test",
+    "test": "bun --cwd platform-server test && bun --cwd platform-ai test",
     "build": "bun --cwd platform-ui run build"
   }
 }

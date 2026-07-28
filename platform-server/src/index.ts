@@ -6,6 +6,7 @@
 import { app } from './app.ts'
 import { auditYoz } from './audit.ts'
 import { db } from './db.ts'
+import { chatSendHandleri } from './ws/chat-handler.ts'
 import { seedQol } from './seed.ts'
 import { hub, yangiUlanishHolati, type UlanishHolati } from './ws/hub.ts'
 
@@ -21,7 +22,12 @@ if (seed.servers || seed.skills || seed.audit || seed.apps) {
   )
 }
 
-// 2) Server: HTTP so'rovlari Hono'ga, /ws upgrade qilinadi
+// 2) WS orqali kelgan chat.send eventlarini orchestratorga ulaymiz.
+//    (REST /api/chat/send ham xuddi shu yo'lni ishlatadi — ikkalasi bir xil
+//    natija beradi, mijoz qaysi biri qulay bo'lsa shuni tanlaydi.)
+hub.handlerQosh(chatSendHandleri)
+
+// 3) Server: HTTP so'rovlari Hono'ga, /ws upgrade qilinadi
 const server = Bun.serve<UlanishHolati, Record<string, never>>({
   port: PORT,
 

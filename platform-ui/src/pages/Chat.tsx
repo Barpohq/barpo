@@ -1,213 +1,59 @@
-import { useEffect, useRef, useState } from 'react'
+// Chat sahifasi — haqiqiy LLM bilan suhbat.
+//
+// Oqim: xabar REST orqali yuboriladi (POST /api/chat/send → 202), javob esa
+// WebSocket orqali bo'laklab keladi (chat.delta → chat.done | chat.error).
+// Nega ikkiga bo'lingan? So'rovning qabul qilinganini (yoki rad etilganini,
+// masalan 409 provider qulfi) darhol bilish kerak, javob esa uzoq davom
+// etadi — uni HTTP javobida ushlab turish shart emas.
+//
+// Sessiya birinchi xabarda avtomatik yaratiladi va o'sha payt provider
+// qulflanadi. Sessiya tarixi UI'si (eski suhbatlar ro'yxati) keyingi
+// bosqichda qo'shiladi.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  AppManifest,
+  ModelInfo,
+  RejimHolati,
+  RuxsatJavobi,
+  RuxsatRejimi,
+  RuxsatSorovi,
+  ToolChaqiruv,
+} from '@platforma/shared'
+import ModelTanlagich from '../components/ModelTanlagich'
+import RejimAlmashtirgich from '../components/RejimAlmashtirgich'
+import RejimKartasi from '../components/RejimKartasi'
+import RuxsatKartasi from '../components/RuxsatKartasi'
+import ToolKartasi from '../components/ToolKartasi'
 import {
-  buildPlans,
-  cannedReplies,
-  fallbackReply,
-  genericBuildWords,
-  pendingPost,
-  type AppManifest,
-  type BuildPlan,
-  type ToolCard,
-  type Widget,
-} from '../data/mock'
-import { Card } from '../ui'
+  ApiXatosi,
+  modellarOl,
+  oqimniToxtat,
+  rejimOrnat as rejimOrnatSorov,
+  ruxsatJavobiYubor,
+  sessiyaYarat,
+  xabarYubor,
+} from '../lib/api'
+import { saqlangandanOqi } from '../lib/model-saqlash'
+import { ws } from '../lib/ws'
 
 interface Msg {
-  id: number
+  id: string
   role: 'user' | 'assistant'
   text: string
-  toolCard?: ToolCard
-  approval?: boolean
-  planId?: string
-  done?: boolean
+  /** Agent shu javob davomida bajargan tool chaqiruvlari, tartib bo'yicha */
+  toolCards?: ToolChaqiruv[]
+  /** Javob oqimi tugadimi — false bo'lsa kursor miltillaydi */
+  oqmoqda?: boolean
+  xato?: string
 }
 
-const suggestions = [
-  'Botim bugun nima qildi?',
-  'Tasdiq kutayotgan postlar bormi?',
-  'Menga xarajat kuzatuvchi bot yasab ber',
-  'Portfolio uchun landing sayt yasab ber',
-  "GitHub'dagi loyihamni deploy qilib ber",
+const takliflar = [
+  'Salom! O\'zingni tanishtir',
+  'TypeScript va JavaScript farqi nima?',
+  'Menga qisqa she\'r yozib ber',
+  'Bugungi rejamni tuzishga yordam ber',
 ]
-
-let nextId = 1
-
-function Stream({ text, done, onDone }: { text: string; done?: boolean; onDone: () => void }) {
-  const [n, setN] = useState(done ? text.length : 0)
-  useEffect(() => {
-    if (done) return
-    if (n >= text.length) {
-      onDone()
-      return
-    }
-    const t = setTimeout(() => setN((v) => Math.min(v + 3, text.length)), 18)
-    return () => clearTimeout(t)
-  }, [n, text, done, onDone])
-  return (
-    <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-      {text.slice(0, n)}
-      {!done && n < text.length && <span className="cursor-blink text-lazur">▍</span>}
-    </p>
-  )
-}
-
-function ToolCardView({ card }: { card: ToolCard }) {
-  return (
-    <div className="mb-3 overflow-hidden rounded-lg border border-line bg-bg font-mono text-xs">
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2 text-muted">
-        <span className="inline-block size-1.5 rounded-full bg-lazur" aria-hidden />
-        <span className="text-lazur">{card.tool}</span>
-        <span className="text-faint">{card.args}</span>
-      </div>
-      <div className="px-3 py-2 text-muted">⎿ {card.result}</div>
-    </div>
-  )
-}
-
-function ApprovalCard({ onDecision }: { onDecision: (d: string) => void }) {
-  const [state, setState] = useState<'pending' | 'published' | 'rejected'>('pending')
-
-  return (
-    <Card className="mt-3 overflow-hidden">
-      <div className="border-b border-line px-4 py-2.5 font-mono text-xs text-muted">
-        {pendingPost.cluster} · tasdiq kutmoqda
-      </div>
-      <div className="px-4 py-3">
-        <div className="font-display text-[15px] font-semibold">{pendingPost.title}</div>
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted">{pendingPost.body}</p>
-      </div>
-      <div className="border-t border-line px-4 py-3">
-        {state === 'pending' && (
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => { setState('published'); onDecision("Post kanalga chiqarildi — audit log'ga yozildi") }}
-              className="rounded-lg bg-lazur-dim px-3.5 py-1.5 text-sm font-semibold text-bg transition hover:brightness-110"
-            >
-              ✅ Nashr qilish
-            </button>
-            <button
-              onClick={() => onDecision('Tahrir rejimi demo versiyada mavjud emas')}
-              className="rounded-lg border border-line px-3.5 py-1.5 text-sm text-muted transition hover:border-faint hover:text-ink"
-            >
-              ✏️ Tahrirlash
-            </button>
-            <button
-              onClick={() => { setState('rejected'); onDecision('Post rad etildi — sabab rank promptini yaxshilashda ishlatiladi') }}
-              className="rounded-lg border border-line px-3.5 py-1.5 text-sm text-muted transition hover:border-coral hover:text-coral"
-            >
-              ❌ Rad etish
-            </button>
-          </div>
-        )}
-        {state === 'published' && (
-          <div className="text-sm text-mint">✓ Kanalga chiqdi — <span className="font-mono text-xs">t.me/kanal/7</span></div>
-        )}
-        {state === 'rejected' && <div className="text-sm text-coral">Rad etildi — klaster arxivga o'tdi</div>}
-      </div>
-    </Card>
-  )
-}
-
-const buildKindStyle: Record<string, string> = {
-  info: 'text-muted',
-  tool: 'text-lazur',
-  out: 'text-faint',
-  done: 'text-mint',
-}
-
-// Deploy vidjetini stats'dan keyin joylaydi — manifest data bo'lgani uchun
-// uni qurilish natijasiga qarab boyitish shunchaki massiv amali.
-function withDeployWidget(m: AppManifest, w: Widget): AppManifest {
-  const widgets = [...m.widgets]
-  widgets.splice(1, 0, w)
-  return { ...m, widgets }
-}
-
-// Qurilish kartasi: qadamlar oqadi → (kerak bo'lsa) deploy nishoni so'raladi →
-// tugagach manifest platformaga ro'yxatdan o'tadi.
-function BuildCard({
-  plan,
-  onInstalled,
-  openApp,
-}: {
-  plan: BuildPlan
-  onInstalled: (m: AppManifest) => void
-  openApp: (id: string) => void
-}) {
-  const [n, setN] = useState(1)
-  const [choiceIdx, setChoiceIdx] = useState<number | null>(null)
-  const [m, setM] = useState(0)
-  const installedRef = useRef(false)
-
-  const baseDone = n >= plan.steps.length
-  const opt = plan.choice && choiceIdx !== null ? plan.choice.options[choiceIdx] : null
-  const needChoice = baseDone && !!plan.choice && choiceIdx === null
-  const finished = baseDone && (plan.choice ? opt !== null && m >= opt.steps.length : true)
-
-  useEffect(() => {
-    if (!baseDone) {
-      const t = setTimeout(() => setN((v) => v + 1), 1100)
-      return () => clearTimeout(t)
-    }
-    if (opt && m < opt.steps.length) {
-      const t = setTimeout(() => setM((v) => v + 1), 1100)
-      return () => clearTimeout(t)
-    }
-    if (finished && !installedRef.current) {
-      installedRef.current = true
-      onInstalled(opt ? withDeployWidget(plan.manifest, opt.widget) : plan.manifest)
-    }
-  }, [n, m, baseDone, opt, finished, plan, onInstalled])
-
-  return (
-    <Card className="mt-3 overflow-hidden">
-      <div className="flex items-center justify-between border-b border-line px-4 py-2.5 font-mono text-xs text-muted">
-        <span>builder · {plan.manifest.name}</span>
-        <span className={finished ? 'text-mint' : needChoice ? 'text-gold' : 'pulse-dot text-gold'}>
-          {finished ? 'tayyor' : needChoice ? 'sizni kutmoqda' : 'qurilmoqda…'}
-        </span>
-      </div>
-      <div className="bg-bg px-4 py-3 font-mono text-xs leading-relaxed">
-        {plan.steps.slice(0, n).map((s, i) => (
-          <div key={i} className={buildKindStyle[s.kind]}>{s.text}</div>
-        ))}
-        {opt && opt.steps.slice(0, m).map((s, i) => (
-          <div key={`o${i}`} className={buildKindStyle[s.kind]}>{s.text}</div>
-        ))}
-        {!finished && !needChoice && <span className="cursor-blink text-lazur">▍</span>}
-      </div>
-
-      {needChoice && plan.choice && (
-        <div className="border-t border-line px-4 py-3">
-          <div className="mb-2 text-sm font-semibold">{plan.choice.question}</div>
-          <div className="flex flex-wrap gap-2">
-            {plan.choice.options.map((o, i) => (
-              <button
-                key={o.label}
-                onClick={() => { setChoiceIdx(i); setM(1) }}
-                className="rounded-lg border border-lazur-dim px-3.5 py-1.5 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg"
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {finished && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3">
-          <span className="text-sm text-mint">✓ Ilova sidebar'dagi "Ilovalar" bo'limiga qo'shildi</span>
-          <button
-            onClick={() => openApp(plan.manifest.id)}
-            className="rounded-lg bg-lazur-dim px-3.5 py-1.5 text-sm font-semibold text-bg transition hover:brightness-110"
-          >
-            {plan.manifest.icon} Dashboardini ochish
-          </button>
-        </div>
-      )}
-    </Card>
-  )
-}
 
 interface ChatProps {
   pro: boolean
@@ -215,12 +61,143 @@ interface ChatProps {
   openApp: (id: string) => void
 }
 
-export default function Chat({ pro, onInstallApp, openApp }: ChatProps) {
+export default function Chat({ pro }: ChatProps) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+
+  const [modellar, setModellar] = useState<ModelInfo[]>([])
+  const [tanlangan, setTanlangan] = useState<ModelInfo | null>(null)
+  const [modelYuklanmoqda, setModelYuklanmoqda] = useState(true)
+  const [modelXato, setModelXato] = useState<string | null>(null)
+
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  /** Javob kutayotgan ruxsat so'rovlari va allaqachon berilgan javoblar */
+  const [ruxsatlar, setRuxsatlar] = useState<RuxsatSorovi[]>([])
+  const [ruxsatJavoblari, setRuxsatJavoblari] = useState<Record<string, RuxsatJavobi>>({})
+  const [rejim, setRejim] = useState<RejimHolati>({ rejim: 'tasdiq' })
   const endRef = useRef<HTMLDivElement>(null)
+  // Hozir javob kutilayotgan xabar id'si — WS eventlari shu bo'yicha topiladi
+  const kutilayotgan = useRef<string | null>(null)
+
+  // --- Modellarni yuklash ---
+  useEffect(() => {
+    let bekor = false
+    modellarOl()
+      .then((javob) => {
+        if (bekor) return
+        setModellar(javob.models)
+
+        // Oldin tanlangani hali mavjudmi — bo'lmasa birinchisini olamiz
+        const saqlangan = saqlangandanOqi()
+        const topilgan =
+          (saqlangan &&
+            javob.models.find((m) => m.provider === saqlangan.provider && m.id === saqlangan.model)) ||
+          javob.models[0] ||
+          null
+        setTanlangan(topilgan)
+
+        if (javob.models.length === 0) {
+          setModelXato(
+            "Hech qanday AI provider topilmadi. API kalitini muhit o'zgaruvchisiga qo'ying yoki Ollama'ni ishga tushiring.",
+          )
+        }
+      })
+      .catch((xato: unknown) => {
+        if (bekor) return
+        setModelXato(xato instanceof Error ? xato.message : 'Modellarni yuklab bo\'lmadi')
+      })
+      .finally(() => {
+        if (!bekor) setModelYuklanmoqda(false)
+      })
+    return () => {
+      bekor = true
+    }
+  }, [])
+
+  // --- WS: javob oqimini tinglash ---
+  useEffect(() => {
+    ws.ulan()
+    const obunaBekor = ws.obuna(['chat'])
+    const kuzatBekor = ws.kuzat((event) => {
+      switch (event.type) {
+        case 'chat.delta':
+          setMsgs((m) =>
+            m.map((x) => (x.id === event.messageId ? { ...x, text: x.text + event.delta } : x)),
+          )
+          break
+
+        case 'chat.tool':
+          // Bir xil `id` bilan bir necha marta keladi: ishlamoqda → tugadi.
+          // Mavjud kartani almashtiramiz, yo'q bo'lsa oxiriga qo'shamiz.
+          setMsgs((m) =>
+            m.map((x) => {
+              if (x.id !== event.messageId) return x
+              const mavjud = x.toolCards ?? []
+              const indeks = mavjud.findIndex((t) => t.id === event.tool.id)
+              const yangi =
+                indeks >= 0
+                  ? mavjud.map((t, i) => (i === indeks ? event.tool : t))
+                  : [...mavjud, event.tool]
+              return { ...x, toolCards: yangi }
+            }),
+          )
+          break
+
+        case 'chat.permission':
+          setRuxsatlar((r) => (r.some((s) => s.id === event.sorov.id) ? r : [...r, event.sorov]))
+          break
+
+        case 'chat.klassifikator':
+          // Qaror oxirgi tool kartasiga yorliq bo'lib yopishadi
+          setMsgs((m) =>
+            m.map((x) => {
+              if (x.id !== event.messageId || !x.toolCards?.length) return x
+              const kartalar = [...x.toolCards]
+              const oxirgi = kartalar.length - 1
+              kartalar[oxirgi] = { ...kartalar[oxirgi]!, klassifikator: event.qaror }
+              return { ...x, toolCards: kartalar }
+            }),
+          )
+          break
+
+        case 'chat.rejim':
+          setRejim(event.holat)
+          break
+
+        case 'chat.done':
+          setMsgs((m) => m.map((x) => (x.id === event.messageId ? { ...x, oqmoqda: false } : x)))
+          setRuxsatlar([])
+          if (kutilayotgan.current === event.messageId) {
+            kutilayotgan.current = null
+            setBusy(false)
+          }
+          break
+
+        case 'chat.error':
+          setMsgs((m) =>
+            m.map((x) =>
+              x.id === event.messageId ? { ...x, oqmoqda: false, xato: event.error } : x,
+            ),
+          )
+          setRuxsatlar([])
+          if (kutilayotgan.current === event.messageId) {
+            kutilayotgan.current = null
+            setBusy(false)
+          }
+          break
+
+        default:
+          // Boshqa kanallar bu sahifaga tegishli emas
+          break
+      }
+    })
+    return () => {
+      obunaBekor()
+      kuzatBekor()
+    }
+  }, [])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -232,44 +209,118 @@ export default function Chat({ pro, onInstallApp, openApp }: ChatProps) {
     return () => clearTimeout(t)
   }, [toast])
 
-  function send(raw?: string) {
-    const text = (raw ?? input).trim()
-    if (!text || busy) return
-    setInput('')
-    setBusy(true)
-    setMsgs((m) => [...m, { id: nextId++, role: 'user', text, done: true }])
+  const send = useCallback(
+    async (xom?: string) => {
+      const text = (xom ?? input).trim()
+      if (!text || busy || !tanlangan) return
 
-    const low = text.toLowerCase()
-    const plan =
-      buildPlans.find((p) => p.keywords.some((k) => low.includes(k))) ??
-      (genericBuildWords.some((k) => low.includes(k))
-        ? buildPlans.find((p) => p.id === 'xarajat-bot')
-        : undefined)
-    const reply = plan ? undefined : cannedReplies.find((r) => r.match.some((k) => low.includes(k)))
+      setInput('')
+      setBusy(true)
+      setMsgs((m) => [...m, { id: `u-${crypto.randomUUID()}`, role: 'user', text }])
 
-    setTimeout(() => {
-      setMsgs((m) => [
-        ...m,
-        plan
-          ? { id: nextId++, role: 'assistant', text: plan.intro, toolCard: plan.toolCard, planId: plan.id }
-          : reply
-            ? { id: nextId++, role: 'assistant', text: reply.text, toolCard: reply.toolCard, approval: reply.approval }
-            : { id: nextId++, role: 'assistant', text: fallbackReply },
-      ])
-    }, 600)
+      try {
+        // Sessiya hali yo'q bo'lsa — birinchi xabarda yaratamiz
+        let sid = sessionId
+        if (!sid) {
+          const sessiya = await sessiyaYarat(text.slice(0, 60))
+          sid = sessiya.id
+          setSessionId(sid)
+          // Sessiyagacha tanlangan rejimni serverga yetkazamiz
+          if (rejim.rejim === 'auto') {
+            try {
+              setRejim(await rejimOrnatSorov(sid, 'auto'))
+            } catch {
+              // Rejim o'rnatilmasa tasdiq holicha qoladi — xabar berish shart emas,
+              // almashtirgich holatni ko'rsatib turadi
+              setRejim({ rejim: 'tasdiq' })
+            }
+          }
+        }
+
+        const javob = await xabarYubor(sid, text, {
+          provider: tanlangan.provider,
+          model: tanlangan.id,
+        })
+
+        kutilayotgan.current = javob.messageId
+        setMsgs((m) => [
+          ...m,
+          { id: javob.messageId, role: 'assistant', text: '', oqmoqda: true },
+        ])
+      } catch (xato) {
+        const xabar =
+          xato instanceof ApiXatosi
+            ? xato.detail
+              ? `${xato.message} — ${xato.detail}`
+              : xato.message
+            : xato instanceof Error
+              ? xato.message
+              : "Noma'lum xato"
+        setMsgs((m) => [
+          ...m,
+          { id: `x-${crypto.randomUUID()}`, role: 'assistant', text: '', xato: xabar },
+        ])
+        setBusy(false)
+      }
+    },
+    [busy, input, rejim.rejim, sessionId, tanlangan],
+  )
+
+  async function ruxsatBer(sorov: RuxsatSorovi, javob: RuxsatJavobi) {
+    // Javobni darhol ko'rsatamiz — server tasdiqlashini kutmaymiz
+    setRuxsatJavoblari((r) => ({ ...r, [sorov.id]: javob }))
+    try {
+      await ruxsatJavobiYubor(sorov.sessionId, sorov.id, javob)
+    } catch (xato) {
+      // Yuborilmasa foydalanuvchi bilishi kerak — agent kutib turibdi
+      setToast(
+        xato instanceof ApiXatosi
+          ? `Javob yuborilmadi: ${xato.message}`
+          : "Ruxsat javobi yuborilmadi",
+      )
+      setRuxsatJavoblari((r) => {
+        const { [sorov.id]: _olib, ...qolgan } = r
+        return qolgan
+      })
+    }
   }
 
-  function markDone(id: number) {
-    setMsgs((m) => m.map((x) => (x.id === id ? { ...x, done: true } : x)))
+  async function rejimniOzgart(yangi: RuxsatRejimi) {
+    if (!sessionId) {
+      // Sessiya hali yo'q — tanlovni eslab qolamiz, birinchi xabarda qo'llanadi
+      setRejim({ rejim: yangi })
+      return
+    }
+    const oldingi = rejim
+    setRejim({ rejim: yangi }) // darhol ko'rsatamiz
+    try {
+      setRejim(await rejimOrnatSorov(sessionId, yangi))
+    } catch (xato) {
+      setRejim(oldingi)
+      setToast(
+        xato instanceof ApiXatosi ? `Rejim o'zgarmadi: ${xato.message}` : "Rejim o'zgarmadi",
+      )
+    }
+  }
+
+  async function toxtat() {
+    if (!sessionId) return
+    try {
+      await oqimniToxtat(sessionId)
+    } catch {
+      // to'xtatish muvaffaqiyatsiz bo'lsa ham UI bloklanmasin
+    }
+    kutilayotgan.current = null
     setBusy(false)
-  }
-
-  function handleInstalled(m: AppManifest) {
-    onInstallApp(m)
-    setToast(`${m.icon} ${m.name} o'rnatildi — dashboardi Ilovalar bo'limida`)
+    setMsgs((m) => m.map((x) => (x.oqmoqda ? { ...x, oqmoqda: false } : x)))
   }
 
   const empty = msgs.length === 0
+  const qulflangan = sessionId !== null
+  const tanlanganYorliq = useMemo(
+    () => (tanlangan ? `${tanlangan.providerName} · ${tanlangan.name}` : null),
+    [tanlangan],
+  )
 
   return (
     <div className={`flex h-full flex-col ${pro ? '' : 'mx-auto w-full max-w-3xl'}`}>
@@ -280,9 +331,8 @@ export default function Chat({ pro, onInstallApp, openApp }: ChatProps) {
               Nima quramiz<span className="text-lazur">?</span>
             </div>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-muted">
-              Bu dastur yaratadigan platforma: bot, sayt yoki to'liq loyiha — oddiy tilda ayting.
-              Orqa fonda quriladi, git'da versiyalanadi, deploy qilinadi va dashboardi o'zi
-              platformaga qo'shiladi.
+              Suhbatni boshlashdan oldin model tanlang. Model kompyuteringizdagi sozlangan
+              providerlardan olinadi — mahalliy Ollama ham, obuna orqali ishlaydiganlari ham.
             </p>
           </div>
         )}
@@ -297,31 +347,56 @@ export default function Chat({ pro, onInstallApp, openApp }: ChatProps) {
               </div>
             ) : (
               <div key={m.id} className="rise-in">
-                {m.toolCard && <ToolCardView card={m.toolCard} />}
-                <Stream text={m.text} done={m.done} onDone={() => markDone(m.id)} />
-                {m.approval && m.done && <ApprovalCard onDecision={(d) => setToast(d)} />}
-                {m.planId && m.done && (
-                  <BuildCard
-                    plan={buildPlans.find((p) => p.id === m.planId)!}
-                    onInstalled={handleInstalled}
-                    openApp={openApp}
-                  />
+                {m.toolCards?.map((t) => (
+                  <ToolKartasi key={t.id} tool={t} />
+                ))}
+                {m.text && (
+                  <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                    {m.text}
+                    {m.oqmoqda && <span className="cursor-blink text-lazur">▍</span>}
+                  </p>
                 )}
+                {!m.text && m.oqmoqda && (
+                  <p className="text-[15px] text-faint">
+                    <span className="cursor-blink text-lazur">▍</span>
+                  </p>
+                )}
+                {m.xato && (
+                  <div className="mt-2 rounded-lg border border-line bg-panel px-3 py-2 text-sm text-coral">
+                    {m.xato}
+                  </div>
+                )}
+                {/* Ruxsat so'rovlari oxirgi javob ostida turadi */}
+                {m.oqmoqda &&
+                  ruxsatlar.map((sorov) => (
+                    <RuxsatKartasi
+                      key={sorov.id}
+                      sorov={sorov}
+                      berilganJavob={ruxsatJavoblari[sorov.id]}
+                      onJavob={(javob) => void ruxsatBer(sorov, javob)}
+                    />
+                  ))}
               </div>
             ),
           )}
+
+          {/* Auto o'z-o'zidan o'chgan bo'lsa sabab va qayta yoqish tugmasi */}
+          {rejim.rejim === 'tasdiq' && rejim.sabab && (
+            <RejimKartasi sabab={rejim.sabab} onQaytaYoq={() => void rejimniOzgart('auto')} />
+          )}
+
           <div ref={endRef} />
         </div>
       </div>
 
       <div className="px-4 pb-5">
         <div className="mx-auto max-w-3xl">
-          {empty && (
+          {empty && !modelYuklanmoqda && modellar.length > 0 && (
             <div className="mb-3 flex flex-wrap justify-center gap-2">
-              {suggestions.map((s) => (
+              {takliflar.map((s) => (
                 <button
                   key={s}
-                  onClick={() => send(s)}
+                  onClick={() => void send(s)}
                   className="rounded-full border border-line bg-panel px-3.5 py-1.5 text-[13px] text-muted transition hover:border-lazur-dim hover:text-ink"
                 >
                   {s}
@@ -329,28 +404,80 @@ export default function Chat({ pro, onInstallApp, openApp }: ChatProps) {
               ))}
             </div>
           )}
+
           <form
-            onSubmit={(e) => { e.preventDefault(); send() }}
+            onSubmit={(e) => {
+              e.preventDefault()
+              void send()
+            }}
             className="flex items-center gap-2 rounded-2xl border border-line bg-panel px-4 py-2 transition focus-within:border-lazur-dim"
           >
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Nima yaratay? Bot, sayt, servis — yoki mavjudlarini so'rang…"
+              placeholder={tanlangan ? 'Xabaringizni yozing…' : 'Avval model tanlang…'}
               aria-label="Xabar"
-              className="flex-1 bg-transparent py-1.5 text-[15px] outline-none placeholder:text-faint"
+              disabled={!tanlangan}
+              className="flex-1 bg-transparent py-1.5 text-[15px] outline-none placeholder:text-faint disabled:cursor-not-allowed"
             />
-            <button
-              type="submit"
-              disabled={!input.trim() || busy}
-              className="rounded-xl bg-lazur-dim px-4 py-1.5 text-sm font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
-            >
-              Yuborish
-            </button>
+            {busy ? (
+              <button
+                type="button"
+                onClick={() => void toxtat()}
+                className="rounded-xl border border-line px-4 py-1.5 text-sm text-muted transition hover:border-coral hover:text-coral"
+              >
+                To'xtatish
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!input.trim() || !tanlangan}
+                className="rounded-xl bg-lazur-dim px-4 py-1.5 text-sm font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
+              >
+                Yuborish
+              </button>
+            )}
           </form>
-          <p className="mt-2 text-center font-mono text-[11px] text-faint">
-            demo rejim · mock data · orchestrator ulanmagan
-          </p>
+
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <ModelTanlagich
+                modellar={modellar}
+                tanlangan={tanlangan}
+                onTanla={setTanlangan}
+                qulflangan={qulflangan}
+                yuklanmoqda={modelYuklanmoqda}
+                xato={modelXato}
+              />
+              <RejimAlmashtirgich
+                holat={rejim}
+                onOzgart={(r) => void rejimniOzgart(r)}
+                bandmi={busy}
+              />
+            </div>
+            {qulflangan && (
+              <button
+                onClick={() => {
+                  setSessionId(null)
+                  setMsgs([])
+                  setRuxsatlar([])
+                  setRuxsatJavoblari({})
+                  // Rejim tanlovi saqlanadi, lekin "o'chdi" sababi tozalanadi
+                  setRejim((r) => ({ rejim: r.rejim }))
+                  kutilayotgan.current = null
+                  setBusy(false)
+                }}
+                className="shrink-0 font-mono text-[11px] text-faint transition hover:text-lazur"
+              >
+                + yangi suhbat
+              </button>
+            )}
+            {!qulflangan && tanlanganYorliq && (
+              <span className="shrink-0 font-mono text-[11px] text-faint">
+                provider suhbat boshlangach qulflanadi
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

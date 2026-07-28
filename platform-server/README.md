@@ -1,8 +1,10 @@
 # @platforma/server — platforma backend poydevori
 
-"Dastur yaratadigan dastur" platformasining server qismi. Hozircha **poydevor**:
-baza, migratsiyalar, audit tizimi, WebSocket hub va REST endpointlar tayyor.
-Orchestrator (chat → LLM → qurilish oqimi) keyingi bosqichda ulanadi.
+"Dastur yaratadigan dastur" platformasining server qismi. Baza, migratsiyalar,
+audit tizimi, WebSocket hub va REST endpointlar tayyor. **Chat AI qatlami
+tool'lar bilan ulangan**: agent fayl o'qiy/yoza/tahrirlay oladi va buyruq
+bajaradi (`@platforma/ai`). Qurilish oqimi (chat → loyiha yasash) hali
+ulanmagan.
 
 ## Stack
 
@@ -40,16 +42,74 @@ src/
   db.ts             — SQLite ulanishi, WAL, migratsiya runner
   repo.ts           — baza bilan ishlash qatlami (SQL faqat shu yerda)
   audit.ts          — auditYoz / auditOqi — audit yozuvining YAGONA yo'li
+  orchestrator.ts   — chat javob oqimi: @platforma/ai → WS eventlari → DB
+  ish-papkasi.ts    — sessiya bo'yicha agent ish papkasi
   seed.ts           — boshlang'ich ma'lumot (idempotent)
   migrations/
     index.ts        — migratsiyalar ro'yxati
     001-boshlangich.ts
+    002-chat-model.ts — chat_sessions ga provider/model ustunlari
+    003-tool-cards.ts — chat_messages ga tool_cards ustuni
   routes/
-    health.ts  apps.ts  servers.ts  skills.ts  audit.ts  chat.ts
+    health.ts  apps.ts  servers.ts  skills.ts  audit.ts  chat.ts  models.ts
   ws/
     hub.ts          — ulanish registri, kanal obunasi, broadcast
-test/               — bun test (43 test)
+    chat-handler.ts — WS chat.send, chat.permission.reply, chat.rejim.set
+test/               — bun test (78 test)
 ```
+
+## Chat AI oqimi
+
+LLM bilan bog'liq hamma narsa `@platforma/ai` paketida (kalitlar, OAuth,
+Ollama, model kataloglari, klassifikator). Server `modellarniAniqla()` va
+`agentOqimi()` ni chaqiradi — tool'siz rejim uchun `suhbatOqimi()`.
+
+```
+POST /api/chat/send  →  xabar DB ga yoziladi, sessiya provideri qulflanadi
+                     →  javobOqizi() fonda ishga tushadi (202 qaytadi)
+                     →  chat.delta · chat.tool · chat.permission
+                        chat.klassifikator · chat.rejim              [WS]
+                     →  chat.done | chat.error
+                     →  to'liq javob + tool kartalari DB ga bir marta yoziladi
+```
+
+WS orqali kelgan `chat.send` ham xuddi shu yo'ldan boradi
+(`ws/chat-handler.ts`), farqi — xatolar HTTP status emas, `chat.error` eventi.
+
+### Tool'lar
+
+Agent `read`, `write`, `edit`, `bash` ishlatadi. Har sessiya o'z ish
+papkasini oladi: `~/.platforma/ishlar/<sessionId>/` (`PLATFORMA_ISHLAR` env
+bilan ko'chiriladi).
+
+Har tool chaqiruvi audit logga tushadi: `read` → o'qish, `write`/`edit` →
+o'zgartirish, `bash` → xavfli.
+
+### Ruxsat rejimlari
+
+| Rejim | Xatti-harakat |
+|---|---|
+| `tasdiq` (standart) | xavfli/notanish amal uchun `chat.permission` chiqadi, agent javob kutadi |
+| `auto` | klassifikator hal qiladi — amal so'ralganidan chetga chiqmasa o'tadi |
+
+Rejim `POST /api/chat/sessions/:id/rejim` yoki WS `chat.rejim.set` bilan
+almashtiriladi. Klassifikator qarori `chat.klassifikator`, rejim o'zgarishi
+`chat.rejim` eventi bo'lib keladi.
+
+**Auto o'z-o'zidan o'chishi mumkin** — klassifikator nosoz bo'lsa, 3 marta
+ketma-ket yoki 20 marta jami bloklasa. O'shanda `chat.rejim` eventi sabab
+bilan keladi va UI "Qayta yoqish" tugmasini ko'rsatadi. Avtomatik
+tiklanmaydi.
+
+Ruxsat javobi `chat.permission.reply` (WS) yoki `POST /api/chat/permission`
+(REST) orqali beriladi. 5 daqiqada javob kelmasa rad etiladi.
+
+Klassifikator mexanizmi, tool natijalari izolyatsiyasi va cheklovlar:
+`platform-ai/README.md`.
+
+Modellar ro'yxati foydalanuvchi kompyuterida aniqlanadi: muhit
+o'zgaruvchilari, mahalliy Ollama va `~/.claude` / `~/.codex` obuna
+tokenlari.
 
 ## REST endpointlar
 
@@ -66,7 +126,21 @@ Hammasi `/api` prefiksi ostida, javob JSON.
 | GET | `/api/chat/sessions` | `{sessions: ChatSession[]}` | oxirgi faollik bo'yicha saralangan |
 | POST | `/api/chat/sessions` | `{session}` · 201 | tana ixtiyoriy: `{title?}` |
 | GET | `/api/chat/sessions/:id/messages` | `{messages: ChatMessage[]}` | topilmasa 404 |
-| POST | `/api/chat/send` | **501** | orchestrator keyingi bosqichda to'ldiradi |
+| POST | `/api/chat/send` | `{messageId, model}` · 202 | javob WS orqali oqadi; xatolar: 400 / 404 / 409 |
+| POST | `/api/chat/stop` | `{toxtatildi}` | ketayotgan javob oqimini bekor qiladi |
+| POST | `/api/chat/permission` | `{qabulQilindi}` | ruxsat javobi: `ruxsat` / `rad` / `hardoim` |
+| GET | `/api/chat/sessions/:id/rejim` | `{holat}` | sessiyaning ruxsat rejimi |
+| POST | `/api/chat/sessions/:id/rejim` | `{holat}` | rejimni almashtirish: `tasdiq` / `auto` |
+| GET | `/api/models` | `{models, providers, ogohlantirishlar, vaqt}` | PC'da aniqlangan AI modellari (keshlangan) |
+| POST | `/api/models/refresh` | yuqoridagidek | aniqlashni qayta ishga tushiradi |
+
+`POST /api/chat/send` javobni **kutmaydi**: xabar saqlanadi, oqim fonda
+boshlanadi va 202 qaytadi. Javob `chat.delta` → `chat.done` (yoki
+`chat.error`) eventlari bo'lib WS orqali keladi.
+
+Sessiyaning **birinchi** xabarida `model: { provider, model }` yuborilishi
+shart — o'shanda provider qulflanadi. Keyin boshqa provider yuborilsa **409**
+qaytadi (bir provider ichida modelni almashtirish mumkin).
 
 Audit uchun **yozish endpointi ataylab yo'q** — log faqat backend ichidan
 `auditYoz(...)` orqali to'ladi, tashqaridan yozib bo'lmaydi.
@@ -83,14 +157,14 @@ obuna bo'lishi shart** — obunasiz hech qanday event kelmaydi:
 ws.send(JSON.stringify({ type: 'sub', channels: ['chat', 'build', 'audit'] }))
 ```
 
-**Client → server:** `chat.send`, `chat.choice`, `sub`
+**Client → server:** `chat.send`, `chat.choice`, `chat.permission.reply`, `chat.rejim.set`, `sub`
 
 **Server → client:**
 
 | Event | Kanal | Qachon |
 |---|---|---|
 | `hello` | — (hammaga) | ulanishda |
-| `chat.delta` / `chat.toolcard` / `chat.done` | `chat` | javob oqimi |
+| `chat.delta` · `chat.tool` · `chat.permission` · `chat.klassifikator` · `chat.rejim` · `chat.done` · `chat.error` | `chat` | javob oqimi |
 | `build.step` / `build.choice` / `build.done` / `build.failed` | `build` | qurilish jarayoni |
 | `app.installed` / `app.updated` | `apps` | manifest ro'yxatdan o'tdi |
 | `audit.entry` | `audit` | har `auditYoz` chaqiruvida |

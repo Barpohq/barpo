@@ -10,6 +10,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@platforma/ai": "workspace:*",
     "@platforma/shared": "workspace:*",
     "hono": "^4.10.6"
   },

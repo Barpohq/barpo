@@ -13,6 +13,7 @@ import type {
   Server,
   Skill,
   ToolCard,
+  ToolChaqiruv,
 } from '@platforma/shared'
 import { db as globalDb } from './db.ts'
 
@@ -151,12 +152,21 @@ export function ilovaSaqla(
 interface SessiyaQator {
   id: string
   title: string
+  provider: string | null
+  model: string | null
   created_at: string
   updated_at: string
 }
 
 function sessiyaQatordan(q: SessiyaQator): ChatSession {
-  return { id: q.id, title: q.title, createdAt: q.created_at, updatedAt: q.updated_at }
+  return {
+    id: q.id,
+    title: q.title,
+    provider: q.provider ?? undefined,
+    model: q.model ?? undefined,
+    createdAt: q.created_at,
+    updatedAt: q.updated_at,
+  }
 }
 
 export function sessiyalarOqi(baza?: Database): ChatSession[] {
@@ -191,6 +201,35 @@ export function sessiyaYarat(title?: string, baza?: Database): ChatSession {
   return sessiya
 }
 
+/**
+ * Sessiyaning modelini qulflaydi — faqat BIRINCHI marta yozadi.
+ *
+ * `WHERE provider IS NULL` sharti poyga holatini oldini oladi: bir vaqtda
+ * ikkita xabar kelsa, ikkinchisi mavjud providerni almashtira olmaydi.
+ * Qaytish qiymati: yozildimi (true) yoki allaqachon qulflangan (false).
+ */
+export function sessiyaModelQulfla(
+  id: string,
+  provider: string,
+  model: string,
+  baza?: Database,
+): boolean {
+  const d = baza ?? globalDb()
+  const natija = d
+    .prepare('UPDATE chat_sessions SET provider = ?, model = ? WHERE id = ? AND provider IS NULL')
+    .run(provider, model, id)
+  return natija.changes > 0
+}
+
+/**
+ * Sessiya ichida modelni almashtiradi (provider O'ZGARMAYDI).
+ * Bir provider ichida modelni almashtirish xavfsiz — kontekst formati bir xil.
+ */
+export function sessiyaModelniOzgart(id: string, model: string, baza?: Database): void {
+  const d = baza ?? globalDb()
+  d.prepare('UPDATE chat_sessions SET model = ? WHERE id = ?').run(model, id)
+}
+
 // ---------------------------------------------------------------------------
 // Chat xabarlari
 // ---------------------------------------------------------------------------
@@ -201,6 +240,7 @@ interface XabarQator {
   role: ChatMessage['role']
   text: string
   tool_card: string | null
+  tool_cards: string | null
   created_at: string
 }
 
@@ -211,6 +251,7 @@ function xabarQatordan(q: XabarQator): ChatMessage {
     role: q.role,
     text: q.text,
     toolCard: q.tool_card ? (JSON.parse(q.tool_card) as ToolCard) : undefined,
+    toolCards: q.tool_cards ? (JSON.parse(q.tool_cards) as ToolChaqiruv[]) : undefined,
     createdAt: q.created_at,
   }
 }
@@ -236,18 +277,20 @@ export function xabarYoz(
     role: xabar.role,
     text: xabar.text,
     toolCard: xabar.toolCard,
+    toolCards: xabar.toolCards,
     createdAt: xabar.createdAt ?? new Date().toISOString(),
   }
 
   d.prepare(
-    `INSERT INTO chat_messages (id, session_id, role, text, tool_card, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chat_messages (id, session_id, role, text, tool_card, tool_cards, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     toliq.id,
     toliq.sessionId,
     toliq.role,
     toliq.text,
     toliq.toolCard ? JSON.stringify(toliq.toolCard) : null,
+    toliq.toolCards?.length ? JSON.stringify(toliq.toolCards) : null,
     toliq.createdAt,
   )
 
