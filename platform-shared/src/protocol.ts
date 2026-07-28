@@ -183,6 +183,29 @@ export interface ChatRejimEvent {
   holat: RejimHolati
 }
 
+/**
+ * Sessiyadagi agent oqimining umumiy holati — "fon agentlari" ko'rinishi uchun.
+ *
+ * `chat.delta`/`chat.done` javob MATNI haqida, bu esa OQIM haqida: sessiya
+ * hozir ishlayaptimi, ruxsat kutyaptimi, tugadimi. Sidebar badge'lari va
+ * "Agentlar" sahifasi shu eventga tayanadi.
+ *
+ * MUHIM: bu event ATAYLAB sessiya bo'yicha FILTRLANMAYDI (`eventSessiyasi()`
+ * uning uchun `null` qaytaradi). Sabab: mijoz bitta sessiyani kuzatayotgan
+ * bo'lsa ham, BOSHQA sessiyalarning holatini ko'rishi kerak — aks holda
+ * sidebar'da "ikkinchi suhbatda agent ishlayapti" ko'rinmaydi. Bu ma'lumot
+ * sizishi emas: eventda faqat sessiya id'si va holat bor, javob matni,
+ * tool natijasi yoki ruxsat tafsiloti yo'q.
+ */
+export interface ChatStatusEvent {
+  type: 'chat.status'
+  sessionId: string
+  holat: OqimHolati
+}
+
+/** Sessiya oqimining holati */
+export type OqimHolati = 'ishlayapti' | 'ruxsat-kutmoqda' | 'tugadi' | 'xato'
+
 /** Javob tugadi */
 export interface ChatDoneEvent {
   type: 'chat.done'
@@ -271,6 +294,7 @@ export type ServerEvent =
   | ChatPermissionEvent
   | ChatKlassifikatorEvent
   | ChatRejimEvent
+  | ChatStatusEvent
   | ChatDoneEvent
   | ChatErrorEvent
   | BuildStepEvent
@@ -308,6 +332,7 @@ export function eventKanali(event: ServerEvent): Channel | null {
     case 'chat.permission':
     case 'chat.klassifikator':
     case 'chat.rejim':
+    case 'chat.status':
     case 'chat.done':
     case 'chat.error':
       return CHANNELS.chat
@@ -351,6 +376,15 @@ export function eventSessiyasi(event: ServerEvent): string | null {
     case 'chat.done':
     case 'chat.error':
       return event.sessionId
+
+    // `chat.status` da `sessionId` BOR, lekin u ATAYLAB filtrlanmaydi.
+    // Bu qoidadan yagona ongli istisno: sidebar hamma sessiyaning holatini
+    // ko'rsatishi kerak, ya'ni bitta suhbatni ochgan mijoz ham qolganlarining
+    // "ishlayapti / ruxsat kutmoqda" belgisini olishi shart. Eventda mazmun
+    // (matn, tool natijasi, ruxsat tafsiloti) yo'q — faqat id va holat.
+    case 'chat.status':
+      return null
+
     default:
       // build.*, app.*, audit.*, terminal.*, hello — sessiyaga bog'liq emas
       return null

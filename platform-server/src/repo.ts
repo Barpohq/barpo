@@ -10,6 +10,7 @@ import type {
   BuildSessionStatus,
   ChatMessage,
   ChatSession,
+  Project,
   Server,
   Skill,
   ToolCard,
@@ -146,6 +147,103 @@ export function ilovaSaqla(
 }
 
 // ---------------------------------------------------------------------------
+// Loyihalar
+// ---------------------------------------------------------------------------
+
+interface LoyihaQator {
+  id: string
+  name: string
+  papka: string
+  created_at: string
+}
+
+function loyihaQatordan(q: LoyihaQator, chatlarSoni?: number): Project {
+  return {
+    id: q.id,
+    name: q.name,
+    papka: q.papka,
+    createdAt: q.created_at,
+    chatlarSoni,
+  }
+}
+
+/**
+ * Barcha loyihalar, har biriga ulangan chatlar soni bilan.
+ *
+ * `LEFT JOIN`: chati yo'q loyiha ham ro'yxatda ko'rinadi (0 bilan).
+ */
+export function loyihalarOqi(baza?: Database): Project[] {
+  const d = baza ?? globalDb()
+  return d
+    .query<LoyihaQator & { chatlar: number }, []>(
+      `SELECT p.*, COUNT(s.id) AS chatlar
+         FROM projects p
+         LEFT JOIN chat_sessions s ON s.project_id = p.id
+        GROUP BY p.id
+        ORDER BY p.created_at DESC`,
+    )
+    .all()
+    .map((q) => loyihaQatordan(q, q.chatlar))
+}
+
+export function loyihaOqi(id: string, baza?: Database): Project | null {
+  const d = baza ?? globalDb()
+  const q = d.query<LoyihaQator, [string]>('SELECT * FROM projects WHERE id = ?').get(id)
+  return q ? loyihaQatordan(q) : null
+}
+
+/** Nom bo'yicha izlash — takroriy nomni oldindan ushlash uchun */
+export function loyihaNomBoyicha(name: string, baza?: Database): Project | null {
+  const d = baza ?? globalDb()
+  const q = d.query<LoyihaQator, [string]>('SELECT * FROM projects WHERE name = ?').get(name)
+  return q ? loyihaQatordan(q) : null
+}
+
+/**
+ * Loyiha yozuvini yaratadi. Papkani chaqiruvchi (route) yaratadi va to'liq
+ * yo'lini beradi — bu qatlam fayl tizimiga tegmaydi.
+ *
+ * Nom takrorlansa UNIQUE indeks xato tashlaydi; route uni 409 ga aylantiradi.
+ */
+export function loyihaYarat(name: string, papka: string, baza?: Database): Project {
+  const d = baza ?? globalDb()
+  const loyiha: Project = {
+    id: crypto.randomUUID(),
+    name,
+    papka,
+    createdAt: new Date().toISOString(),
+    chatlarSoni: 0,
+  }
+  d.prepare('INSERT INTO projects (id, name, papka, created_at) VALUES (?, ?, ?, ?)').run(
+    loyiha.id,
+    loyiha.name,
+    loyiha.papka,
+    loyiha.createdAt,
+  )
+  return loyiha
+}
+
+/**
+ * Sessiya ulangan loyihaning papkasi. Sessiya loyihasiz bo'lsa (yoki umuman
+ * yo'q bo'lsa) `null` — chaqiruvchi sessiya papkasiga qaytadi.
+ *
+ * Bitta SQL bilan: orchestrator har javob oqizishda chaqiradi, ikkita
+ * so'rov ortiqcha.
+ */
+export function sessiyaLoyihaPapkasi(sessionId: string, baza?: Database): string | null {
+  const d = baza ?? globalDb()
+  const q = d
+    .query<{ papka: string }, [string]>(
+      `SELECT p.papka AS papka
+         FROM chat_sessions s
+         JOIN projects p ON p.id = s.project_id
+        WHERE s.id = ?`,
+    )
+    .get(sessionId)
+  return q?.papka ?? null
+}
+
+// ---------------------------------------------------------------------------
 // Chat sessiyalari
 // ---------------------------------------------------------------------------
 
@@ -154,6 +252,7 @@ interface SessiyaQator {
   title: string
   provider: string | null
   model: string | null
+  project_id: string | null
   created_at: string
   updated_at: string
 }
@@ -164,6 +263,7 @@ function sessiyaQatordan(q: SessiyaQator): ChatSession {
     title: q.title,
     provider: q.provider ?? undefined,
     model: q.model ?? undefined,
+    projectId: q.project_id ?? undefined,
     createdAt: q.created_at,
     updatedAt: q.updated_at,
   }
@@ -183,21 +283,31 @@ export function sessiyaOqi(id: string, baza?: Database): ChatSession | null {
   return q ? sessiyaQatordan(q) : null
 }
 
-export function sessiyaYarat(title?: string, baza?: Database): ChatSession {
+/**
+ * Yangi sessiya. `projectId` berilsa sessiya loyihaga ulanadi — agent
+ * tool'lari o'sha loyihaning papkasida ishlaydi.
+ *
+ * Loyiha MAVJUDLIGI bu yerda tekshirilmaydi: route qatlami tekshirib,
+ * foydalanuvchiga tushunarli xato beradi. Bazada baribir foreign key bor,
+ * ya'ni yo'q loyiha bilan yozuv hosil bo'lmaydi.
+ */
+export function sessiyaYarat(
+  title?: string,
+  baza?: Database,
+  projectId?: string,
+): ChatSession {
   const d = baza ?? globalDb()
   const hozir = new Date().toISOString()
   const sessiya: ChatSession = {
     id: crypto.randomUUID(),
     title: title?.trim() || 'Yangi suhbat',
+    projectId,
     createdAt: hozir,
     updatedAt: hozir,
   }
-  d.prepare('INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
-    sessiya.id,
-    sessiya.title,
-    sessiya.createdAt,
-    sessiya.updatedAt,
-  )
+  d.prepare(
+    'INSERT INTO chat_sessions (id, title, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(sessiya.id, sessiya.title, projectId ?? null, sessiya.createdAt, sessiya.updatedAt)
   return sessiya
 }
 

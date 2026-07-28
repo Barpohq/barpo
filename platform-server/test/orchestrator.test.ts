@@ -63,8 +63,9 @@ mock.module('@platforma/ai', () => ({
   ruxsatBoshqaruvchisi: radEtuvchiRuxsat,
 }))
 
+const { app } = await import('../src/app.ts')
 const { bazaOch, dbOrnat } = await import('../src/db.ts')
-const { javobOqizi, oqimBormi } = await import('../src/orchestrator.ts')
+const { ishlayotganSessiyalar, javobOqizi, oqimBormi } = await import('../src/orchestrator.ts')
 const { sessiyaYarat, xabarlarOqi, xabarYoz } = await import('../src/repo.ts')
 const { hub } = await import('../src/ws/hub.ts')
 
@@ -107,8 +108,16 @@ afterEach(() => {
 
 const tanlov = { provider: 'ollama', model: 'qwen3:0.6b' }
 
+/**
+ * Javob OQIMINING eventlari — delta/tool/done/error.
+ *
+ * `chat.status` ataylab chiqarib tashlanadi: u javob mazmuni emas, oqim
+ * holati haqidagi meta-event (sidebar indikatorlari uchun) va butun oqimni
+ * o'rab turadi. Quyidagi testlar javob ketma-ketligini tekshiradi, shuning
+ * uchun ular uchun bu shovqin. `chat.status` o'z testlarida sinaladi.
+ */
 function chatEventlari(): ServerEvent[] {
-  return olingan.filter((e) => e.type.startsWith('chat.'))
+  return olingan.filter((e) => e.type.startsWith('chat.') && e.type !== 'chat.status')
 }
 
 describe('javobOqizi — muvaffaqiyatli oqim', () => {
@@ -351,6 +360,219 @@ describe('tool oqimi', () => {
     const sozlama = songgiChaqiruv?.sozlama as { ishPapkasi?: string; sessionId?: string }
     expect(sozlama?.ishPapkasi).toBeTruthy()
     expect(sozlama?.sessionId).toBe(s.id)
+  })
+})
+
+describe('chat.status — oqim holati tarqatilishi', () => {
+  /** Faqat status eventlarining holatlari, kelish tartibida */
+  function statuslar(): string[] {
+    return olingan
+      .filter((e) => e.type === 'chat.status')
+      .map((e) => (e as { holat: string }).holat)
+  }
+
+  test("muvaffaqiyatli oqim: ishlayapti → tugadi", async () => {
+    soxtaHodisalar = [
+      { tur: 'delta', matn: 'ok' },
+      { tur: 'tugadi', matn: 'ok', sarflov: { input: 0, output: 0, cost: 0 } },
+    ]
+
+    const s = sessiyaYarat('sinov', db)
+    await javobOqizi(s.id, 'st-1', tanlov)
+
+    expect(statuslar()).toEqual(['ishlayapti', 'tugadi'])
+  })
+
+  test('xatoda yakuniy holat "xato" bo\'ladi', async () => {
+    soxtaHodisalar = [{ tur: 'xato', xabar: 'ulanish uzildi' }]
+
+    const s = sessiyaYarat('sinov', db)
+    await javobOqizi(s.id, 'st-2', tanlov)
+
+    expect(statuslar()).toEqual(['ishlayapti', 'xato'])
+  })
+
+  test('status eventida sessiya id si bo\'ladi', async () => {
+    soxtaHodisalar = [{ tur: 'tugadi', matn: 'ok', sarflov: { input: 0, output: 0, cost: 0 } }]
+    const s = sessiyaYarat('sinov', db)
+    await javobOqizi(s.id, 'st-3', tanlov)
+
+    const status = olingan.find((e) => e.type === 'chat.status') as { sessionId: string }
+    expect(status.sessionId).toBe(s.id)
+  })
+
+  test("ruxsat so'ralganda 'ruxsat-kutmoqda', davom etganda yana 'ishlayapti'", async () => {
+    const sorov = {
+      id: 'r-status',
+      sessionId: 's',
+      tur: 'buyruq' as const,
+      amal: 'bash',
+      nishon: 'rm -rf x',
+      sabab: 'xavfli',
+      naqsh: 'rm',
+      vaqt: new Date().toISOString(),
+    }
+    soxtaHodisalar = [
+      { tur: 'ruxsat_kerak', sorov },
+      // Javob kelgach agent davom etadi — keyingi hodisa "davom etdi" signali
+      { tur: 'delta', matn: 'davom' },
+      { tur: 'tugadi', matn: 'davom', sarflov: { input: 0, output: 0, cost: 0 } },
+    ]
+
+    const s = sessiyaYarat('sinov', db)
+    await javobOqizi(s.id, 'st-4', tanlov)
+
+    expect(statuslar()).toEqual(['ishlayapti', 'ruxsat-kutmoqda', 'ishlayapti', 'tugadi'])
+  })
+
+  test("ketma-ket ruxsat so'rovlari ortiqcha 'ishlayapti' bermaydi", async () => {
+    const sorov = (id: string) => ({
+      id,
+      sessionId: 's',
+      tur: 'buyruq' as const,
+      amal: 'bash',
+      nishon: 'ls',
+      sabab: 'x',
+      naqsh: 'ls',
+      vaqt: new Date().toISOString(),
+    })
+    soxtaHodisalar = [
+      { tur: 'ruxsat_kerak', sorov: sorov('a') },
+      { tur: 'ruxsat_kerak', sorov: sorov('b') },
+      { tur: 'tugadi', matn: '', sarflov: { input: 0, output: 0, cost: 0 } },
+    ]
+
+    const s = sessiyaYarat('sinov', db)
+    await javobOqizi(s.id, 'st-5', tanlov)
+
+    expect(statuslar()).toEqual([
+      'ishlayapti',
+      'ruxsat-kutmoqda',
+      'ruxsat-kutmoqda',
+      'ishlayapti',
+      'tugadi',
+    ])
+  })
+})
+
+describe('chat.status — oqim almashtirilganda', () => {
+  test("eski oqim yangisining holatini 'tugadi' qilib yubormaydi", async () => {
+    // POYGA HOLATI: foydalanuvchi javobni kutmay yangi xabar yubordi.
+    // Eskisi to'xtatiladi va tugaydi — lekin u paytda ro'yxatda YANGI oqim
+    // turadi. Eskisi yakuniy status yuborsa, endigina boshlangan yangi oqim
+    // UI'da darhol "tugadi" bo'lib ko'rinardi va indikator yo'qolardi.
+    const s = sessiyaYarat('sinov', db)
+
+    soxtaHodisalar = [{ tur: 'tugadi', matn: 'birinchi', sarflov: { input: 0, output: 0, cost: 0 } }]
+    const birinchi = javobOqizi(s.id, 'race-1', tanlov)
+    // Birinchisi tugashini kutmay ikkinchisini boshlaymiz
+    const ikkinchi = javobOqizi(s.id, 'race-2', tanlov)
+    await Promise.all([birinchi, ikkinchi])
+
+    // Sessiya oxir-oqibat ro'yxatdan chiqadi (ikkinchisi ham tugadi)
+    expect(ishlayotganSessiyalar()).toEqual([])
+
+    // Muhimi: 'tugadi' faqat BIR marta — ikkinchi oqimniki. Eskisi jim qoldi.
+    const yakuniy = olingan.filter(
+      (e) => e.type === 'chat.status' && (e as { holat: string }).holat === 'tugadi',
+    )
+    expect(yakuniy).toHaveLength(1)
+  })
+})
+
+describe('ishlayotganSessiyalar()', () => {
+  test('oqim yo\'q bo\'lsa bo\'sh ro\'yxat', () => {
+    expect(ishlayotganSessiyalar()).toEqual([])
+  })
+
+  test('oqim davomida sessiya ro\'yxatda, holati bilan', async () => {
+    const s = sessiyaYarat('sinov', db)
+    let oqimIchidagi: { sessionId: string; holat: string }[] = []
+
+    // Oqim O'RTASIDA ro'yxatni o'qiymiz: `delta` hodisasi kelayotgan payt
+    // sessiya hali ishlayotgan bo'lishi kerak.
+    soxtaHodisalar = [
+      { tur: 'delta', matn: 'a' },
+      { tur: 'tugadi', matn: 'a', sarflov: { input: 0, output: 0, cost: 0 } },
+    ]
+    // `javobOqizi` ni kutmaymiz — birinchi `await` gacha sinxron ishlaydi,
+    // ya'ni ro'yxatga yozuv shu paytda allaqachon qo'shilgan bo'ladi.
+    const vada = javobOqizi(s.id, 'run-1', tanlov)
+    oqimIchidagi = ishlayotganSessiyalar()
+    await vada
+
+    expect(oqimIchidagi).toEqual([{ sessionId: s.id, holat: 'ishlayapti' }])
+    // Tugagach ro'yxatdan chiqadi
+    expect(ishlayotganSessiyalar()).toEqual([])
+  })
+
+  test('ruxsat kutayotgan sessiya "ruxsat-kutmoqda" holatida ko\'rinadi', async () => {
+    const s = sessiyaYarat('sinov', db)
+    let kutayotganPaytdagi: { sessionId: string; holat: string }[] = []
+
+    soxtaHodisalar = [
+      {
+        tur: 'ruxsat_kerak',
+        sorov: {
+          id: 'r-list',
+          sessionId: s.id,
+          tur: 'buyruq' as const,
+          amal: 'bash',
+          nishon: 'ls',
+          sabab: 'x',
+          naqsh: 'ls',
+          vaqt: new Date().toISOString(),
+        },
+      },
+      { tur: 'tugadi', matn: '', sarflov: { input: 0, output: 0, cost: 0 } },
+    ]
+
+    // Status eventini ushlab, aynan o'sha paytda ro'yxatni o'qiymiz —
+    // "ruxsat-kutmoqda" holati faqat oqim ichida mavjud bo'ladi.
+    const kuzatuvchi = {
+      data: { id: 'kuzatuvchi', channels: new Set(['chat']) },
+      send: (m: string) => {
+        const e = JSON.parse(m) as { type: string; holat?: string }
+        if (e.type === 'chat.status' && e.holat === 'ruxsat-kutmoqda') {
+          kutayotganPaytdagi = ishlayotganSessiyalar()
+        }
+      },
+    }
+    hub.ulandi(kuzatuvchi as never)
+
+    await javobOqizi(s.id, 'run-2', tanlov)
+
+    expect(kutayotganPaytdagi).toEqual([{ sessionId: s.id, holat: 'ruxsat-kutmoqda' }])
+  })
+})
+
+describe('GET /api/chat/running — oqim davomida', () => {
+  test('ishlayotgan sessiya sarlavhasi bilan qaytadi', async () => {
+    const s = sessiyaYarat('Fon vazifasi', db)
+    soxtaHodisalar = [
+      { tur: 'delta', matn: 'a' },
+      { tur: 'tugadi', matn: 'a', sarflov: { input: 0, output: 0, cost: 0 } },
+    ]
+
+    const vada = javobOqizi(s.id, 'run-api-1', tanlov)
+    const javob = await app.request('/api/chat/running')
+    const tana = (await javob.json()) as {
+      running: { sessionId: string; holat: string; title?: string }[]
+    }
+    await vada
+
+    expect(tana.running).toEqual([
+      { sessionId: s.id, holat: 'ishlayapti', title: 'Fon vazifasi' },
+    ])
+  })
+
+  test("oqim tugagach ro'yxat bo'shaydi", async () => {
+    const s = sessiyaYarat('sinov', db)
+    soxtaHodisalar = [{ tur: 'tugadi', matn: 'ok', sarflov: { input: 0, output: 0, cost: 0 } }]
+    await javobOqizi(s.id, 'run-api-2', tanlov)
+
+    const javob = await app.request('/api/chat/running')
+    expect(await javob.json()).toEqual({ running: [] })
   })
 })
 

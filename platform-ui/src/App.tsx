@@ -1,5 +1,8 @@
 import { useState, type ReactNode } from 'react'
+import OqimIndikatori from './components/OqimIndikatori'
 import { installedApps, type AppManifest } from './data/mock'
+import { useIshlayotganlar } from './lib/ishlayotganlar'
+import Agents from './pages/Agents'
 import Chat from './pages/Chat'
 import Servers from './pages/Servers'
 import Skills from './pages/Skills'
@@ -7,20 +10,21 @@ import Audit from './pages/Audit'
 import Terminal from './pages/Terminal'
 import AppView from './pages/AppView'
 
-type StaticPage = 'chat' | 'servers' | 'skills' | 'audit' | 'terminal'
+type StaticPage = 'chat' | 'agents' | 'servers' | 'skills' | 'audit' | 'terminal'
 type Page = StaticPage | `app:${string}`
 
 // Menyu ataylab qisqa: platforma oddiy PC'da ham ishlaydi, server bo'lsa
 // "Serverlar" sahifasi yetadi (ulash/uzish oson bo'lishi uchun).
 const nav: { id: StaticPage; label: string; icon: ReactNode }[] = [
   { id: 'chat', label: 'Chat', icon: <path d="M3 5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H8l-4 3v-3H5a2 2 0 0 1-2-2V5Z" /> },
+  { id: 'agents', label: 'Agentlar', icon: <path d="M10 3a3 3 0 0 1 3 3v1h1a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1V6a3 3 0 0 1 3-3Zm-2 8h.01M12 11h.01" /> },
   { id: 'servers', label: 'Serverlar', icon: <path d="M3 4h14v4H3V4Zm0 8h14v4H3v-4Zm2-6h.01M5 14h.01" /> },
   { id: 'skills', label: "Skill do'koni", icon: <path d="M10 2 3 6v8l7 4 7-4V6l-7-4Zm0 4v12M3 6l7 4 7-4" /> },
   { id: 'audit', label: 'Audit log', icon: <path d="M5 3h10a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2 4h6M7 10h6m-6 3h4" /> },
   { id: 'terminal', label: 'Terminal', icon: <path d="M3 4h14v12H3V4Zm3 3 3 3-3 3m5 0h4" /> },
 ]
 
-const staticPages: StaticPage[] = ['chat', 'servers', 'skills', 'audit', 'terminal']
+const staticPages: StaticPage[] = ['chat', 'agents', 'servers', 'skills', 'audit', 'terminal']
 
 function initFromHash(): { pro: boolean; page: Page } {
   const h = window.location.hash.replace('#', '')
@@ -80,6 +84,14 @@ export default function App() {
   const [pro, setPro] = useState(init.pro)
   const [page, setPageRaw] = useState<Page>(init.page)
   const [apps, setApps] = useState<AppManifest[]>(installedApps)
+  // Fonda ishlayotgan agent oqimlari — sidebar'da jonli ko'rsatiladi.
+  // Bitta suhbatni ochgan bo'lsak ham hammasi ko'rinadi: `chat.status`
+  // sessiya bo'yicha filtrlanmaydi (protocol.ts ga q.).
+  const { ishlayotganlar, sarlavhalar } = useIshlayotganlar()
+  const ishlayotganRoyxat = Object.entries(ishlayotganlar)
+  const ruxsatKutayotganlar = ishlayotganRoyxat.filter(
+    ([, holat]) => holat === 'ruxsat-kutmoqda',
+  ).length
 
   function setPage(p: Page) {
     setPageRaw(p)
@@ -150,9 +162,50 @@ export default function App() {
                     {n.icon}
                   </svg>
                   {n.label}
+                  {/* Agentlar yonidagi umumiy hisoblagich: sahifa ochilmagan
+                      bo'lsa ham fonda nima ketayotgani ko'rinib tursin */}
+                  {n.id === 'agents' && ishlayotganRoyxat.length > 0 && (
+                    <span
+                      className={`ml-auto rounded-md px-1.5 py-0.5 font-mono text-[10px] ${
+                        ruxsatKutayotganlar > 0 ? 'text-gold' : 'text-muted'
+                      }`}
+                      style={
+                        ruxsatKutayotganlar > 0
+                          ? { background: 'color-mix(in oklab, var(--color-gold) 18%, transparent)' }
+                          : { background: 'var(--color-panel2)' }
+                      }
+                    >
+                      {ishlayotganRoyxat.length}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
+
+            {/* Jonli oqimlar — fonda ishlayotgan sessiyalar, real vaqtda */}
+            {ishlayotganRoyxat.length > 0 && (
+              <div className="mt-4 border-t border-line pt-3">
+                <div className="px-3 pb-1.5 text-[10px] font-semibold tracking-widest text-faint uppercase">
+                  Jonli oqimlar
+                </div>
+                <div className="space-y-0.5">
+                  {ishlayotganRoyxat.map(([sessionId, holat]) => (
+                    <button
+                      key={sessionId}
+                      onClick={() => setPage('agents')}
+                      tabIndex={pro ? 0 : -1}
+                      title={sarlavhalar[sessionId] ?? sessionId}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] text-muted transition hover:bg-panel2/60 hover:text-ink"
+                    >
+                      <OqimIndikatori holat={holat} />
+                      <span className="truncate font-mono text-xs">
+                        {sarlavhalar[sessionId] ?? 'Nomsiz suhbat'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Dinamik bo'lim — ilovalar o'z manifesti bilan shu yerga qo'shiladi */}
             <div className="mt-4 border-t border-line pt-3">
@@ -196,6 +249,7 @@ export default function App() {
 
         <main className="thin-scroll min-w-0 flex-1 overflow-y-auto">
           {(!pro || page === 'chat') && <Chat pro={pro} onInstallApp={installApp} openApp={openApp} />}
+          {pro && page === 'agents' && <Agents />}
           {pro && page === 'servers' && <Servers />}
           {pro && page === 'skills' && <Skills />}
           {pro && page === 'audit' && <Audit />}

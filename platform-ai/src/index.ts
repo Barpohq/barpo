@@ -68,6 +68,16 @@ export {
 
 export { chegaraMi, chegaralarniAjrat } from './chegara.ts'
 
+// --- Loyiha konteksti: ish papkasidagi AGENTS.md / CLAUDE.md ---
+
+export {
+  KONTEKST_CHEGARASI,
+  KONTEKST_FAYLLARI,
+  kontekstniPromptga,
+  loyihaKontekstiniOqi,
+  type LoyihaKonteksti,
+} from './loyiha-konteksti.ts'
+
 // --- Kontekst: tool natijalari saqlanishi va siqish ---
 
 export {

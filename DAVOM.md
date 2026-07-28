@@ -9,7 +9,12 @@ backend, Bun + TypeScript (Hono)**, AI qatlami `pi-agent-core` ustiga qurilgan
 (pi — [earendil-works/pi](https://github.com/earendil-works/pi), terminal uchun
 coding agent; biz shu g'oyalarni web uchun moslashtiramiz).
 
-**Testlar:** 602/602 yashil (`bun test`). Barcha paketlar `tsc --noEmit` toza.
+**Testlar:** 681/681 yashil (`bun test`). Barcha paketlar `tsc --noEmit` toza.
+
+**Ish uslubi o'zgardi (2026-07-28):** "avval to'liq tizim, keyin sayqal"
+rejasidan voz kechildi. Endi kerakli qism quriladi va ustida ko'ringan
+xato/kamchiliklar tuzatib boriladi. Maqsad o'zgarmagan, yo'l o'zgardi —
+pastdagi eski "Qolgan reja" endi majburiy tartib emas, g'oyalar zaxirasi.
 
 ### Paketlar
 
@@ -36,6 +41,42 @@ cd platform-ui && bun run dev                # UI
 1. ~~Poydevor: shared + server + proxy~~ ✅
 2. ~~AI agent qatlami: tool'lar, ruxsat, model tanlash~~ ✅
 3. ~~**Agent qatlamini pi darajasiga yetkazish**~~ ✅ (quyida)
+4. ~~**Loyiha (project) mantig'i + background agentlar ko'rinishi**~~ ✅ (quyida)
+
+### 4-bosqichda nima qilindi (2026-07-28)
+
+**Background agentlar ko'rinishi** — server allaqachon fon rejimida ishlardi
+(orchestrator fire-and-forget), ko'rinish qatlami qo'shildi:
+
+- `chat.status` WS eventi (`ishlayapti` / `ruxsat-kutmoqda` / `tugadi` /
+  `xato`) — ataylab sessiya bo'yicha FILTRLANMAYDI (`eventSessiyasi()` →
+  null), sidebar hamma sessiyani ko'rsin.
+- `GET /chat/running` — sahifa ochilgandagi boshlang'ich holat.
+- UI: App sidebar'da "Jonli oqimlar" bo'limi, `Agents.tsx` real ma'lumotga
+  ulandi ("To'xtatish" tugmasi bilan), Chat'da "Fonda" chizig'i.
+- Eng muhim holat — `ruxsat-kutmoqda`: orqa fondagi agent ruxsat so'rasa
+  foydalanuvchi badge orqali ko'radi (aks holda 30 daq TTL'da bekor bo'lardi).
+
+**Loyiha (project) mantig'i** — workspace tushunchasi:
+
+- 005-migratsiya: `projects` jadvali + `chat_sessions.project_id` (NULL =
+  oddiy chat). `routes/projects.ts`: GET/POST.
+- Papkani faqat platforma yaratadi: `~/.platforma/loyihalar/<slug>/`
+  (`PLATFORMA_LOYIHALAR` env bilan ko'chiriladi). Slug — allowlist
+  `[a-zA-Z0-9_-]`.
+- Loyihali sessiyaning agent tool'lari loyiha papkasida ishlaydi — bir
+  loyihaning hamma chatlari BITTA papkada (parallel to'qnashuv — qabul
+  qilingan risk, qulf yo'q). Chegara `muhit.ts` dagi oddiy sessiya bilan
+  bir xil.
+- Loyiha papkasidagi `AGENTS.md` (ustun) yoki `CLAUDE.md` agent system
+  promptiga qo'shiladi (16k belgi limiti). Klassifikatorga BORMAYDI —
+  testlar bilan majburlangan (`loyiha-konteksti`, hujum matni bilan).
+- UI: Chat'da `LoyihaTanlagich` (inline yangi loyiha yaratish bilan),
+  sessiya boshlangach qulflanadi.
+
+**Qoldirilgan:** loyihani o'chirish (papka taqdiri — tasdiq talab qiladi),
+sessiyalar ro'yxati UI'si (loyihaning eski chatlarini ochish hali mumkin
+emas), alohida Projects sahifasi, mavjud tashqi papkaga ulanish.
 
 ### 3-bosqichda nima qilindi
 
@@ -62,7 +103,7 @@ cd platform-ui && bun run dev                # UI
 - Config qatlami: `~/.platforma/config.json` + loyihadagi
   `.platforma/config.json`, JSON Schema bilan.
 
-## Qolgan reja
+## G'oyalar zaxirasi (eski reja — endi majburiy tartib emas)
 
 1. **UI sahifalarni API'ga ulash** — `Servers.tsx`, `Audit.tsx`, `Skills.tsx`
    hali mock ma'lumot ishlatadi.

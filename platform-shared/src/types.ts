@@ -293,8 +293,35 @@ export interface ChatSession {
    */
   provider?: string
   model?: string
+  /**
+   * Sessiya ulangan loyiha. `undefined` bo'lsa agent tool'lari sessiyaning
+   * o'z papkasida ishlaydi; ulangan bo'lsa loyiha papkasida — ya'ni bir
+   * loyihaning hamma suhbatlari bitta fayllar to'plamini ko'radi.
+   */
+  projectId?: string
   createdAt: string
   updatedAt: string
+}
+
+// ---------------------------------------------------------------------------
+// Loyihalar (project / workspace)
+// ---------------------------------------------------------------------------
+
+/**
+ * Loyiha — nom bilan bog'langan ish papkasi.
+ *
+ * Papkani platforma o'zi yaratadi (`~/.platforma/loyihalar/<slug>/`),
+ * foydalanuvchi yo'l bermaydi: ixtiyoriy yo'l qabul qilinsa, agent tool'lari
+ * uchun chegara `/` ga ham qo'yilishi mumkin bo'lardi.
+ */
+export interface Project {
+  id: string
+  name: string
+  /** To'liq yo'l — UI uni faqat ko'rsatadi, o'zgartira olmaydi */
+  papka: string
+  createdAt: string
+  /** Shu loyihaga ulangan chat sessiyalari soni */
+  chatlarSoni?: number
 }
 
 export interface ChatMessage {

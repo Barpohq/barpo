@@ -14,20 +14,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AppManifest,
   ModelInfo,
+  Project,
   RejimHolati,
   RuxsatJavobi,
   RuxsatRejimi,
   RuxsatSorovi,
   ToolChaqiruv,
 } from '@platforma/shared'
+import LoyihaTanlagich from '../components/LoyihaTanlagich'
 import Markdown from '../components/Markdown'
 import ModelTanlagich from '../components/ModelTanlagich'
+import OqimIndikatori from '../components/OqimIndikatori'
 import RejimAlmashtirgich from '../components/RejimAlmashtirgich'
 import RejimKartasi from '../components/RejimKartasi'
 import RuxsatKartasi from '../components/RuxsatKartasi'
 import ToolKartasi from '../components/ToolKartasi'
 import {
   ApiXatosi,
+  loyihalarOl,
+  loyihaYarat as loyihaYaratSorov,
   modellarOl,
   oqimniToxtat,
   rejimOrnat as rejimOrnatSorov,
@@ -35,6 +40,7 @@ import {
   sessiyaYarat,
   xabarYubor,
 } from '../lib/api'
+import { useIshlayotganlar } from '../lib/ishlayotganlar'
 import { saqlangandanOqi } from '../lib/model-saqlash'
 import { ws } from '../lib/ws'
 
@@ -76,6 +82,11 @@ export default function Chat({ pro }: ChatProps) {
   const [modelYuklanmoqda, setModelYuklanmoqda] = useState(true)
   const [modelXato, setModelXato] = useState<string | null>(null)
 
+  // Loyihalar: ro'yxat + shu suhbat uchun tanlangani. Tanlov sessiya
+  // yaratilgunga qadar o'zgartirilishi mumkin, keyin qulflanadi.
+  const [loyihalar, setLoyihalar] = useState<Project[]>([])
+  const [loyiha, setLoyiha] = useState<Project | null>(null)
+
   const [sessionId, setSessionId] = useState<string | null>(null)
   /**
    * `sessionId` ning ref nusxasi — WS tinglovchisi uchun.
@@ -90,6 +101,9 @@ export default function Chat({ pro }: ChatProps) {
   const [ruxsatlar, setRuxsatlar] = useState<RuxsatSorovi[]>([])
   const [ruxsatJavoblari, setRuxsatJavoblari] = useState<Record<string, RuxsatJavobi>>({})
   const [rejim, setRejim] = useState<RejimHolati>({ rejim: 'tasdiq' })
+  // Fonda ishlayotgan BOSHQA suhbatlar — `chat.status` sessiya bo'yicha
+  // filtrlanmagani uchun bu yerda ham ko'rinadi (protocol.ts ga q.).
+  const { ishlayotganlar, sarlavhalar } = useIshlayotganlar()
   const endRef = useRef<HTMLDivElement>(null)
   const kiritishRef = useRef<HTMLTextAreaElement>(null)
   // Hozir javob kutilayotgan xabar id'si — WS eventlari shu bo'yicha topiladi
@@ -125,6 +139,22 @@ export default function Chat({ pro }: ChatProps) {
       .finally(() => {
         if (!bekor) setModelYuklanmoqda(false)
       })
+    return () => {
+      bekor = true
+    }
+  }, [])
+
+  // --- Loyihalarni yuklash ---
+  //
+  // Xato bo'lsa jim qolamiz: loyiha ixtiyoriy imkoniyat, u yuklanmasa
+  // suhbat loyihasiz (o'z papkasida) baribir ishlaydi.
+  useEffect(() => {
+    let bekor = false
+    loyihalarOl()
+      .then((royxat) => {
+        if (!bekor) setLoyihalar(royxat)
+      })
+      .catch(() => undefined)
     return () => {
       bekor = true
     }
@@ -270,7 +300,9 @@ export default function Chat({ pro }: ChatProps) {
         // Sessiya hali yo'q bo'lsa — birinchi xabarda yaratamiz
         let sid = sessionId
         if (!sid) {
-          const sessiya = await sessiyaYarat(text.slice(0, 60))
+          // Loyiha shu yerda BIR MARTA bog'lanadi — keyin sessiya ish
+          // papkasi bilan birga qulflanadi
+          const sessiya = await sessiyaYarat(text.slice(0, 60), loyiha?.id)
           sid = sessiya.id
           setSessionId(sid)
           // Sessiyagacha tanlangan rejimni serverga yetkazamiz
@@ -311,8 +343,19 @@ export default function Chat({ pro }: ChatProps) {
         setBusy(false)
       }
     },
-    [busy, input, rejim.rejim, sessionId, tanlangan],
+    [busy, input, loyiha?.id, rejim.rejim, sessionId, tanlangan],
   )
+
+  /**
+   * Yangi loyiha yaratadi va ro'yxatga qo'shadi.
+   *
+   * Xato tanlagich ichida ko'rsatiladi — shuning uchun bu yerda ushlanmaydi.
+   */
+  const loyihaYarat = useCallback(async (nom: string): Promise<Project> => {
+    const yangi = await loyihaYaratSorov(nom)
+    setLoyihalar((r) => [yangi, ...r])
+    return yangi
+  }, [])
 
   async function ruxsatBer(sorov: RuxsatSorovi, javob: RuxsatJavobi) {
     // Javobni darhol ko'rsatamiz — server tasdiqlashini kutmaymiz
@@ -365,6 +408,8 @@ export default function Chat({ pro }: ChatProps) {
 
   const empty = msgs.length === 0
   const qulflangan = sessionId !== null
+  /** Shu oyna kuzatmayotgan, lekin fonda ishlayotgan sessiyalar */
+  const fondagilar = Object.entries(ishlayotganlar).filter(([id]) => id !== sessionId)
   const tanlanganYorliq = useMemo(
     () => (tanlangan ? `${tanlangan.providerName} · ${tanlangan.name}` : null),
     [tanlangan],
@@ -372,6 +417,36 @@ export default function Chat({ pro }: ChatProps) {
 
   return (
     <div className={`flex h-full flex-col ${pro ? '' : 'mx-auto w-full max-w-3xl'}`}>
+      {/* Tanlangan loyiha — agent tool'lari qaysi papkada ishlayotgani
+          har doim ko'rinib tursin */}
+      {loyiha && (
+        <div className="flex items-center gap-2 border-b border-line bg-panel px-4 py-1.5">
+          <span className="font-mono text-[10px] tracking-widest text-faint uppercase">
+            Loyiha
+          </span>
+          <span className="truncate font-mono text-[11px] text-lazur">{loyiha.name}</span>
+          <span className="truncate font-mono text-[10px] text-faint">{loyiha.papka}</span>
+        </div>
+      )}
+
+      {/* Fondagi boshqa suhbatlar — bu oynada ularning javobi ko'rinmaydi,
+          lekin ishlayotgani (ayniqsa ruxsat kutayotgani) bilinib tursin */}
+      {fondagilar.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-line bg-panel px-4 py-1.5">
+          <span className="font-mono text-[10px] tracking-widest text-faint uppercase">
+            Fonda
+          </span>
+          {fondagilar.map(([id, holat]) => (
+            <span key={id} className="flex min-w-0 items-center gap-1.5">
+              <OqimIndikatori holat={holat} />
+              <span className="truncate font-mono text-[11px] text-muted">
+                {sarlavhalar[id] ?? 'Nomsiz suhbat'}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="thin-scroll flex-1 overflow-y-auto px-4 pt-6 pb-4">
         {empty && (
           <div className="flex h-full flex-col items-center justify-center text-center">
@@ -515,6 +590,13 @@ export default function Chat({ pro }: ChatProps) {
                 onOzgart={(r) => void rejimniOzgart(r)}
                 bandmi={busy}
               />
+              <LoyihaTanlagich
+                loyihalar={loyihalar}
+                tanlangan={loyiha}
+                onTanla={setLoyiha}
+                onYarat={loyihaYarat}
+                qulflangan={qulflangan}
+              />
             </div>
             {qulflangan && (
               <button
@@ -525,6 +607,9 @@ export default function Chat({ pro }: ChatProps) {
                   setRuxsatJavoblari({})
                   // Rejim tanlovi saqlanadi, lekin "o'chdi" sababi tozalanadi
                   setRejim((r) => ({ rejim: r.rejim }))
+                  // LOYIHA TANLOVI ATAYLAB SAQLANADI: "loyiha ichida yangi
+                  // chat ochish" eng ko'p kerak bo'ladigan yo'l. Boshqa
+                  // loyihaga o'tish uchun tanlagich endi qulfsiz.
                   kutilayotgan.current = null
                   setBusy(false)
                 }}

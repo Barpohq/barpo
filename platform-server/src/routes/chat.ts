@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono'
 import {
+  ishlayotganSessiyalar,
   javobOqizi,
   oqimBormi,
   oqimniToxtat,
@@ -15,6 +16,7 @@ import {
   ruxsatJavobi,
 } from '../orchestrator.ts'
 import {
+  loyihaOqi,
   sessiyaModelniOzgart,
   sessiyaModelQulfla,
   sessiyaOqi,
@@ -30,15 +32,49 @@ chatRoutes.get('/chat/sessions', (c) => {
   return c.json({ sessions: sessiyalarOqi() })
 })
 
+/**
+ * Yangi sessiya. `projectId` ixtiyoriy — berilsa sessiya loyihaga ulanadi
+ * va agent tool'lari loyiha papkasida ishlaydi.
+ */
 chatRoutes.post('/chat/sessions', async (c) => {
   let title: string | undefined
+  let projectId: string | undefined
   try {
-    const tana = (await c.req.json()) as { title?: unknown }
+    const tana = (await c.req.json()) as { title?: unknown; projectId?: unknown }
     if (typeof tana?.title === 'string') title = tana.title
+    if (typeof tana?.projectId === 'string' && tana.projectId.length > 0) {
+      projectId = tana.projectId
+    }
   } catch {
     // tana bo'sh bo'lishi mumkin — sarlavha avtomatik qo'yiladi
   }
-  return c.json({ session: sessiyaYarat(title) }, 201)
+
+  // Yo'q loyiha id'si bilan sessiya yaratilsa foreign key xatosi 500 bo'lib
+  // chiqardi — bu yerda tushunarli 404 beramiz.
+  if (projectId && !loyihaOqi(projectId)) {
+    return c.json({ error: 'Loyiha topilmadi', detail: projectId }, 404)
+  }
+
+  return c.json({ session: sessiyaYarat(title, undefined, projectId) }, 201)
+})
+
+/**
+ * Hozir agent oqimi ketayotgan sessiyalar — "fon agentlari" ko'rinishi uchun.
+ *
+ * UI (sidebar badge'lari va Agentlar sahifasi) sahifa ochilganda boshlang'ich
+ * holatni shu yerdan oladi, keyin `chat.status` WS eventlari bilan yangilaydi.
+ * Faqat WS'ga tayanib bo'lmaydi: sahifa oqim o'rtasida ochilsa, boshlanish
+ * eventi allaqachon o'tib ketgan bo'ladi.
+ *
+ * `title` sessiya jadvalidan qo'shiladi — UI id o'rniga o'qiladigan nom
+ * ko'rsatsin. Sessiya o'chirilgan bo'lsa (kutilmagan holat) `title`siz keladi.
+ */
+chatRoutes.get('/chat/running', (c) => {
+  const running = ishlayotganSessiyalar().map((s) => ({
+    ...s,
+    title: sessiyaOqi(s.sessionId)?.title,
+  }))
+  return c.json({ running })
 })
 
 chatRoutes.get('/chat/sessions/:id/messages', (c) => {

@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   ChatSession,
   ModelInfo,
+  Project,
   ProviderInfo,
   RejimHolati,
   RuxsatJavobi,
@@ -78,11 +79,15 @@ export function modellarniYangila(): Promise<ModellarJavobi> {
 // Chat
 // ---------------------------------------------------------------------------
 
-export async function sessiyaYarat(title?: string): Promise<ChatSession> {
+/**
+ * Yangi sessiya. `projectId` berilsa suhbat loyihaga ulanadi va agent
+ * tool'lari loyiha papkasida ishlaydi.
+ */
+export async function sessiyaYarat(title?: string, projectId?: string): Promise<ChatSession> {
   const javob = await sorov<{ session: ChatSession }>('/api/chat/sessions', {
     method: 'POST',
     headers: jsonSarlavha,
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, projectId }),
   })
   return javob.session
 }
@@ -138,10 +143,52 @@ export async function rejimOrnat(
   return javob.holat
 }
 
+/** Hozir agent oqimi ketayotgan bitta sessiya */
+export interface IshlayotganSessiya {
+  sessionId: string
+  holat: 'ishlayapti' | 'ruxsat-kutmoqda'
+  /** Sessiya sarlavhasi — sessiya o'chirilgan bo'lsa yo'q */
+  title?: string
+}
+
+/**
+ * Ishlayotgan sessiyalarning boshlang'ich ro'yxati.
+ *
+ * Faqat sahifa ochilganda kerak: undan keyin ro'yxat `chat.status` WS
+ * eventlari bilan yangilanadi. Ikkalasi ham kerak, chunki WS ulanishidan
+ * oldingi holat o'zgarishlari mijozga yetib bormaydi.
+ */
+export async function ishlayotganlarniOl(): Promise<IshlayotganSessiya[]> {
+  const javob = await sorov<{ running: IshlayotganSessiya[] }>('/api/chat/running')
+  return javob.running
+}
+
 export function oqimniToxtat(sessionId: string): Promise<{ toxtatildi: boolean }> {
   return sorov<{ toxtatildi: boolean }>('/api/chat/stop', {
     method: 'POST',
     headers: jsonSarlavha,
     body: JSON.stringify({ sessionId }),
   })
+}
+
+// ---------------------------------------------------------------------------
+// Loyihalar
+// ---------------------------------------------------------------------------
+
+export async function loyihalarOl(): Promise<Project[]> {
+  const javob = await sorov<{ projects: Project[] }>('/api/projects')
+  return javob.projects
+}
+
+/**
+ * Yangi loyiha. Faqat nom yuboriladi — papkani server o'zi yaratadi
+ * (`~/.platforma/loyihalar/<slug>/`), mijoz yo'l bera olmaydi.
+ */
+export async function loyihaYarat(name: string): Promise<Project> {
+  const javob = await sorov<{ project: Project }>('/api/projects', {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ name }),
+  })
+  return javob.project
 }

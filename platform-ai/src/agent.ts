@@ -43,6 +43,7 @@ import {
   toolNatijalariniQisqart,
   type SaqlanganXabar,
 } from './kontekst.ts'
+import { kontekstniPromptga, loyihaKontekstiniOqi } from './loyiha-konteksti.ts'
 import { ChegaralanganMuhit } from './muhit.ts'
 import type { RejimBoshqaruvchi } from './rejim.ts'
 import { qidiruvToollariXom } from './qidiruv-toollari.ts'
@@ -127,7 +128,19 @@ export function klassifikatorTarixi(xabarlar: SuhbatXabari[]): KlassifikatorXaba
 /** Tool natijasi juda uzun bo'lsa UI uchun qisqartiriladi */
 const NATIJA_CHEGARASI = 2000
 
-export const AGENT_SISTEM_PROMPT = (ishPapkasi: string) =>
+/**
+ * Agentning system prompti.
+ *
+ * `loyihaKonteksti` — ish papkasidagi `AGENTS.md`/`CLAUDE.md` matni
+ * (`loyiha-konteksti.ts`). U promptning OXIRIGA, platformaning o'z
+ * qoidalaridan KEYIN qo'shiladi: model uchun keyingi matn kuchliroq
+ * ko'rinmasin degan qoida yo'q, lekin tartib niyatni aniq ko'rsatadi —
+ * platforma qoidalari asos, loyiha ko'rsatmasi ular ustiga qo'shiladi.
+ *
+ * Bu matn KLASSIFIKATORGA BORMAYDI — u alohida prompt (`klassifikator.ts`)
+ * bilan ishlaydi va bu funksiyani umuman chaqirmaydi.
+ */
+export const AGENT_SISTEM_PROMPT = (ishPapkasi: string, loyihaKonteksti?: string) =>
   [
     "Sen platformaning AI yordamchisisan. Foydalanuvchi bilan o'zbek tilida",
     "muloqot qil (agar u boshqa tilda yozmasa). Javoblaring aniq va qisqa bo'lsin.",
@@ -156,6 +169,7 @@ export const AGENT_SISTEM_PROMPT = (ishPapkasi: string) =>
     'boshqa yo\'l taklif qil. Ruxsatni chetlab o\'tishga URINMA.',
     '',
     'Faylni tahrirlashdan oldin uni o\'qi. Bir vaqtda bitta tool ishlatasan.',
+    ...(loyihaKonteksti ? [loyihaKonteksti] : []),
   ].join('\n')
 
 /**
@@ -297,9 +311,16 @@ export async function* agentOqimi(
       ]
       const hookKonteksti = { ishPapkasi: sozlama.ishPapkasi, sessionId: sozlama.sessionId }
 
+      // Ish papkasidagi AGENTS.md / CLAUDE.md — agentga qo'shimcha
+      // ko'rsatma. Klassifikatorga bormaydi (loyiha-konteksti.ts ga q.).
+      const loyihaKonteksti = loyihaKontekstiniOqi(sozlama.ishPapkasi)
+
       const agent = new Agent({
         initialState: {
-          systemPrompt: AGENT_SISTEM_PROMPT(sozlama.ishPapkasi),
+          systemPrompt: AGENT_SISTEM_PROMPT(
+            sozlama.ishPapkasi,
+            loyihaKonteksti ? kontekstniPromptga(loyihaKonteksti) : undefined,
+          ),
           model,
           tools: toollarniTayyorla(toolKonteksti, sozlamalar.agent.toollar.yoqilgan),
           messages: kontekst,

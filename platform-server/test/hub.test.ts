@@ -260,6 +260,39 @@ describe('sessiya izolyatsiyasi', () => {
     expect(olingan).toHaveLength(2)
   })
 
+  test('chat.status begona sessiyaga ham boradi (ataylab)', () => {
+    // Sidebar badge'lari uchun: s1 ni ochgan mijoz s2 da agent
+    // ishlayotganini ko'rishi SHART. Bu qolgan chat.* eventlaridan farqli.
+    const hub = new WsHub()
+    const birinchi = soxtaWs(['chat'], 's1')
+    const ikkinchi = soxtaWs(['chat'], 's2')
+    hub.ulandi(birinchi.ws)
+    hub.ulandi(ikkinchi.ws)
+    birinchi.olingan.length = 0
+    ikkinchi.olingan.length = 0
+
+    const soni = hub.broadcast({ type: 'chat.status', sessionId: 's2', holat: 'ishlayapti' })
+
+    expect(soni).toBe(2)
+    expect(birinchi.olingan).toHaveLength(1)
+    expect(birinchi.olingan[0]).toMatchObject({ sessionId: 's2', holat: 'ishlayapti' })
+    expect(ikkinchi.olingan).toHaveLength(1)
+  })
+
+  test('chat.status kanal filtridan esa o\'tadi', () => {
+    // Filtrsizlik faqat SESSIYAGA tegishli — chat kanaliga obuna
+    // bo'lmagan mijoz (masalan faqat audit kuzatuvchi) uni olmasligi kerak.
+    const hub = new WsHub()
+    const chatsiz = soxtaWs(['audit'])
+    hub.ulandi(chatsiz.ws)
+    chatsiz.olingan.length = 0
+
+    const soni = hub.broadcast({ type: 'chat.status', sessionId: 's1', holat: 'ishlayapti' })
+
+    expect(soni).toBe(0)
+    expect(chatsiz.olingan).toHaveLength(0)
+  })
+
   test('sessiya almashtirilsa yangi sessiya kuzatiladi', () => {
     // "+ yangi suhbat" → boshqa sessiyaga o'tish
     const hub = new WsHub()

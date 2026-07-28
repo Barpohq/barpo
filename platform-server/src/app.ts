@@ -13,6 +13,7 @@ import { auditRoutes } from './routes/audit.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { healthRoutes } from './routes/health.ts'
 import { modelsRoutes } from './routes/models.ts'
+import { projectsRoutes } from './routes/projects.ts'
 import { serversRoutes } from './routes/servers.ts'
 import { skillsRoutes } from './routes/skills.ts'
 
@@ -27,6 +28,7 @@ export function appYarat(): Hono {
   api.route('/', auditRoutes)
   api.route('/', chatRoutes)
   api.route('/', modelsRoutes)
+  api.route('/', projectsRoutes)
   // ↑ yangi route modullari shu yerga qo'shiladi
 
   app.route('/api', api)

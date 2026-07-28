@@ -202,6 +202,23 @@ describe('POST /api/chat/permission', () => {
   })
 })
 
+describe('GET /api/chat/running', () => {
+  // Oqim ketayotgan holat orchestrator.test.ts da sinaladi — u yerda LLM
+  // moduli soxtalashtirilgan. Bu yerda shakl va bo'sh holat tekshiriladi.
+
+  test("hech narsa ishlamayotganda bo'sh ro'yxat qaytadi", async () => {
+    const javob = await app.request('/api/chat/running')
+    expect(javob.status).toBe(200)
+    expect(await javob.json()).toEqual({ running: [] })
+  })
+
+  test("`running` maydoni har doim massiv — UI shartsiz map qiladi", async () => {
+    const javob = await app.request('/api/chat/running')
+    const tana = (await javob.json()) as { running: unknown }
+    expect(Array.isArray(tana.running)).toBe(true)
+  })
+})
+
 describe('GET /api/chat/sessions — model maydonlari', () => {
   test('qulflangan sessiya provider va modelni qaytaradi', async () => {
     const s = sessiyaYarat('sinov', db)

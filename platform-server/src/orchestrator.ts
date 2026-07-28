@@ -27,18 +27,81 @@ import {
 import { config } from '@platforma/config'
 import type {
   ModelTanlovi,
+  OqimHolati,
   RejimHolati,
   RuxsatJavobi,
   RuxsatRejimi,
   ToolChaqiruv,
 } from '@platforma/shared'
 import { auditYoz } from './audit.ts'
-import { ishPapkasi } from './ish-papkasi.ts'
-import { xabarlarOqi, xabarYoz } from './repo.ts'
+import { sessiyaIshPapkasi } from './ish-papkasi.ts'
+import { sessiyaLoyihaPapkasi, xabarlarOqi, xabarYoz } from './repo.ts'
 import { hub } from './ws/hub.ts'
 
-/** Ishlab turgan oqimlar — sessiya bo'yicha, bekor qilish uchun */
-const ishlayotgan = new Map<string, AbortController>()
+/**
+ * Sessiya uchun ish papkasi — loyihaga ulangan bo'lsa loyiha papkasi.
+ *
+ * Papka tanlovi HAR CHAQIRUVDA bazadan o'qiladi (keshlanmaydi): sessiya
+ * yaratilgach loyihasi o'zgarmaydi, lekin kesh xotirada eskirib qolish
+ * xavfini olib kelardi va bu bitta indeksli SELECT.
+ *
+ * Papka `ChegaralanganMuhit` ga `ishPapkasi` bo'lib boradi, ya'ni chegara
+ * tekshiruvi loyiha papkasiga xuddi sessiya papkasidagidek qo'llanadi:
+ * ichkarida — o'tadi, tashqarida — ruxsat so'raladi. Loyiha papkasi uchun
+ * hech qanday imtiyoz yo'q.
+ */
+function sessiyaPapkasi(sessionId: string): string {
+  return sessiyaIshPapkasi(sessionId, sessiyaLoyihaPapkasi(sessionId))
+}
+
+/**
+ * Ishlab turgan oqim haqidagi ma'lumot.
+ *
+ * `holat` faqat ikki qiymatni oladi — oqim tugagach yozuv Map'dan butunlay
+ * chiqariladi, ya'ni 'tugadi'/'xato' bu yerda hech qachon saqlanmaydi.
+ */
+interface IshlayotganOqim {
+  boshqaruv: AbortController
+  holat: 'ishlayapti' | 'ruxsat-kutmoqda'
+}
+
+/** Ishlab turgan oqimlar — sessiya bo'yicha, bekor qilish va ko'rsatish uchun */
+const ishlayotgan = new Map<string, IshlayotganOqim>()
+
+/** Ishlayotgan bitta sessiyaning tashqariga ko'rinadigan tavsifi */
+export interface IshlayotganSessiya {
+  sessionId: string
+  holat: 'ishlayapti' | 'ruxsat-kutmoqda'
+}
+
+/**
+ * Hozir oqim ketayotgan sessiyalar ro'yxati.
+ *
+ * UI sahifa ochilganda boshlang'ich holatni shu yerdan oladi (GET
+ * /api/chat/running), keyin `chat.status` eventlari bilan yangilab boradi:
+ * WS ulanishi sahifa ochilishidan keyin ulanadi, ya'ni undan oldingi
+ * holat o'zgarishlari yo'qolgan bo'lishi mumkin.
+ */
+export function ishlayotganSessiyalar(): IshlayotganSessiya[] {
+  return [...ishlayotgan.entries()].map(([sessionId, oqim]) => ({
+    sessionId,
+    holat: oqim.holat,
+  }))
+}
+
+/**
+ * Sessiya oqimining holatini yangilaydi va WS orqali tarqatadi.
+ *
+ * 'tugadi'/'xato' — yakuniy holatlar, ular Map'ga yozilmaydi (yozuv allaqachon
+ * `finally` da o'chirilgan bo'ladi), faqat tarqatiladi.
+ */
+function holatTarqat(sessionId: string, holat: OqimHolati): void {
+  const oqim = ishlayotgan.get(sessionId)
+  if (oqim && (holat === 'ishlayapti' || holat === 'ruxsat-kutmoqda')) {
+    oqim.holat = holat
+  }
+  hub.broadcast({ type: 'chat.status', sessionId, holat })
+}
 
 export interface OqizishNatijasi {
   messageId: string
@@ -70,11 +133,15 @@ export async function javobOqizi(
 ): Promise<OqizishNatijasi> {
   // Shu sessiyada oldingi oqim ketayotgan bo'lsa — to'xtatamiz. Foydalanuvchi
   // javob tugashini kutmay yangi xabar yuborgan bo'lishi mumkin.
-  ishlayotgan.get(sessionId)?.abort()
+  ishlayotgan.get(sessionId)?.boshqaruv.abort()
   const boshqaruv = new AbortController()
-  ishlayotgan.set(sessionId, boshqaruv)
+  ishlayotgan.set(sessionId, { boshqaruv, holat: 'ishlayapti' })
+  // Oqim boshlandi — sidebar darhol jonli indikatorni ko'rsatadi
+  holatTarqat(sessionId, 'ishlayapti')
 
-  const papka = ishPapkasi(sessionId)
+  // Sessiya loyihaga ulangan bo'lsa tool'lar LOYIHA papkasida ishlaydi —
+  // bir loyihaning hamma suhbatlari bitta fayllar to'plamini ko'rsin.
+  const papka = sessiyaPapkasi(sessionId)
   const { config: sozlamalar } = config({ ishPapkasi: papka })
 
   const tarix = tarixniTayyorla(sessionId)
@@ -85,6 +152,14 @@ export async function javobOqizi(
   // turn'da tool natijalari bilan qaytariladi
   let agentXabarlari: unknown[] | undefined
   let kontekstTokenlari: number | undefined
+  /**
+   * Oqim tugaganda ro'yxatdagi yozuv hali ham BIZNIKI edimi.
+   *
+   * `false` bo'lsa bizni yangi oqim to'xtatgan (foydalanuvchi kutmay yana
+   * xabar yubordi) — u holda yakuniy `chat.status` TARQATILMAYDI, aks holda
+   * endigina boshlangan yangi oqim UI'da darhol "tugadi" bo'lib ko'rinardi.
+   */
+  let ozimizniki = true
 
   const toolYubor = (tool: ToolChaqiruv) => {
     toolKartalari.set(tool.id, tool)
@@ -110,6 +185,17 @@ export async function javobOqizi(
         })
 
     for await (const hodisa of oqim) {
+      // Ruxsat kutayotgan oqim yana harakatga keldi — demak javob berildi
+      // (yoki muddat tugab rad etildi) va agent davom etmoqda. Alohida
+      // "ruxsat javob berildi" hodisasi yo'q, shuning uchun har qanday
+      // KEYINGI hodisa shu signal bo'lib xizmat qiladi.
+      if (
+        hodisa.tur !== 'ruxsat_kerak' &&
+        ishlayotgan.get(sessionId)?.holat === 'ruxsat-kutmoqda'
+      ) {
+        holatTarqat(sessionId, 'ishlayapti')
+      }
+
       switch (hodisa.tur) {
         case 'delta':
           toplangan += hodisa.matn
@@ -146,6 +232,10 @@ export async function javobOqizi(
 
         case 'ruxsat_kerak':
           hub.broadcast({ type: 'chat.permission', sessionId, messageId, sorov: hodisa.sorov })
+          // Oqim javob kelguncha to'xtab turadi — sidebar buni sariq badge
+          // bilan ajratib ko'rsatadi, chunki bu foydalanuvchi aralashuvini
+          // kutayotgan yagona holat.
+          holatTarqat(sessionId, 'ruxsat-kutmoqda')
           auditYoz(
             'agent',
             "ruxsat so'raldi",
@@ -231,7 +321,12 @@ export async function javobOqizi(
     // Oqim funksiyalari o'zi xatolarni ushlaydi, bu qo'shimcha himoya qatlami
     xato = e instanceof Error ? e.message : String(e)
   } finally {
-    if (ishlayotgan.get(sessionId) === boshqaruv) ishlayotgan.delete(sessionId)
+    // Yozuvni faqat U HALI HAM BIZNIKI bo'lsa o'chiramiz. Foydalanuvchi javob
+    // tugashini kutmay yangi xabar yuborgan bo'lsa, bizni to'xtatib yangi oqim
+    // boshlangan — o'sha yangisining yozuvini o'chirib yuborsak, sessiya
+    // "ishlamayapti" bo'lib ko'rinardi.
+    ozimizniki = ishlayotgan.get(sessionId)?.boshqaruv === boshqaruv
+    if (ozimizniki) ishlayotgan.delete(sessionId)
   }
 
   const toolCards = [...toolKartalari.values()]
@@ -261,6 +356,11 @@ export async function javobOqizi(
     auditYoz('chat', 'LLM javobi', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
   }
 
+  // Yakuniy holat — to'xtatish (abort) ham shu yerdan o'tadi: bekor qilingan
+  // oqim ham shu nuqtaga yetib keladi, ya'ni sidebar indikatori har holatda
+  // yopiladi. Bizni yangi oqim almashtirgan bo'lsa tarqatmaymiz (yuqoriga q.).
+  if (ozimizniki) holatTarqat(sessionId, xato ? 'xato' : 'tugadi')
+
   return { messageId, matn: toplangan, toolCards, xato }
 }
 
@@ -272,7 +372,7 @@ export async function javobOqizi(
  */
 function klassifikatorNomi(sessionId?: string): string | undefined {
   const sozlamalar = sessionId
-    ? config({ ishPapkasi: ishPapkasi(sessionId) }).config
+    ? config({ ishPapkasi: sessiyaPapkasi(sessionId) }).config
     : config().config
   const tanlov = klassifikatorModeliniTanla(
     keshdagiNatija()?.models ?? [],
@@ -344,11 +444,17 @@ export function ruxsatJavobi(sessionId: string, sorovId: string, javob: RuxsatJa
   return berildi
 }
 
-/** Sessiyadagi oqimni bekor qiladi (foydalanuvchi to'xtatdi) */
+/**
+ * Sessiyadagi oqimni bekor qiladi (foydalanuvchi to'xtatdi).
+ *
+ * Yakuniy `chat.status` bu yerda TARQATILMAYDI: `abort()` dan keyin oqim
+ * o'zi tugaydi va `javobOqizi` oxiridagi umumiy tugallash yo'li 'tugadi'
+ * yoki 'xato' ni yuboradi. Ikki joydan yuborilsa UI ikkita event olardi.
+ */
 export function oqimniToxtat(sessionId: string): boolean {
-  const boshqaruv = ishlayotgan.get(sessionId)
-  if (!boshqaruv) return false
-  boshqaruv.abort()
+  const oqim = ishlayotgan.get(sessionId)
+  if (!oqim) return false
+  oqim.boshqaruv.abort()
   return true
 }
 
