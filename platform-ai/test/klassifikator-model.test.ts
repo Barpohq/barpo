@@ -23,6 +23,7 @@ function model(qism: Partial<ModelInfo> & { provider: string; id: string }): Mod
     vision: false,
     cost: { input: 1, output: 5 },
     manba: 'sinov',
+    manbaTuri: 'kalit',
     ...qism,
   }
 }

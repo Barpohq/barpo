@@ -13,7 +13,12 @@
 // (ba'zilari tarmoqqa chiqadi) ortiqcha. `modellarniAniqla({ majburiy: true })`
 // keshni yangilaydi.
 
-import type { AniqlashOgohlantirish, ModelInfo, ProviderInfo } from '@platforma/shared'
+import type {
+  AniqlashOgohlantirish,
+  ManbaTuri,
+  ModelInfo,
+  ProviderInfo,
+} from '@platforma/shared'
 import type { Api, Model, Models, MutableModels } from '@earendil-works/pi-ai'
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
 import { FaylKredensialOmbori } from './kredensial.ts'
@@ -40,6 +45,28 @@ export const STANDART_KREDENSIAL_YOLI = new URL(
   '../../platform-server/data/ai-auth.json',
   import.meta.url,
 ).pathname
+
+/**
+ * Qo'shimcha to'lovsiz ishlatiladiganlar tepada: mahalliy (bepul), keyin
+ * obuna (oylik to'lovga kiradi), oxirida API kaliti (har token pullik).
+ */
+const MANBA_TARTIBI: Record<ManbaTuri, number> = { mahalliy: 0, obuna: 1, kalit: 2 }
+
+/**
+ * Model ro'yxati tartibi.
+ *
+ * MUHIM: bu yerda `cost === 0` ga tayanib bo'lmaydi — obuna modellarining
+ * `cost` maydonida katalogdagi API narxi turadi, lekin foydalanuvchi u uchun
+ * token boshiga to'lamaydi. Bir model ikkala kanalda ham bo'lsa (masalan
+ * gpt-5.6-luna: OPENAI_API_KEY va ~/.codex obunasi), obunadagisi birinchi
+ * ko'rinishi kerak — aks holda foydalanuvchi bilmay pullik kanalni tanlaydi.
+ */
+export function modelTartibi(a: ModelInfo, b: ModelInfo): number {
+  const turFarq = MANBA_TARTIBI[a.manbaTuri] - MANBA_TARTIBI[b.manbaTuri]
+  if (turFarq !== 0) return turFarq
+  if (a.providerName !== b.providerName) return a.providerName.localeCompare(b.providerName)
+  return a.name.localeCompare(b.name)
+}
 
 let _kesh: AniqlashNatijasi | null = null
 let _models: Models | null = null
@@ -83,12 +110,15 @@ async function aniqlashniBajar(sozlama?: AniqlashSozlamalari): Promise<AniqlashN
   const ombor = new FaylKredensialOmbori(sozlama?.kredensialYoli ?? STANDART_KREDENSIAL_YOLI)
   const models = builtinModels({ credentials: ombor }) as MutableModels
 
+  // Provider id → aniq manba nomi. pi-ai `checkAuth` faqat umumiy 'OAuth'
+  // qaytaradi, biz esa qaysi fayldan kelganini bilamiz — o'zimizniki ustun.
+  const manbalar = new Map<string, string>()
+
   // --- 3-manba avval: mahalliy OAuth omborga yoziladi, chunki checkAuth
   // saqlangan credential'ni ham hisobga oladi ---
-  await mahalliyAuthlarniUla(ombor, ogohlantirishlar)
+  await mahalliyAuthlarniUla(ombor, ogohlantirishlar, manbalar)
 
   // --- 2-manba: Ollama ---
-  const manbalar = new Map<string, string>()
   try {
     const ollama = await ollamaProvider()
     if (ollama) {
@@ -110,10 +140,14 @@ async function aniqlashniBajar(sozlama?: AniqlashSozlamalari): Promise<AniqlashN
 
   for (const provider of models.getProviders()) {
     let manba: string | undefined
+    let manbaTuri: ManbaTuri = 'kalit'
     try {
       const chk = await models.checkAuth(provider.id)
       if (!chk) continue // sozlanmagan — ro'yxatga tushmaydi
+      // Aniq nom (mahalliy OAuth fayli / Ollama) umumiy `chk.source` dan ustun
       manba = manbalar.get(provider.id) ?? chk.source ?? (chk.type === 'oauth' ? 'OAuth' : 'kalit')
+      manbaTuri =
+        provider.id === OLLAMA_ID ? 'mahalliy' : chk.type === 'oauth' ? 'obuna' : 'kalit'
     } catch (xato) {
       ogohlantirishlar.push({ manba: provider.name, sabab: xatoMatni(xato) })
       continue
@@ -132,6 +166,7 @@ async function aniqlashniBajar(sozlama?: AniqlashSozlamalari): Promise<AniqlashN
       id: provider.id,
       name: provider.name,
       manba,
+      manbaTuri,
       modelSoni: provModellar.length,
     })
 
@@ -146,28 +181,33 @@ async function aniqlashniBajar(sozlama?: AniqlashSozlamalari): Promise<AniqlashN
         vision: m.input.includes('image'),
         cost: { input: m.cost.input, output: m.cost.output },
         manba,
+        manbaTuri,
       })
     }
   }
 
-  // Mahalliy (bepul) modellar tepada, keyin provider va model nomi bo'yicha
-  modellar.sort((a, b) => {
-    const bepulFarq = Number(b.cost.input === 0) - Number(a.cost.input === 0)
-    if (bepulFarq !== 0) return bepulFarq
-    if (a.providerName !== b.providerName) return a.providerName.localeCompare(b.providerName)
-    return a.name.localeCompare(b.name)
+  modellar.sort(modelTartibi)
+  // Providerlar ham shu tartibda — UI guruhlarni model tartibidan quradi,
+  // ikki ro'yxat zid bo'lmasligi kerak
+  providers.sort((a, b) => {
+    const turFarq = MANBA_TARTIBI[a.manbaTuri] - MANBA_TARTIBI[b.manbaTuri]
+    return turFarq !== 0 ? turFarq : a.name.localeCompare(b.name)
   })
-  providers.sort((a, b) => a.name.localeCompare(b.name))
 
   _models = models
   _kesh = { models: modellar, providers, ogohlantirishlar, vaqt: new Date().toISOString() }
   return _kesh
 }
 
-/** ~/.claude va ~/.codex tokenlarini kredensial omboriga ko'chiradi */
+/**
+ * ~/.claude va ~/.codex tokenlarini kredensial omboriga ko'chiradi.
+ * `manbalar` ga aniq nomni yozadi ("~/.codex (ChatGPT obunasi)") — keyin
+ * u pi-ai ning umumiy "OAuth" satridan ustun ishlatiladi.
+ */
 async function mahalliyAuthlarniUla(
   ombor: FaylKredensialOmbori,
   ogohlantirishlar: AniqlashOgohlantirish[],
+  manbalar: Map<string, string>,
 ): Promise<void> {
   let natijalar: Awaited<ReturnType<typeof mahalliyAuthlar>>
   try {
@@ -183,7 +223,8 @@ async function mahalliyAuthlarniUla(
       if (natija.sabab) ogohlantirishlar.push({ manba: 'Mahalliy OAuth', sabab: natija.sabab })
       continue
     }
-    const { providerId, credential } = natija.topilma
+    const { providerId, manba, credential } = natija.topilma
+    manbalar.set(providerId, manba)
     try {
       await ombor.modify(providerId, async (hozirgi) => {
         // Omborda allaqachon yangiroq token bo'lsa — tegmaymiz. pi-ai uni

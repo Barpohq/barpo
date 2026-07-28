@@ -23,6 +23,7 @@ function model(id: string, provider = 'p'): ModelInfo {
     vision: false,
     cost: { input: 1, output: 1 },
     manba: 'kalit',
+    manbaTuri: 'kalit',
   }
 }
 

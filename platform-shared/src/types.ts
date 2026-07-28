@@ -242,6 +242,18 @@ export interface BuildPlan {
 // AI modellari — server foydalanuvchi PC'sida aniqlaganlarini shu shaklda beradi
 // ---------------------------------------------------------------------------
 
+/**
+ * Provider qanday to'lov modeli bilan ulangani.
+ *
+ * Foydalanuvchi uchun bu narxdan ham muhim: `obuna` da tokenlar oylik to'lovga
+ * kiradi, `kalit` da esa har token alohida hisoblanadi. Ikkalasi bir xil
+ * ko'rinsa foydalanuvchi bilmay pullik kanaldan ishlatib yuboradi.
+ *
+ * UI matn tahlil qilmasligi uchun alohida maydon — `manba` satri erkin matn
+ * (masalan `~/.codex (ChatGPT obunasi)`) va o'zgarishi mumkin.
+ */
+export type ManbaTuri = 'obuna' | 'kalit' | 'mahalliy'
+
 /** Bitta ishlatishga tayyor model (provideri sozlangan) */
 export interface ModelInfo {
   /** Provider id: 'openrouter', 'ollama', 'anthropic' ... */
@@ -261,6 +273,8 @@ export interface ModelInfo {
   cost: { input: number; output: number }
   /** Kalit qayerdan topilgani: 'OPENROUTER_API_KEY', 'Ollama (mahalliy)' ... */
   manba: string
+  /** To'lov modeli — obuna / API kaliti / mahalliy */
+  manbaTuri: ManbaTuri
 }
 
 /** Aniqlangan provider — model tanlagichda guruh sarlavhasi uchun */
@@ -268,6 +282,8 @@ export interface ProviderInfo {
   id: string
   name: string
   manba: string
+  /** To'lov modeli — obuna / API kaliti / mahalliy */
+  manbaTuri: ManbaTuri
   /** Nechta modeli mavjud */
   modelSoni: number
 }
