@@ -64,6 +64,77 @@ describe('frontmatter', () => {
   })
 })
 
+describe('blok skalari (|, >) — anthropics/skills da uchraydi', () => {
+  test('`|-` ko\'p qatorli tavsif to\'liq o\'qiladi', () => {
+    // `claude-api` skilli aynan shu shaklda. Ilgari tavsif "|-" bo'lib
+    // qolardi va model skillni qachon ishlatishni bilmasdi.
+    const n = skillFayliniTahlil(
+      [
+        '---',
+        'name: claude-api',
+        'description: |-',
+        '  Birinchi qator matni.',
+        '  Ikkinchi qator matni.',
+        'license: MIT',
+        '---',
+        '',
+        '# Tana',
+      ].join('\n'),
+      'claude-api',
+    )
+    expect(n?.tavsif).toBe('Birinchi qator matni.\nIkkinchi qator matni.')
+    expect(n?.litsenziya).toBe('MIT')
+    expect(n?.matn).toBe('# Tana')
+  })
+
+  test('`|` chomping\'siz ham ishlaydi', () => {
+    const n = skillFayliniTahlil(
+      ['---', 'name: x', 'description: |', '  Matn shu yerda.', '---'].join('\n'),
+      'x',
+    )
+    expect(n?.tavsif).toBe('Matn shu yerda.')
+  })
+
+  test('`>` buklangan blok bitta satrga qo\'shiladi', () => {
+    const n = skillFayliniTahlil(
+      ['---', 'name: x', 'description: >-', '  Bir', '  ikki', '---'].join('\n'),
+      'x',
+    )
+    expect(n?.tavsif).toBe('Bir ikki')
+  })
+
+  test('blok ichidagi bo\'sh qator abzasni ajratadi', () => {
+    const n = skillFayliniTahlil(
+      ['---', 'name: x', 'description: |-', '  Bir', '', '  Ikki', '---'].join('\n'),
+      'x',
+    )
+    expect(n?.tavsif).toContain('Bir')
+    expect(n?.tavsif).toContain('Ikki')
+  })
+
+  test('blokdan keyingi kalitlar to\'g\'ri o\'qiladi', () => {
+    const n = skillFayliniTahlil(
+      [
+        '---',
+        'description: |-',
+        '  Tavsif matni',
+        'name: keyingi-kalit',
+        'allowed-tools: [read]',
+        '---',
+      ].join('\n'),
+      'papka',
+    )
+    expect(n?.tavsif).toBe('Tavsif matni')
+    expect(n?.nom).toBe('keyingi-kalit')
+    expect(n?.allowedTools).toEqual(['read'])
+  })
+
+  test('bo\'sh blok skill\'ni yiqitmaydi', () => {
+    // description bo'sh qoladi → null (tavsifsiz skill qabul qilinmaydi)
+    expect(skillFayliniTahlil(['---', 'name: x', 'description: |-', '---'].join('\n'), 'x')).toBeNull()
+  })
+})
+
 describe('allowed-tools', () => {
   test('inline ro\'yxat', () => {
     const n = skillFayliniTahlil(

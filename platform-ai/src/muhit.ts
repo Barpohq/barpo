@@ -28,7 +28,7 @@ import {
   type Result,
   type ShellExecOptions,
 } from '@earendil-works/pi-agent-core/node'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { buyruqniBahola } from './buyruq-tahlil.ts'
 import type { RuxsatBoshqaruvchi } from './ruxsat.ts'
 
@@ -81,8 +81,25 @@ export class ChegaralanganMuhit implements ExecutionEnv {
   private ruxsatEtilgan = new Set<string>()
 
   constructor(sozlama: ChegaralanganMuhitSozlamalari) {
-    this.cwd = sozlama.ishPapkasi
-    this.ichki = sozlama.ichki ?? new NodeExecutionEnv({ cwd: sozlama.ishPapkasi })
+    // Ish papkasining O'ZI ham kanonizatsiya qilinadi.
+    //
+    // Sabab: yo'l tekshiruvi `canonicalPath` bilan solishtiriladi, ya'ni
+    // chegaraning ikkala tomoni bir xil shaklda bo'lishi kerak. macOS'da
+    // `/var/...` aslida `/private/var/...` ga symlink — chegara xom yo'lda
+    // qolsa, ish papkasi ICHIDAGI har fayl "tashqarida" ko'rinib, agent
+    // o'z papkasidagi faylni o'qishga ham ruxsat so'rardi.
+    //
+    // Xato bo'lsa (papka hali yo'q) xom yo'l qoladi — bu himoyani
+    // zaiflashtirmaydi, chunki tekshiruv baribir prefiks bo'yicha ishlaydi.
+    let cwd = sozlama.ishPapkasi
+    try {
+      cwd = realpathSync(sozlama.ishPapkasi)
+    } catch {
+      // papka hali yaratilmagan — xom yo'l bilan davom etamiz
+    }
+
+    this.cwd = cwd
+    this.ichki = sozlama.ichki ?? new NodeExecutionEnv({ cwd })
     this.ruxsat = sozlama.ruxsat
     this.buyruqTimeoutMs = sozlama.buyruqTimeoutMs ?? STANDART_BUYRUQ_TIMEOUT_MS
   }

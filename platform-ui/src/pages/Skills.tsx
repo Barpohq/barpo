@@ -8,7 +8,7 @@
 // O'rnatish modalida qamrov tanlanadi. O'rnatilgan skillda ham o'sha modal
 // ochiladi — qamrovni keyin o'zgartirish uchun alohida oqim kerak emas.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Project, Skill, SkillManba } from '@platforma/shared'
 import {
   ApiXatosi,
@@ -61,8 +61,9 @@ function QamrovModal({
   }
 
   return (
+    // z-60: tafsilot modali ustida ochilsin (u z-50 da)
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-60 flex items-center justify-center bg-bg/70 p-4 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -165,6 +166,147 @@ function QamrovModal({
           </div>
         </div>
       </Card>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Tafsilot modali
+// ---------------------------------------------------------------------------
+
+/**
+ * Skillning TO'LIQ ma'lumoti.
+ *
+ * Kartada tavsif ataylab qisqartiriladi (kartalar bir xil balandlikda
+ * qolsin), shuning uchun to'liq matnni ko'rishning yo'li kerak. `docx`
+ * kabi skilllarda tavsif 900+ belgi bo'ladi.
+ */
+function TafsilotModal({
+  skill,
+  manbaNomi,
+  loyihaNomi,
+  onClose,
+  onQamrov,
+}: {
+  skill: Skill
+  manbaNomi: string
+  loyihaNomi: (id: string) => string
+  onClose: () => void
+  onQamrov: () => void
+}) {
+  const global = skill.ornatilgan.some((o) => o.qamrov === 'global')
+  const loyihalar = skill.ornatilgan.filter((o) => o.qamrov === 'loyiha' && o.projectId)
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${skill.nom} tafsiloti`}
+    >
+      {/* `Card` onClick qabul qilmaydi (umumiy komponent), shuning uchun
+          tashqi div bilan o'raymiz — modal ichiga bosilganda yopilmasin */}
+      <div
+        className="rise-in flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-panel p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-semibold">{skill.nom}</h2>
+            <p className="mt-0.5 font-mono text-xs text-faint">{manbaNomi}</p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Yopish"
+            className="shrink-0 rounded-lg border border-line px-2 py-1 text-sm text-muted transition hover:text-ink"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Uzun tavsif shu yerda scroll bo'ladi — modal o'zi cho'zilmaydi */}
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted">{skill.tavsif}</p>
+
+          <dl className="mt-5 space-y-3 border-t border-line pt-4 text-sm">
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wider text-faint">Fayl</dt>
+              <dd className="mt-1 break-all font-mono text-[12px] text-muted">{skill.yol}</dd>
+            </div>
+
+            {skill.litsenziya && (
+              <div>
+                <dt className="text-xs font-medium uppercase tracking-wider text-faint">Litsenziya</dt>
+                <dd className="mt-1 text-muted">{skill.litsenziya}</dd>
+              </div>
+            )}
+
+            {skill.allowedTools && skill.allowedTools.length > 0 && (
+              <div>
+                <dt className="text-xs font-medium uppercase tracking-wider text-faint">
+                  So'ralgan tool'lar
+                </dt>
+                <dd className="mt-1.5 flex flex-wrap gap-1.5">
+                  {skill.allowedTools.map((t) => (
+                    <span key={t} className="rounded-md bg-panel2 px-2 py-0.5 font-mono text-[11px] text-muted">
+                      {t}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            )}
+
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wider text-faint">Qamrov</dt>
+              <dd className="mt-1 text-muted">
+                {global && <div className="text-mint">✓ Global — hamma joyda</div>}
+                {loyihalar.map((o) => (
+                  <div key={o.projectId} className="text-mint">
+                    ✓ {loyihaNomi(o.projectId!)}
+                  </div>
+                ))}
+                {!global && loyihalar.length === 0 && <span className="text-faint">o'rnatilmagan</span>}
+              </dd>
+            </div>
+
+            {skill.ogohlantirishlar.length > 0 && (
+              <div>
+                <dt className="text-xs font-medium uppercase tracking-wider text-gold">
+                  Ogohlantirishlar
+                </dt>
+                <dd className="mt-1.5">
+                  <ul className="space-y-1 text-[13px] text-muted">
+                    {skill.ogohlantirishlar.map((o, i) => (
+                      <li key={i}>• {o}</li>
+                    ))}
+                  </ul>
+                  {/* Ogohlantirish skill ishlashiga to'sqinlik qilmaydi —
+                      buni ochiq aytamiz, aks holda foydalanuvchi xato deb o'ylaydi */}
+                  <p className="mt-2 text-[11px] leading-relaxed text-faint">
+                    Bular spec bilan nomuvofiqliklar. Skill baribir ishlaydi.
+                  </p>
+                </dd>
+              </div>
+            )}
+          </dl>
+        </div>
+
+        <div className="mt-5 flex shrink-0 justify-end gap-2 border-t border-line pt-4">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-line px-4 py-2 text-sm text-muted transition hover:text-ink"
+          >
+            Yopish
+          </button>
+          <button
+            onClick={onQamrov}
+            className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110"
+          >
+            {global || loyihalar.length > 0 ? "Qamrovni o'zgartirish" : "O'rnatish"}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -310,16 +452,26 @@ export default function Skills() {
   const [yuklanmoqda, setYuklanmoqda] = useState(true)
   const [xato, setXato] = useState<string | null>(null)
   const [modal, setModal] = useState<Skill | null>(null)
+  const [tafsilot, setTafsilot] = useState<Skill | null>(null)
 
-  const yukla = async () => {
+  // Qidiruv va filtrlar. Bir necha repo ulansa katalog yuzlab skillga
+  // yetadi — ro'yxatni ko'z bilan ko'rib chiqish imkonsiz bo'ladi.
+  const [qidiruv, setQidiruv] = useState('')
+  const [holatFiltri, setHolatFiltri] = useState<'hammasi' | 'ornatilgan' | 'ornatilmagan'>('hammasi')
+  const [manbaFiltri, setManbaFiltri] = useState<string>('hammasi')
+
+  /** Yangi ro'yxatni ham QAYTARADI — chaqiruvchi ochiq modalni yangilay olsin */
+  const yukla = async (): Promise<Skill[] | null> => {
     try {
       const [katalog, loyiha] = await Promise.all([skilllarniOl(), loyihalarOl()])
       setSkilllar(katalog.skills)
       setManbalar(katalog.manbalar)
       setLoyihalar(loyiha)
       setXato(null)
+      return katalog.skills
     } catch (x) {
       setXato(x instanceof ApiXatosi ? x.message : "Ma'lumotni olib bo'lmadi")
+      return null
     } finally {
       setYuklanmoqda(false)
     }
@@ -349,7 +501,13 @@ export default function Skills() {
     if (!global && eskiGlobal) await skillOrnatishniBekor(skill.id, 'global')
     if (ochiriladigan.length > 0) await skillOrnatishniBekor(skill.id, 'loyiha', ochiriladigan)
 
-    await yukla()
+    const yangi = await yukla()
+
+    // Tafsilot modali ochiq bo'lsa uni YANGI obyektga bog'laymiz — aks
+    // holda u eski `ornatilgan` ro'yxatini ko'rsatib turardi
+    setTafsilot((oldingi) =>
+      oldingi ? (yangi?.find((s) => s.id === oldingi.id) ?? oldingi) : null,
+    )
   }
 
   const qamrovMatni = (skill: Skill): string => {
@@ -366,6 +524,42 @@ export default function Skills() {
     return m ? `${m.owner}/${m.repo}` : ''
   }
 
+  const loyihaNomi = (id: string): string => loyihalar.find((l) => l.id === id)?.name ?? id
+
+  /**
+   * Qidiruv + filtrlar.
+   *
+   * Qidiruv NOM va TAVSIF bo'yicha: foydalanuvchi ko'pincha skill nomini
+   * emas, vazifasini eslaydi ("word", "pdf", "prezentatsiya"). Tavsif
+   * ingliz tilida bo'lgani uchun nom bo'yicha qidiruv yolg'iz yetarli emas.
+   *
+   * So'zlar ALOHIDA tekshiriladi (`AND`): "word doc" yozilsa ikkala so'z
+   * ham bo'lgan skill topiladi, tartibi muhim emas.
+   */
+  const korinadigan = useMemo(() => {
+    const sozlar = qidiruv.toLowerCase().split(/\s+/).filter(Boolean)
+
+    return skilllar.filter((s) => {
+      if (holatFiltri === 'ornatilgan' && s.ornatilgan.length === 0) return false
+      if (holatFiltri === 'ornatilmagan' && s.ornatilgan.length > 0) return false
+      if (manbaFiltri !== 'hammasi' && s.manbaId !== manbaFiltri) return false
+
+      if (sozlar.length === 0) return true
+      const matn = `${s.nom} ${s.tavsif}`.toLowerCase()
+      return sozlar.every((soz) => matn.includes(soz))
+    })
+  }, [skilllar, qidiruv, holatFiltri, manbaFiltri])
+
+  const filtrBor = qidiruv.trim() !== '' || holatFiltri !== 'hammasi' || manbaFiltri !== 'hammasi'
+
+  const filtrlarniTozala = () => {
+    setQidiruv('')
+    setHolatFiltri('hammasi')
+    setManbaFiltri('hammasi')
+  }
+
+  const ornatilganSoni = skilllar.filter((s) => s.ornatilgan.length > 0).length
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <PageHead
@@ -381,6 +575,75 @@ export default function Skills() {
         </Card>
       )}
 
+      {/* Qidiruv paneli — katalog bo'sh bo'lmaganda ko'rinadi */}
+      {!yuklanmoqda && skilllar.length > 0 && (
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <div className="relative min-w-55 flex-1">
+            <input
+              value={qidiruv}
+              onChange={(e) => setQidiruv(e.target.value)}
+              placeholder="Qidirish: nom yoki vazifa (word, pdf, deploy…)"
+              aria-label="Skilllar ichida qidirish"
+              className="w-full rounded-lg border border-line bg-bg py-2 pl-9 pr-8 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
+            />
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-faint" aria-hidden>
+              ⌕
+            </span>
+            {qidiruv && (
+              <button
+                onClick={() => setQidiruv('')}
+                aria-label="Qidiruvni tozalash"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-faint transition hover:text-ink"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <select
+            value={holatFiltri}
+            onChange={(e) => setHolatFiltri(e.target.value as typeof holatFiltri)}
+            aria-label="Holat bo'yicha filtr"
+            className="rounded-lg border border-line bg-bg px-3 py-2 text-sm text-muted outline-none focus:border-lazur-dim"
+          >
+            <option value="hammasi">Hammasi ({skilllar.length})</option>
+            <option value="ornatilgan">O'rnatilgan ({ornatilganSoni})</option>
+            <option value="ornatilmagan">O'rnatilmagan ({skilllar.length - ornatilganSoni})</option>
+          </select>
+
+          {/* Manba filtri faqat bir nechta repo ulanganda ma'noli */}
+          {manbalar.length > 1 && (
+            <select
+              value={manbaFiltri}
+              onChange={(e) => setManbaFiltri(e.target.value)}
+              aria-label="Manba bo'yicha filtr"
+              className="max-w-50 rounded-lg border border-line bg-bg px-3 py-2 text-sm text-muted outline-none focus:border-lazur-dim"
+            >
+              <option value="hammasi">Barcha manbalar</option>
+              {manbalar.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.owner}/{m.repo}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {filtrBor && (
+            <>
+              <span className="text-sm text-faint">
+                {korinadigan.length} / {skilllar.length}
+              </span>
+              <button
+                onClick={filtrlarniTozala}
+                className="rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:text-ink"
+              >
+                Tozalash
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {yuklanmoqda ? (
         <p className="text-sm text-muted">Yuklanmoqda…</p>
       ) : skilllar.length === 0 ? (
@@ -390,9 +653,25 @@ export default function Skills() {
             <code className="font-mono text-xs text-ink">anthropics/skills</code>.
           </p>
         </Card>
+      ) : korinadigan.length === 0 ? (
+        // Filtr hech narsa topmadi — bu bo'sh katalogdan BOSHQA holat,
+        // shuning uchun xabar ham boshqacha
+        <Card className="p-8 text-center">
+          <p className="text-sm text-muted">Hech narsa topilmadi.</p>
+          <button
+            onClick={filtrlarniTozala}
+            className="mt-3 text-sm text-lazur transition hover:brightness-125"
+          >
+            Filtrlarni tozalash
+          </button>
+        </Card>
       ) : (
+        // `items-start` YO'Q: grid hujayralari cho'zilib, bir qatordagi
+        // kartalar bir xil balandlikda qoladi. Tavsif esa 4 qatorga
+        // qisqartiriladi (`line-clamp-4`) — `docx` ning 900 belgilik matni
+        // butun qatorni cho'zib yubormasin.
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {skilllar.map((s) => {
+          {korinadigan.map((s) => {
             const qamrov = qamrovMatni(s)
             return (
               <Card key={s.id} className="flex flex-col p-5">
@@ -408,13 +687,25 @@ export default function Skills() {
                   )}
                 </div>
 
-                <p className="mt-2 flex-1 text-sm leading-relaxed text-muted">{s.tavsif}</p>
+                {/* `flex-1` bo'sh joyni yeydi — pastki qator hamma kartada
+                    bir xil balandlikda tursin */}
+                <div className="mt-2 flex-1">
+                  <p className="line-clamp-4 text-sm leading-relaxed text-muted">{s.tavsif}</p>
+                  <button
+                    onClick={() => setTafsilot(s)}
+                    className="mt-1.5 text-xs text-lazur transition hover:brightness-125"
+                  >
+                    Batafsil →
+                  </button>
+                </div>
 
                 <div className="mt-3 font-mono text-[11px] text-faint">{manbaNomi(s.manbaId)}</div>
 
-                <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3">
                   {qamrov ? (
-                    <span className="text-sm text-mint">✓ {qamrov}</span>
+                    <span className="truncate text-sm text-mint" title={qamrov}>
+                      ✓ {qamrov}
+                    </span>
                   ) : (
                     <span className="text-xs text-faint">o'rnatilmagan</span>
                   )}
@@ -422,8 +713,8 @@ export default function Skills() {
                     onClick={() => setModal(s)}
                     className={
                       qamrov
-                        ? 'rounded-lg border border-line px-3 py-1.5 text-sm text-muted transition hover:text-ink'
-                        : 'rounded-lg border border-lazur-dim px-3 py-1.5 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg'
+                        ? 'shrink-0 rounded-lg border border-line px-3 py-1.5 text-sm text-muted transition hover:text-ink'
+                        : 'shrink-0 rounded-lg border border-lazur-dim px-3 py-1.5 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg'
                     }
                   >
                     {qamrov ? "O'zgartirish" : "O'rnatish"}
@@ -433,6 +724,18 @@ export default function Skills() {
             )
           })}
         </div>
+      )}
+
+      {/* Tafsilot ostida turadi: undan "O'rnatish" bosilsa qamrov modali
+          ustiga ochiladi va yopilgach tafsilot ko'rinib qoladi */}
+      {tafsilot && (
+        <TafsilotModal
+          skill={tafsilot}
+          manbaNomi={manbaNomi(tafsilot.manbaId)}
+          loyihaNomi={loyihaNomi}
+          onClose={() => setTafsilot(null)}
+          onQamrov={() => setModal(tafsilot)}
+        />
       )}
 
       {modal && (

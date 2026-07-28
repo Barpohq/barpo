@@ -51,9 +51,15 @@ export interface SkillFayl {
  * Frontmatter'ning MINIMAL YAML tahlili.
  *
  * Qo'llab-quvvatlanadi: `kalit: qiymat`, `[a, b]` inline ro'yxat, `- element`
- * blok ro'yxati, `"` va `'` qo'shtirnoq, `#` izoh.
- * Qo'llab-quvvatlanmaydi: ichma-ich obyekt, ko'p qatorli `|`/`>` bloklar,
- * anchor. Bular uchraganda qiymat xom satr bo'lib qoladi — yiqilmaydi.
+ * blok ro'yxati, `|` / `>` blok skalarlari (`-`/`+` chomping bilan),
+ * `"` va `'` qo'shtirnoq, `#` izoh.
+ * Qo'llab-quvvatlanmaydi: ichma-ich obyekt, anchor. Bular uchraganda qiymat
+ * xom satr bo'lib qoladi — yiqilmaydi.
+ *
+ * Blok skalari ALOHIDA MUHIM: `anthropics/skills` dagi `claude-api`
+ * aynan shu shaklni ishlatadi (`description: |-`). Usiz tavsif `|-` degan
+ * ikki belgi bo'lib qolardi — skill yuklanardi, lekin model uni qachon
+ * ishlatishni bilmasdi.
  */
 function frontmatterTahlil(xom: string): Record<string, string | string[]> {
   const natija: Record<string, string | string[]> = {}
@@ -71,6 +77,47 @@ function frontmatterTahlil(xom: string): Record<string, string | string[]> {
     const kalit = qator.slice(0, ikkiNuqta).trim()
     let qiymat = qator.slice(ikkiNuqta + 1).trim()
     if (!kalit) continue
+
+    // Blok skalari: `|`, `|-`, `|+`, `>`, `>-`, `>+`
+    //
+    // `|` — qatorlar saqlanadi, `>` — bitta satrga qo'shiladi (folded).
+    // Bizga tavsif kerak, u promptga bitta abzas bo'lib tushadi, shuning
+    // uchun ikkalasi ham bo'sh qator chegarasida birlashtiriladi.
+    const blok = /^([|>])([-+]?)(\d*)$/.exec(qiymat)
+    if (blok) {
+      const buklangan = blok[1] === '>'
+      const qatorlarBloki: string[] = []
+
+      // Blok tanasi — YUQORI DARAJADAGI keyingi kalitgacha bo'lgan
+      // chekinishli qatorlar. Bo'sh qator ham blokka tegishli.
+      while (i + 1 < qatorlar.length) {
+        const keyingi = qatorlar[i + 1] ?? ''
+        if (keyingi.trim() && !/^\s/.test(keyingi)) break
+        qatorlarBloki.push(keyingi)
+        i++
+      }
+
+      // Eng kichik chekinishni topib olib tashlaymiz. Blok bo'sh bo'lsa
+      // `Math.min()` → Infinity, shuning uchun 0 ga tushiramiz.
+      const chekinishlar = qatorlarBloki
+        .filter((q) => q.trim())
+        .map((q) => q.length - q.trimStart().length)
+      const chekinish = chekinishlar.length > 0 ? Math.min(...chekinishlar) : 0
+      const toza = qatorlarBloki.map((q) => (q.trim() ? q.slice(chekinish) : ''))
+
+      natija[kalit] = buklangan
+        ? // Folded: qo'shni qatorlar bo'shliq bilan qo'shiladi, bo'sh qator
+          // abzas chegarasi bo'ladi
+          toza
+            .join('\n')
+            .split(/\n\s*\n/)
+            .map((abzas) => abzas.split('\n').join(' ').trim())
+            .filter(Boolean)
+            .join('\n')
+            .trim()
+        : toza.join('\n').trim()
+      continue
+    }
 
     // Qiymat bo'sh → keyingi qatorlarda blok ro'yxati bo'lishi mumkin
     if (!qiymat) {

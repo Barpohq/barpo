@@ -4,7 +4,7 @@
 // boshqaruvchi bilan sinaydi, shunda haqiqiy UI kerak emas.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RuxsatBoshqaruvchi } from '../src/ruxsat.ts'
@@ -212,7 +212,9 @@ describe('buyruq bajarish', () => {
   test('buyruq ish papkasida boshlanadi', async () => {
     const m = muhitYarat('rad')
     const r = await m.exec('pwd')
-    expect(r.ok && r.value.stdout.trim()).toBe(ish)
+    // `realpathSync` bilan solishtiramiz: muhit ish papkasini kanonizatsiya
+    // qiladi (macOS'da /var → /private/var), `pwd` ham kanonik yo'l beradi
+    expect(r.ok && r.value.stdout.trim()).toBe(realpathSync(ish))
   })
 
   test('rad etilgan buyruq xato xabari tushunarli', async () => {

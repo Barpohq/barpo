@@ -57,15 +57,25 @@ export function manzilniAjrat(xom: string): GithubManzil | null {
 
   const [owner, repo, ...qolgan] = bolaklar
   if (!owner || !repo) return null
-  // Nom qoidasi: GitHub `[A-Za-z0-9._-]` ga ruxsat beradi
-  if (!/^[A-Za-z0-9._-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) return null
+
+  // Nom qoidasi: GitHub `[A-Za-z0-9._-]` ga ruxsat beradi. Nuqta kerak
+  // (`repo.js` kabi nomlar bor), lekin FAQAT nuqtadan iborat bo'lak (`.`,
+  // `..`) taqiqlanadi — u API URL'ida yo'l bo'lagi bo'lib siljitib
+  // yuborardi (`/repos/../etc` → boshqa endpoint).
+  const nomToger = (x: string) => /^[A-Za-z0-9._-]+$/.test(x) && !/^\.+$/.test(x)
+  if (!nomToger(owner) || !nomToger(repo)) return null
 
   // `/tree/<ref>/...` yoki `/blob/<ref>/...`
   let ref = ''
   if ((qolgan[0] === 'tree' || qolgan[0] === 'blob') && qolgan[1]) {
     ref = qolgan.slice(1).join('/')
   }
-  if (ref && !/^[A-Za-z0-9._\/-]+$/.test(ref)) return null
+  // Ref API URL'iga qo'shiladi (`/commits/<ref>`), shuning uchun `..`
+  // bo'lagi taqiqlanadi — aks holda yo'l boshqa endpoint'ga siljib ketardi
+  if (ref) {
+    if (!/^[A-Za-z0-9._\/-]+$/.test(ref)) return null
+    if (ref.split('/').some((b) => /^\.+$/.test(b))) return null
+  }
 
   return { owner, repo, ref }
 }
