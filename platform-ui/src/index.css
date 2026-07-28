@@ -50,6 +50,14 @@ body {
   border-radius: 4px;
 }
 
+/* Fokus halqasini o'rab turgan konteyner chizadigan joylar (masalan chat
+   kiritish formasi `focus-within` orqali) — ichki maydonda ikkinchi halqa
+   ustma-ust tushmasin. Qatlamsiz qoida Tailwind utility'sidan ustun turgani
+   uchun bekor qilish ham shu yerda bo'lishi kerak. */
+.fokus-tashqarida:focus-visible {
+  outline: none;
+}
+
 /* Yupqa scrollbar — loglar va jadval panellari uchun */
 .thin-scroll::-webkit-scrollbar {
   width: 6px;

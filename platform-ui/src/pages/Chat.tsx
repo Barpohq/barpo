@@ -20,6 +20,7 @@ import type {
   RuxsatSorovi,
   ToolChaqiruv,
 } from '@platforma/shared'
+import Markdown from '../components/Markdown'
 import ModelTanlagich from '../components/ModelTanlagich'
 import RejimAlmashtirgich from '../components/RejimAlmashtirgich'
 import RejimKartasi from '../components/RejimKartasi'
@@ -47,6 +48,9 @@ interface Msg {
   oqmoqda?: boolean
   xato?: string
 }
+
+/** Kiritish maydoni shundan oshmaydi — ~8 qator, keyin ichida aylanadi */
+const KIRITISH_MAX_BALANDLIK = 200
 
 const takliflar = [
   'Salom! O\'zingni tanishtir',
@@ -78,6 +82,7 @@ export default function Chat({ pro }: ChatProps) {
   const [ruxsatJavoblari, setRuxsatJavoblari] = useState<Record<string, RuxsatJavobi>>({})
   const [rejim, setRejim] = useState<RejimHolati>({ rejim: 'tasdiq' })
   const endRef = useRef<HTMLDivElement>(null)
+  const kiritishRef = useRef<HTMLTextAreaElement>(null)
   // Hozir javob kutilayotgan xabar id'si — WS eventlari shu bo'yicha topiladi
   const kutilayotgan = useRef<string | null>(null)
 
@@ -202,6 +207,15 @@ export default function Chat({ pro }: ChatProps) {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [msgs])
+
+  // Textarea balandligi matnga moslashadi. Avval `auto` — aks holda scrollHeight
+  // hech qachon kamaymaydi va maydon qatorlar o'chirilganda ham baland qoladi.
+  useEffect(() => {
+    const el = kiritishRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, KIRITISH_MAX_BALANDLIK)}px`
+  }, [input])
 
   useEffect(() => {
     if (!toast) return
@@ -341,7 +355,7 @@ export default function Chat({ pro }: ChatProps) {
           {msgs.map((m) =>
             m.role === 'user' ? (
               <div key={m.id} className="rise-in flex justify-end">
-                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-panel2 px-4 py-2.5 text-[15px]">
+                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-panel2 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
                   {m.text}
                 </div>
               </div>
@@ -351,10 +365,12 @@ export default function Chat({ pro }: ChatProps) {
                   <ToolKartasi key={t.id} tool={t} />
                 ))}
                 {m.text && (
-                  <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                    {m.text}
-                    {m.oqmoqda && <span className="cursor-blink text-lazur">▍</span>}
-                  </p>
+                  <>
+                    <Markdown matn={m.text} />
+                    {m.oqmoqda && (
+                      <span className="cursor-blink -mt-1 inline-block text-lazur">▍</span>
+                    )}
+                  </>
                 )}
                 {!m.text && m.oqmoqda && (
                   <p className="text-[15px] text-faint">
@@ -410,21 +426,32 @@ export default function Chat({ pro }: ChatProps) {
               e.preventDefault()
               void send()
             }}
-            className="flex items-center gap-2 rounded-2xl border border-line bg-panel px-4 py-2 transition focus-within:border-lazur-dim"
+            className="flex items-end gap-2 rounded-2xl border border-line bg-panel px-4 py-2 transition focus-within:border-lazur-dim"
           >
-            <input
+            <textarea
+              ref={kiritishRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter yuboradi, Shift+Enter yangi qator. IME (masalan xitoycha
+                // klaviatura) hali so'zni tasdiqlamagan bo'lsa aralashmaymiz.
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault()
+                  void send()
+                }
+              }}
+              rows={1}
               placeholder={tanlangan ? 'Xabaringizni yozing…' : 'Avval model tanlang…'}
               aria-label="Xabar"
               disabled={!tanlangan}
-              className="flex-1 bg-transparent py-1.5 text-[15px] outline-none placeholder:text-faint disabled:cursor-not-allowed"
+              // `fokus-tashqarida`: halqani form o'rami chizadi (focus-within)
+              className="thin-scroll fokus-tashqarida flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-relaxed outline-none placeholder:text-faint disabled:cursor-not-allowed"
             />
             {busy ? (
               <button
                 type="button"
                 onClick={() => void toxtat()}
-                className="rounded-xl border border-line px-4 py-1.5 text-sm text-muted transition hover:border-coral hover:text-coral"
+                className="mb-0.5 shrink-0 rounded-xl border border-line px-4 py-1.5 text-sm text-muted transition hover:border-coral hover:text-coral"
               >
                 To'xtatish
               </button>
@@ -432,7 +459,7 @@ export default function Chat({ pro }: ChatProps) {
               <button
                 type="submit"
                 disabled={!input.trim() || !tanlangan}
-                className="rounded-xl bg-lazur-dim px-4 py-1.5 text-sm font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
+                className="mb-0.5 shrink-0 rounded-xl bg-lazur-dim px-4 py-1.5 text-sm font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
               >
                 Yuborish
               </button>
