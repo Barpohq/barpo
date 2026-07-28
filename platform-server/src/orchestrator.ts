@@ -21,10 +21,13 @@ import {
   rejimBoshqaruvchisi,
   ruxsatBoshqaruvchisi,
   suhbatOqimi,
+  XOTIRA_PAPKASI,
   type SaqlanganXabar,
   type SuhbatXabari,
 } from '@platforma/ai'
 import { config } from '@platforma/config'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   ModelTanlovi,
   OqimHolati,
@@ -71,6 +74,31 @@ function skilllarniTayyorla(sessionId: string, papka: string): void {
     loyihagaSinxronla(papka, faolSkilllar(sessiya?.projectId ?? null))
   } catch {
     // jim o'tamiz — sabab yuqoridagi izohda
+  }
+}
+
+/**
+ * Xotira papkasini yaratadi (`.platforma/memory/`).
+ *
+ * Skilllardan MUHIM FARQ: bu papka SINXRONLANMAYDI. Skilllarning haqiqat
+ * manbai baza va ortiqcha papka o'chiriladi; xotirani esa agentning o'zi
+ * yozadi va uni hech kim o'chirmaydi. Bu yerda faqat papka MAVJUDLIGI
+ * kafolatlanadi.
+ *
+ * Nega oldindan yaratamiz: `write` tool'i yo'q papkaga yozganda uni o'zi
+ * yaratadi, lekin bo'sh papkani `xotiralarniOqi` o'qiy olmasa promptga
+ * "hozircha xotira yo'q" tushadi va agent birinchi faylni yozishga
+ * urinadi — o'sha payt papka bo'lmasa ham ish bitadi. Ya'ni bu qat'iy shart
+ * emas, lekin papka borligi diskda tuzilmani ko'rinarli qiladi va agent
+ * `ls` bilan tekshirganda bo'sh papkani ko'radi.
+ *
+ * XATO TASHLAMAYDI — skilllardagi bilan bir xil qoida.
+ */
+function xotiraniTayyorla(papka: string): void {
+  try {
+    mkdirSync(join(papka, XOTIRA_PAPKASI), { recursive: true })
+  } catch {
+    // jim o'tamiz — xotirasiz ham suhbat to'liq ishlaydi
   }
 }
 
@@ -169,6 +197,10 @@ export async function javobOqizi(
   // o'rnatgan bo'lishi mumkin. Agent ro'yxatni `.platforma/skills/` dan
   // o'zi o'qiydi (`skill-yuklash.ts`).
   skilllarniTayyorla(sessionId, papka)
+
+  // Xotira papkasi — agent o'z yozuvlarini shu yerga qo'yadi. Sinxronlash
+  // yo'q, faqat papka mavjudligi kafolatlanadi (`xotiraniTayyorla` ga q.).
+  xotiraniTayyorla(papka)
 
   const tarix = tarixniTayyorla(sessionId)
   const toolKartalari = new Map<string, ToolChaqiruv>()

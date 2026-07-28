@@ -95,6 +95,21 @@ export {
   type YuklanganSkill,
 } from './skill-yuklash.ts'
 
+// --- Loyiha xotirasi: agent o'zi yozadigan uzoq muddatli faktlar ---
+
+export {
+  indeksniOqi,
+  XOTIRA_FAYL_CHEGARASI,
+  XOTIRA_INDEKS_CHEGARASI,
+  XOTIRA_INDEKSI,
+  XOTIRA_PAPKASI,
+  XOTIRA_SONI_CHEGARASI,
+  XOTIRA_TURLARI,
+  xotiralarniOqi,
+  xotiralarniPromptga,
+  type Xotira,
+} from './xotira.ts'
+
 // --- Kontekst: tool natijalari saqlanishi va siqish ---
 
 export {

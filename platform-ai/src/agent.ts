@@ -45,6 +45,7 @@ import {
 } from './kontekst.ts'
 import { kontekstniPromptga, loyihaKontekstiniOqi } from './loyiha-konteksti.ts'
 import { skilllarniOqi, skilllarniPromptga } from './skill-yuklash.ts'
+import { indeksniOqi, xotiralarniOqi, xotiralarniPromptga } from './xotira.ts'
 import { ChegaralanganMuhit } from './muhit.ts'
 import type { RejimBoshqaruvchi } from './rejim.ts'
 import { qidiruvToollariXom } from './qidiruv-toollari.ts'
@@ -142,13 +143,18 @@ const NATIJA_CHEGARASI = 2000
  * (`skill-yuklash.ts`). Faqat nom+tavsif+yo'l tushadi, to'liq matnni model
  * `read` bilan o'zi oladi.
  *
- * Ikkala matn ham KLASSIFIKATORGA BORMAYDI — u alohida prompt
+ * `xotira` — ish papkasidagi `.platforma/memory/` ro'yxati (`xotira.ts`).
+ * Skilllar bilan bir xil progressive disclosure, lekin bo'sh bo'lganda ham
+ * qo'shiladi: yozish qoidasi bo'lmasa agent mexanizm borligini bilmaydi.
+ *
+ * Uchala matn ham KLASSIFIKATORGA BORMAYDI — u alohida prompt
  * (`klassifikator.ts`) bilan ishlaydi va bu funksiyani umuman chaqirmaydi.
  */
 export const AGENT_SISTEM_PROMPT = (
   ishPapkasi: string,
   loyihaKonteksti?: string,
   skilllar?: string,
+  xotira?: string,
 ) =>
   [
     "Sen platformaning AI yordamchisisan. Foydalanuvchi bilan o'zbek tilida",
@@ -179,6 +185,7 @@ export const AGENT_SISTEM_PROMPT = (
     '',
     'Faylni tahrirlashdan oldin uni o\'qi. Bir vaqtda bitta tool ishlatasan.',
     ...(skilllar ? [skilllar] : []),
+    ...(xotira ? [xotira] : []),
     ...(loyihaKonteksti ? [loyihaKonteksti] : []),
   ].join('\n')
 
@@ -329,12 +336,26 @@ export async function* agentOqimi(
       // boshida server tayyorlaydi — bu yerda faqat o'qiymiz.
       const skilllar = skilllarniPromptga(skilllarniOqi(sozlama.ishPapkasi))
 
+      // Loyiha xotirasi (`.platforma/memory/`) — agentning o'z yozuvlari.
+      // Skilllardan farqli, hech kim sinxronlamaydi: fayllar o'sha yerda
+      // yashaydi. Klassifikatorga bormaydi (`xotira.ts` ga q.).
+      //
+      // Indeks (`MEMORY.md`) TO'LIQ tushadi, xotira fayllari — faqat
+      // nom+tavsif. Ikkalasi bir-birini to'ldiradi: indeks agentning o'z
+      // yo'l xaritasi, ro'yxat esa mashina qurgan to'liq katalog.
+      const xotira = xotiralarniPromptga(
+        xotiralarniOqi(sozlama.ishPapkasi),
+        sozlama.ishPapkasi,
+        indeksniOqi(sozlama.ishPapkasi),
+      )
+
       const agent = new Agent({
         initialState: {
           systemPrompt: AGENT_SISTEM_PROMPT(
             sozlama.ishPapkasi,
             loyihaKonteksti ? kontekstniPromptga(loyihaKonteksti) : undefined,
             skilllar ?? undefined,
+            xotira,
           ),
           model,
           tools: toollarniTayyorla(toolKonteksti, sozlamalar.agent.toollar.yoqilgan),
