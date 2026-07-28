@@ -1,81 +1,87 @@
-import { useEffect, useRef, useState } from 'react'
-import { agents, botLogLines } from '../data/mock'
-import { Card, PageHead, StatusDot } from '../ui'
+// Agentlar sahifasi — fonda ishlayotgan haqiqiy agent oqimlari.
+//
+// "Agent" bu yerda = oqim ketayotgan chat sessiyasi. Server tomonida oqim
+// allaqachon fon rejimida ishlaydi (orchestrator fire-and-forget), bu sahifa
+// esa uning ko'rinish qatlami: kim ishlayapti, kim ruxsat kutmoqda va
+// to'xtatish tugmasi.
+//
+// Ma'lumot manbai — `useIshlayotganlar()`: boshlang'ich ro'yxat REST'dan,
+// keyingi o'zgarishlar `chat.status` WS eventlaridan.
 
-function LogStream() {
-  const [n, setN] = useState(6)
-  const boxRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (n >= botLogLines.length) return
-    const t = setTimeout(() => setN((v) => v + 1), 1400)
-    return () => clearTimeout(t)
-  }, [n])
-
-  useEffect(() => {
-    boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight })
-  }, [n])
-
-  return (
-    <div ref={boxRef} className="thin-scroll h-64 overflow-y-auto bg-bg px-4 py-3 font-mono text-xs leading-relaxed">
-      {botLogLines.slice(0, n).map((l, i) => {
-        const warn = l.includes('403') || l.includes('takror')
-        return (
-          <div key={i} className={warn ? 'text-gold' : 'text-muted'}>
-            {l}
-          </div>
-        )
-      })}
-      {n < botLogLines.length && <span className="cursor-blink text-lazur">▍</span>}
-    </div>
-  )
-}
+import { useState } from 'react'
+import OqimIndikatori from '../components/OqimIndikatori'
+import { oqimniToxtat } from '../lib/api'
+import { useIshlayotganlar } from '../lib/ishlayotganlar'
+import { Card, PageHead } from '../ui'
 
 export default function Agents() {
+  const { ishlayotganlar, sarlavhalar, yuklanmoqda } = useIshlayotganlar()
+  /** To'xtatish so'rovi yuborilgan, lekin hali status kelmagan sessiyalar */
+  const [toxtatilayotgan, setToxtatilayotgan] = useState<Record<string, true>>({})
+
+  const royxat = Object.entries(ishlayotganlar)
+
+  async function toxtat(sessionId: string) {
+    setToxtatilayotgan((t) => ({ ...t, [sessionId]: true }))
+    try {
+      await oqimniToxtat(sessionId)
+      // Ro'yxatdan o'chirmaymiz — server yakuniy `chat.status` yuboradi va
+      // hook o'zi olib tashlaydi. Shunday qilib UI server bilan sinxron
+      // qoladi: to'xtatish ishlamasa sessiya ro'yxatda ko'rinib turaveradi.
+    } catch {
+      // Xato bo'lsa tugmani qaytaramiz — foydalanuvchi qayta urina olsin
+      setToxtatilayotgan((t) => {
+        const { [sessionId]: _olib, ...qolgan } = t
+        return qolgan
+      })
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
-      <PageHead title="Agentlar" sub="Platformada ishlayotgan avtonom agentlar — har biri o'z jadvali va byudjeti bilan" />
+      <PageHead
+        title="Agentlar"
+        sub="Fonda ishlayotgan agent oqimlari — har biri bitta suhbatga tegishli"
+      />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {agents.map((a) => (
-          <Card key={a.id} className="p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-mono text-[15px] font-semibold text-lazur">{a.name}</h2>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted">{a.desc}</p>
-              </div>
-              <StatusDot status={a.status} pulse={a.status === 'running'} />
-            </div>
+      {yuklanmoqda && royxat.length === 0 && (
+        <p className="text-sm text-faint">Yuklanmoqda…</p>
+      )}
 
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4">
-              {a.metrics.map((m) => (
-                <div key={m.label}>
-                  <dt className="text-[11px] uppercase tracking-wider text-faint">{m.label}</dt>
-                  <dd className="mt-0.5 font-mono text-lg font-semibold">{m.value}</dd>
+      {!yuklanmoqda && royxat.length === 0 && (
+        <Card className="px-6 py-10 text-center">
+          <p className="text-sm text-muted">Hozir hech qanday agent ishlamayapti.</p>
+          <p className="mt-1.5 text-xs text-faint">
+            Chatda xabar yuboring — oqim shu yerda jonli ko'rinadi.
+          </p>
+        </Card>
+      )}
+
+      {royxat.length > 0 && (
+        <div className="space-y-3">
+          {royxat.map(([sessionId, holat]) => (
+            <Card key={sessionId} className="flex items-center gap-4 p-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2.5">
+                  <h2 className="truncate font-mono text-sm font-semibold text-lazur">
+                    {sarlavhalar[sessionId] ?? 'Nomsiz suhbat'}
+                  </h2>
+                  <OqimIndikatori holat={holat} matnBilan />
                 </div>
-              ))}
-            </dl>
-
-            <div className="mt-4 space-y-1.5 border-t border-line pt-4 text-xs text-muted">
-              <div><span className="text-faint">Jadval:</span> {a.schedule}</div>
-              <div><span className="text-faint">Keyingi run:</span> {a.nextRun}</div>
-              <div><span className="text-faint">Modellar:</span> <span className="font-mono">{a.model}</span></div>
-              <div>
-                <span className="text-faint">Bugun:</span>{' '}
-                <span className="font-mono text-gold">${a.todayCost.toFixed(3)}</span> · {a.todayCalls} chaqiruv
+                <p className="mt-1 truncate font-mono text-[11px] text-faint">{sessionId}</p>
               </div>
-            </div>
-          </Card>
-        ))}
-      </div>
 
-      <Card className="mt-4 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-line px-5 py-3">
-          <h2 className="font-display text-sm font-semibold">ai-news-bot · jonli loglar</h2>
-          <span className="font-mono text-[11px] text-faint">run #212 · bugun</span>
+              <button
+                onClick={() => void toxtat(sessionId)}
+                disabled={toxtatilayotgan[sessionId]}
+                className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-xs text-muted transition enabled:hover:border-coral enabled:hover:text-coral disabled:opacity-40"
+              >
+                {toxtatilayotgan[sessionId] ? "To'xtatilmoqda…" : "To'xtatish"}
+              </button>
+            </Card>
+          ))}
         </div>
-        <LogStream />
-      </Card>
+      )}
     </div>
   )
 }

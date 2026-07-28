@@ -6,6 +6,7 @@
 import { app } from './app.ts'
 import { auditYoz } from './audit.ts'
 import { db } from './db.ts'
+import { chatSendHandleri } from './ws/chat-handler.ts'
 import { seedQol } from './seed.ts'
 import { hub, yangiUlanishHolati, type UlanishHolati } from './ws/hub.ts'
 
@@ -14,15 +15,24 @@ const PORT = Number(process.env.PORT ?? 8787)
 // 1) Baza: ochish + migratsiyalar (db() ichida avtomatik) + seed
 const baza = db()
 const seed = seedQol(baza)
-if (seed.servers || seed.skills || seed.audit || seed.apps) {
+if (seed.servers || seed.audit || seed.apps) {
   console.log(
     `[seed] boshlang'ich ma'lumot yozildi: ${seed.servers} server · ` +
-      `${seed.skills} skill · ${seed.audit} audit · ${seed.apps} ilova`,
+      `${seed.audit} audit · ${seed.apps} ilova`,
   )
 }
 
-// 2) Server: HTTP so'rovlari Hono'ga, /ws upgrade qilinadi
-const server = Bun.serve<UlanishHolati, Record<string, never>>({
+// 2) WS orqali kelgan chat.send eventlarini orchestratorga ulaymiz.
+//    (REST /api/chat/send ham xuddi shu yo'lni ishlatadi — ikkalasi bir xil
+//    natija beradi, mijoz qaysi biri qulay bo'lsa shuni tanlaydi.)
+hub.handlerQosh(chatSendHandleri)
+
+// 3) Server: HTTP so'rovlari Hono'ga, /ws upgrade qilinadi
+//
+// Ikkinchi generik parametr — `routes` yo'llari (satr literal birlashmasi).
+// Biz `routes` ishlatmaymiz: barcha yo'llar `fetch` orqali Hono'ga boradi.
+// Shuning uchun `never` beriladi — "hech qanday route yo'q" degani.
+const server = Bun.serve<UlanishHolati, never>({
   port: PORT,
 
   fetch(req, srv) {

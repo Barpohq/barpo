@@ -1,33 +1,55 @@
-import { useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import SuhbatlarRoyxati from './components/SuhbatlarRoyxati'
 import { installedApps, type AppManifest } from './data/mock'
+import { loyihalarOl } from './lib/api'
+import { hashQur, hashTahlil } from './lib/hash-yol'
+import { useIshlayotganlar } from './lib/ishlayotganlar'
+import { suhbatlarHolatiniSaqla, suhbatlarOchiqmi } from './lib/sidebar-saqlash'
+import { useSuhbatlar } from './lib/suhbatlar'
+import type { Project } from '@platforma/shared'
+import Agents from './pages/Agents'
 import Chat from './pages/Chat'
 import Servers from './pages/Servers'
 import Skills from './pages/Skills'
+import Suhbatlar from './pages/Suhbatlar'
 import Audit from './pages/Audit'
 import Terminal from './pages/Terminal'
 import AppView from './pages/AppView'
 
-type StaticPage = 'chat' | 'servers' | 'skills' | 'audit' | 'terminal'
+type StaticPage = 'chat' | 'suhbatlar' | 'agents' | 'servers' | 'skills' | 'audit' | 'terminal'
 type Page = StaticPage | `app:${string}`
 
 // Menyu ataylab qisqa: platforma oddiy PC'da ham ishlaydi, server bo'lsa
 // "Serverlar" sahifasi yetadi (ulash/uzish oson bo'lishi uchun).
+//
+// "Chat" bu ro'yxatda YO'Q — u alohida komponent (`SuhbatlarRoyxati`),
+// chunki ochiladigan suhbatlar ro'yxatini o'z ichiga oladi.
 const nav: { id: StaticPage; label: string; icon: ReactNode }[] = [
-  { id: 'chat', label: 'Chat', icon: <path d="M3 5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H8l-4 3v-3H5a2 2 0 0 1-2-2V5Z" /> },
+  { id: 'agents', label: 'Agentlar', icon: <path d="M10 3a3 3 0 0 1 3 3v1h1a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1V6a3 3 0 0 1 3-3Zm-2 8h.01M12 11h.01" /> },
   { id: 'servers', label: 'Serverlar', icon: <path d="M3 4h14v4H3V4Zm0 8h14v4H3v-4Zm2-6h.01M5 14h.01" /> },
   { id: 'skills', label: "Skill do'koni", icon: <path d="M10 2 3 6v8l7 4 7-4V6l-7-4Zm0 4v12M3 6l7 4 7-4" /> },
   { id: 'audit', label: 'Audit log', icon: <path d="M5 3h10a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2 4h6M7 10h6m-6 3h4" /> },
   { id: 'terminal', label: 'Terminal', icon: <path d="M3 4h14v12H3V4Zm3 3 3 3-3 3m5 0h4" /> },
 ]
 
-const staticPages: StaticPage[] = ['chat', 'servers', 'skills', 'audit', 'terminal']
+const staticPages: StaticPage[] = [
+  'chat',
+  'suhbatlar',
+  'agents',
+  'servers',
+  'skills',
+  'audit',
+  'terminal',
+]
 
-function initFromHash(): { pro: boolean; page: Page } {
-  const h = window.location.hash.replace('#', '')
-  const [mode, ...rest] = h.split('/')
-  const p = rest.join('/')
-  const page: Page = staticPages.includes(p as StaticPage) || p.startsWith('app:') ? (p as Page) : 'chat'
-  return mode === 'pro' ? { pro: true, page } : { pro: false, page: 'chat' }
+/** Hash tahlili `lib/hash-yol.ts` da — sof funksiya, test bilan qoplangan */
+function initFromHash(): { pro: boolean; page: Page; sessionId: string | null } {
+  const { pro, yol, sessionId } = hashTahlil(window.location.hash)
+  const page: Page =
+    staticPages.includes(yol as StaticPage) || yol.startsWith('app:') ? (yol as Page) : 'chat'
+
+  // Oddiy rejimda faqat chat bor, lekin sessiya URL'i baribir ishlashi kerak
+  return pro ? { pro: true, page, sessionId } : { pro: false, page: 'chat', sessionId }
 }
 
 function ProToggle({ pro, onToggle }: { pro: boolean; onToggle: () => void }) {
@@ -80,17 +102,111 @@ export default function App() {
   const [pro, setPro] = useState(init.pro)
   const [page, setPageRaw] = useState<Page>(init.page)
   const [apps, setApps] = useState<AppManifest[]>(installedApps)
+  /** Sidebar'dagi "Yangi suhbat" — har bosishda oshadi, Chat kuzatadi */
+  const [yangiSuhbatSignali, setYangiSuhbatSignali] = useState(0)
+  /**
+   * URL'dagi ochiq suhbat. Chat sessiya yaratganda/tozalaganda xabar beradi,
+   * biz hash'ni yangilaymiz — shunda sahifa refresh'da o'sha suhbat tiklanadi.
+   */
+  const [sessionId, setSessionId] = useState<string | null>(init.sessionId)
+  // Fonda ishlayotgan agent oqimlari — sidebar'da jonli ko'rsatiladi.
+  // Bitta suhbatni ochgan bo'lsak ham hammasi ko'rinadi: `chat.status`
+  // sessiya bo'yicha filtrlanmaydi (protocol.ts ga q.).
+  const { ishlayotganlar } = useIshlayotganlar()
+  const ishlayotganRoyxat = Object.entries(ishlayotganlar)
+  const ruxsatKutayotganlar = ishlayotganRoyxat.filter(
+    ([, holat]) => holat === 'ruxsat-kutmoqda',
+  ).length
+
+  // Suhbatlar ro'yxati SHU YERDA bir marta yuklanadi va sidebar'ga ham,
+  // Suhbatlar sahifasiga ham beriladi. Har biri o'zi yuklasa ikki so'rov
+  // ketardi va o'chirish/qayta nomlash faqat bittasida ko'rinardi.
+  const {
+    suhbatlar,
+    yuklanmoqda: suhbatlarYuklanmoqda,
+    xato: suhbatlarXatosi,
+    yangila: suhbatlarniYangila,
+    ozgart: suhbatlarniOzgart,
+  } = useSuhbatlar()
+  /** Sidebar'dagi Chat ro'yxati ochiqmi — brauzerda eslab qolinadi */
+  const [suhbatlarOchiq, setSuhbatlarOchiq] = useState(suhbatlarOchiqmi)
+
+  // Loyihalar — Suhbatlar sahifasidagi filtr uchun. Xato bo'lsa jim
+  // qolamiz: filtr shunchaki ko'rinmaydi, ro'yxat baribir ishlaydi.
+  const [loyihalar, setLoyihalar] = useState<Project[]>([])
+  useEffect(() => {
+    let bekor = false
+    loyihalarOl()
+      .then((royxat) => {
+        if (!bekor) setLoyihalar(royxat)
+      })
+      .catch(() => undefined)
+    return () => {
+      bekor = true
+    }
+  }, [])
+
+  /**
+   * Hash'ni bitta joydan yozamiz — sahifa, rejim va ochiq suhbat uch xil
+   * joydan o'zgaradi, har biri o'zicha yozsa sessiya id yo'qolib ketardi.
+   */
+  function hashYoz(p: boolean, sahifa: Page, sid: string | null) {
+    const yangi = hashQur(p, sahifa, sid)
+    if (window.location.hash.replace('#', '') !== yangi) window.location.hash = yangi
+  }
 
   function setPage(p: Page) {
     setPageRaw(p)
-    window.location.hash = `pro/${p}`
+    hashYoz(true, p, sessionId)
   }
 
   function togglePro() {
     setPro((p) => {
-      window.location.hash = p ? '' : `pro/${page}`
+      const yangiSahifa = p ? 'chat' : page
       if (p) setPageRaw('chat')
+      hashYoz(!p, yangiSahifa, sessionId)
       return !p
+    })
+  }
+
+  /**
+   * Chat sessiya yaratganda/tozalaganda chaqiriladi.
+   *
+   * `useCallback` — Chat uni ref'da saqlaydi, lekin barqaror nusxa
+   * bo'lgani ma'qul: keraksiz qayta renderlar kamayadi.
+   */
+  const sessiyaOzgardi = useCallback(
+    (sid: string | null) => {
+      setSessionId(sid)
+      hashYoz(pro, page, sid)
+      // Yangi suhbat yaratildi — ro'yxatga darhol tushsin. Server sarlavhani
+      // birinchi xabardan oladi, shuning uchun mahalliy qo'shish o'rniga
+      // qayta so'raymiz.
+      if (sid) suhbatlarniYangila()
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pro, page, suhbatlarniYangila],
+  )
+
+  /** Sidebar yoki Suhbatlar sahifasidan suhbat tanlandi */
+  function suhbatniOch(sid: string) {
+    setPageRaw('chat')
+    setSessionId(sid)
+    hashYoz(pro, 'chat', sid)
+  }
+
+  /** Yangi bo'sh suhbat — chat sahifasiga o'tib oynani tozalaydi */
+  function yangiSuhbatBoshla() {
+    setPageRaw('chat')
+    setSessionId(null)
+    hashYoz(pro, 'chat', null)
+    setYangiSuhbatSignali((n) => n + 1)
+  }
+
+  function suhbatlarniToggle() {
+    setSuhbatlarOchiq((ochiq) => {
+      suhbatlarHolatiniSaqla(!ochiq)
+      return !ochiq
     })
   }
 
@@ -136,7 +252,35 @@ export default function App() {
           aria-hidden={!pro}
         >
           <div className="thin-scroll flex-1 overflow-y-auto p-2">
+            {/* Eng ko'p bajariladigan amal — ro'yxatdan ham tepada turadi */}
+            <button
+              onClick={yangiSuhbatBoshla}
+              tabIndex={pro ? 0 : -1}
+              className="mb-2 flex w-full items-center gap-2.5 rounded-lg border border-line px-3 py-2 text-left text-[13px] text-muted transition hover:border-lazur-dim hover:bg-panel2/60 hover:text-lazur"
+            >
+              <svg viewBox="0 0 20 20" className="size-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+                <path d="M10 4v12M4 10h12" />
+              </svg>
+              Yangi suhbat
+            </button>
+
             <div className="space-y-0.5">
+              {/* Chat — ochiladigan ro'yxat bilan. Ichida oxirgi 5 suhbat,
+                  holatidan qat'i nazar; ishlayotganlari indikator bilan. */}
+              <SuhbatlarRoyxati
+                suhbatlar={suhbatlar}
+                ishlayotganlar={ishlayotganlar}
+                ochiqSessiya={sessionId}
+                ochiq={suhbatlarOchiq}
+                onToggle={suhbatlarniToggle}
+                onChatSahifasi={() => setPage('chat')}
+                onSuhbatOch={suhbatniOch}
+                onBarchasi={() => setPage('suhbatlar')}
+                faol={page === 'chat'}
+                yuklanmoqda={suhbatlarYuklanmoqda}
+                tabIndex={pro ? 0 : -1}
+              />
+
               {nav.map((n) => (
                 <button
                   key={n.id}
@@ -150,9 +294,29 @@ export default function App() {
                     {n.icon}
                   </svg>
                   {n.label}
+                  {/* Agentlar yonidagi umumiy hisoblagich: sahifa ochilmagan
+                      bo'lsa ham fonda nima ketayotgani ko'rinib tursin */}
+                  {n.id === 'agents' && ishlayotganRoyxat.length > 0 && (
+                    <span
+                      className={`ml-auto rounded-md px-1.5 py-0.5 font-mono text-[10px] ${
+                        ruxsatKutayotganlar > 0 ? 'text-gold' : 'text-muted'
+                      }`}
+                      style={
+                        ruxsatKutayotganlar > 0
+                          ? { background: 'color-mix(in oklab, var(--color-gold) 18%, transparent)' }
+                          : { background: 'var(--color-panel2)' }
+                      }
+                    >
+                      {ishlayotganRoyxat.length}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
+
+            {/* Eski "Jonli oqimlar" bo'limi olib tashlandi: fonda ishlayotgan
+                suhbatlar endi Chat ro'yxatida indikator bilan ko'rinadi,
+                umumiy soni esa Agentlar yonidagi badge'da. */}
 
             {/* Dinamik bo'lim — ilovalar o'z manifesti bilan shu yerga qo'shiladi */}
             <div className="mt-4 border-t border-line pt-3">
@@ -195,7 +359,31 @@ export default function App() {
         </nav>
 
         <main className="thin-scroll min-w-0 flex-1 overflow-y-auto">
-          {(!pro || page === 'chat') && <Chat pro={pro} onInstallApp={installApp} openApp={openApp} />}
+          {(!pro || page === 'chat') && (
+            <Chat
+              pro={pro}
+              onInstallApp={installApp}
+              openApp={openApp}
+              yangiSuhbatSignali={yangiSuhbatSignali}
+              ochiqSessiya={sessionId}
+              onSessiyaOzgardi={sessiyaOzgardi}
+            />
+          )}
+          {pro && page === 'suhbatlar' && (
+            <Suhbatlar
+              suhbatlar={suhbatlar}
+              ishlayotganlar={ishlayotganlar}
+              loyihalar={loyihalar}
+              ochiqSessiya={sessionId}
+              yuklanmoqda={suhbatlarYuklanmoqda}
+              xato={suhbatlarXatosi}
+              yangila={suhbatlarniYangila}
+              ozgart={suhbatlarniOzgart}
+              onSuhbatOch={suhbatniOch}
+              onYangiSuhbat={yangiSuhbatBoshla}
+            />
+          )}
+          {pro && page === 'agents' && <Agents />}
           {pro && page === 'servers' && <Servers />}
           {pro && page === 'skills' && <Skills />}
           {pro && page === 'audit' && <Audit />}

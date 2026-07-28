@@ -12,6 +12,7 @@ import type { ServerWebSocket } from 'bun'
 import {
   clientEventMi,
   eventKanali,
+  eventSessiyasi,
   PROTOCOL_VERSION,
   type ClientEvent,
   type ServerEvent,
@@ -21,6 +22,13 @@ import {
 export interface UlanishHolati {
   id: string
   channels: Set<string>
+  /**
+   * Mijoz kuzatayotgan chat sessiyasi (`sub.sessionId`).
+   *
+   * `undefined` — sessiya ko'rsatilmagan: mijoz kanaldagi HAMMA sessiyaning
+   * eventlarini oladi (eski xulq, orqaga moslik uchun saqlangan).
+   */
+  sessionId?: string
 }
 
 export type PlatformaWS = ServerWebSocket<UlanishHolati>
@@ -67,6 +75,13 @@ export class WsHub {
 
     if (event.type === 'sub') {
       for (const kanal of event.channels) ws.data.channels.add(kanal)
+      // Sessiya berilgan bo'lsa mijoz shu sessiyaga "ko'chadi".
+      //   `null`      → filtr olib tashlanadi (yana hamma sessiya ko'rinadi);
+      //   maydon yo'q → oldingi tanlov saqlanadi (mijoz faqat yangi kanal
+      //                 qo'shayotgan bo'lishi mumkin, sessiyani unutmasin).
+      if (event.sessionId !== undefined) {
+        ws.data.sessionId = event.sessionId ?? undefined
+      }
       return
     }
 
@@ -89,14 +104,38 @@ export class WsHub {
    * Eventni tegishli kanalga obuna bo'lgan hamma mijozga yuboradi.
    * Kanalsiz eventlar (hello) hammaga ketadi.
    * Yuborilgan mijozlar sonini qaytaradi.
+   *
+   * IKKI BOSQICHLI FILTR:
+   *   1) kanal — mijoz kanalga obuna bo'lmagan bo'lsa event ketmaydi;
+   *   2) sessiya — sessiyali event (chat.*) faqat o'sha sessiyani
+   *      kuzatayotgan mijozga boradi.
+   *
+   * Ikkinchi filtr nima uchun kerak: oldin faqat kanal tekshirilardi, ya'ni
+   * `chat` kanaliga obuna bo'lgan HAR QANDAY mijoz hamma sessiyaning
+   * javoblarini olardi. Ikki brauzer oynasi ochilsa, biri ikkinchisining
+   * `chat.delta` (javob matni), `chat.tool` (bajarilgan buyruqlar) va
+   * `chat.permission` (ruxsat so'rovlari) eventlarini ko'rardi. Bu ham UI
+   * xatosi (begona matn boshqa oynaga oqadi), ham ma'lumot sizishi.
+   *
+   * Sessiya ko'rsatmagan mijoz eski xulqni oladi — hamma sessiyani ko'radi.
    */
   broadcast(event: ServerEvent): number {
     const kanal = eventKanali(event)
+    const sessiya = eventSessiyasi(event)
     const matn = JSON.stringify(event)
     let soni = 0
 
     for (const ws of this.ulanishlar) {
       if (kanal !== null && !ws.data.channels.has(kanal)) continue
+      // Sessiyali event: mijoz boshqa sessiyani kuzatayotgan bo'lsa o'tkazamiz.
+      // `ws.data.sessionId === undefined` — sessiya tanlamagan mijoz, hammasini oladi.
+      if (
+        sessiya !== null &&
+        ws.data.sessionId !== undefined &&
+        ws.data.sessionId !== sessiya
+      ) {
+        continue
+      }
       try {
         ws.send(matn)
         soni++

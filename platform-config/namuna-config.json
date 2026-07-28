@@ -1,0 +1,35 @@
+{
+  "$schema": "./schema.json",
+
+  "agent": {
+    "tarix": {
+      "maksXabar": 200,
+      "toolNatijasiChegarasi": 4000
+    },
+    "siqish": {
+      "yoqilgan": true,
+      "zaxiraTokenlar": 16384,
+      "saqlanadiganTokenlar": 20000,
+      "modeli": null
+    },
+    "toollar": {
+      "yoqilgan": ["read", "write", "edit", "bash", "grep", "find", "ls"],
+      "bashTimeoutSekund": 120,
+      "natijaChegarasi": 2000
+    }
+  },
+
+  "ruxsat": {
+    "rejim": "tasdiq",
+    "kutishSoniya": 300,
+    "klassifikatorModeli": null,
+    "ketmaKetBlokChegarasi": 3,
+    "jamiBlokChegarasi": 20,
+    "qoshimchaTaqiqlar": []
+  },
+
+  "sessiya": {
+    "ishPapkasi": null,
+    "faolsizlikDaqiqa": 60
+  }
+}

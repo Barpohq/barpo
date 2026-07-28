@@ -60,20 +60,14 @@ describe('GET /api/servers', () => {
 })
 
 describe('GET /api/skills', () => {
-  test('skilllar ro\'yxati ruxsatlari bilan qaytadi', async () => {
-    const { status, body } = await get<{ skills: Skill[] }>('/api/skills')
+  // Skilllar seed'i YO'Q: ular diskdagi haqiqiy `SKILL.md` bilan bog'langan
+  // va foydalanuvchi GitHub manbasini o'zi ulaydi. To'liq o'rnatish oqimi
+  // `skilllar.test.ts` da sinaladi.
+  test("bo'sh katalog qaytadi", async () => {
+    const { status, body } = await get<{ skills: Skill[]; manbalar: unknown[] }>('/api/skills')
     expect(status).toBe(200)
-    expect(body.skills).toHaveLength(7)
-
-    const fastapi = body.skills.find((s) => s.id === 'fastapi-deploy')
-    expect(fastapi?.installed).toBe(true)
-    expect(fastapi?.permissions.length).toBe(3)
-    expect(fastapi?.permissions.some((p) => p.level === 'xavfli')).toBe(true)
-  })
-
-  test("o'rnatilmagan skill installed:false bo'ladi", async () => {
-    const { body } = await get<{ skills: Skill[] }>('/api/skills')
-    expect(body.skills.find((s) => s.id === 'rust-deploy')?.installed).toBe(false)
+    expect(body.skills).toEqual([])
+    expect(body.manbalar).toEqual([])
   })
 })
 
@@ -176,15 +170,19 @@ describe('chat endpointlari', () => {
     expect(status).toBe(404)
   })
 
-  test('POST /api/chat/send hozircha 501 qaytaradi', async () => {
+  test('POST /api/chat/send mavjud bo\'lmagan sessiyaga 404', async () => {
     const javob = await app.request('/api/chat/send', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: 's1', text: 'salom' }),
+      body: JSON.stringify({
+        sessionId: 'yoq-bunday',
+        text: 'salom',
+        model: { provider: 'ollama', model: 'test' },
+      }),
     })
-    expect(javob.status).toBe(501)
+    expect(javob.status).toBe(404)
     const tana = (await javob.json()) as { error: string }
-    expect(tana.error).toContain('Orchestrator')
+    expect(tana.error).toContain('Sessiya')
   })
 })
 

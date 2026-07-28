@@ -8,7 +8,7 @@
 // skill do'koni) ulanadi — o'shanda bu fayl faqat bo'sh o'rnatish uchun qoladi.
 
 import type { Database } from 'bun:sqlite'
-import type { AppManifest, AuditEntry, Server, Skill } from '@platforma/shared'
+import type { AppManifest, AuditEntry, Server } from '@platforma/shared'
 
 // ---------------------------------------------------------------------------
 // Serverlar
@@ -20,100 +20,6 @@ export const seedServers: Server[] = [
   { id: 'tashkent-1', name: 'tashkent-1', role: 'Media / fayl ombori', region: 'UZ · TAS', status: 'healthy', cpu: 4, ram: 22, disk: 51, daemon: 'v0.3.0 · ulangan', uptime: '112 kun' },
   { id: 'nyc-1', name: 'nyc-1', role: 'Proxy / fetch chiqish nuqtasi', region: 'DO · NYC3', status: 'healthy', cpu: 8, ram: 30, disk: 19, daemon: 'v0.3.1 · ulangan', uptime: '58 kun' },
   { id: 'berlin-1', name: 'berlin-1', role: 'Zaxira (backup)', region: 'Contabo · BER', status: 'healthy', cpu: 2, ram: 14, disk: 62, daemon: 'v0.3.1 · ulangan', uptime: '203 kun' },
-]
-
-// ---------------------------------------------------------------------------
-// Skill do'koni
-// ---------------------------------------------------------------------------
-
-export const seedSkills: Skill[] = [
-  {
-    id: 'rss-collector',
-    name: 'RSS Collector',
-    desc: "RSS/Atom manbalardan element yig'ish, buzilgan feed'larga chidamli",
-    version: 'v2.1',
-    installed: true,
-    category: 'Data manba',
-    permissions: [
-      { level: "o'qish", text: "Tashqi URL'larga HTTP so'rov" },
-      { level: "o'zgartirish", text: 'Bazaga element yozish' },
-    ],
-  },
-  {
-    id: 'telegram-publisher',
-    name: 'Telegram Publisher',
-    desc: 'Kanalga post chiqarish, approval flow bilan',
-    version: 'v1.8',
-    installed: true,
-    category: 'Chiqish kanali',
-    permissions: [
-      { level: "o'zgartirish", text: 'Telegram Bot API orqali xabar yuborish' },
-      { level: "o'qish", text: 'Kanal statistikasi' },
-    ],
-  },
-  {
-    id: 'django-deploy',
-    name: 'Django Deploy',
-    desc: 'Django loyihani serverga chiqarish: venv, gunicorn, nginx, migratsiya',
-    version: 'v1.2',
-    installed: false,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'zgartirish", text: "Serverda paket o'rnatish va servis yaratish" },
-      { level: "o'zgartirish", text: 'Nginx konfiguratsiyasini yozish' },
-      { level: 'xavfli', text: 'Systemd servisni qayta ishga tushirish' },
-    ],
-  },
-  {
-    id: 'fastapi-deploy',
-    name: 'FastAPI Deploy',
-    desc: "FastAPI + frontend loyihani to'liq deploy qilish: venv, gunicorn, migratsiya, nginx",
-    version: 'v1.1',
-    installed: true,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'zgartirish", text: 'Serverda venv yaratish va systemd unit yozish' },
-      { level: "o'zgartirish", text: "Bazaga migratsiya qo'llash" },
-      { level: 'xavfli', text: 'Servisni qayta ishga tushirish (zero-downtime)' },
-    ],
-  },
-  {
-    id: 'rust-deploy',
-    name: 'Rust Binary Deploy',
-    desc: "Cross-compile qilingan binary'ni serverga ko'chirish va servis qilish",
-    version: 'v0.9',
-    installed: false,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'zgartirish", text: 'Binary yuklash va systemd unit yaratish' },
-      { level: 'xavfli', text: 'Eski versiyani almashtirish (rollback saqlanadi)' },
-    ],
-  },
-  {
-    id: 'docker-compose-deploy',
-    name: 'Docker Compose Deploy',
-    desc: "compose.yml asosida stack ko'tarish, preview muhit bilan",
-    version: 'v1.5',
-    installed: false,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'qish", text: 'Konteyner loglari va holati' },
-      { level: "o'zgartirish", text: 'docker compose up / down' },
-      { level: 'xavfli', text: "Volume'larni o'chirish (har doim tasdiq bilan)" },
-    ],
-  },
-  {
-    id: 'postgres-backup',
-    name: 'Postgres Backup',
-    desc: 'Kunlik pg_dump, saqlash muddati siyosati bilan',
-    version: 'v1.0',
-    installed: false,
-    category: "Ma'lumotlar",
-    permissions: [
-      { level: "o'qish", text: "Bazadan pg_dump o'qish" },
-      { level: "o'zgartirish", text: 'Zaxira faylini berlin-1 ga yozish' },
-    ],
-  },
 ]
 
 // ---------------------------------------------------------------------------
@@ -198,7 +104,6 @@ function bosh(db: Database, jadval: string): boolean {
 
 export interface SeedNatija {
   servers: number
-  skills: number
   audit: number
   apps: number
 }
@@ -208,7 +113,7 @@ export interface SeedNatija {
  * faqat bo'sh jadvallar to'ldiriladi, shuning uchun qayta chaqirish xavfsiz.
  */
 export function seedQol(db: Database): SeedNatija {
-  const natija: SeedNatija = { servers: 0, skills: 0, audit: 0, apps: 0 }
+  const natija: SeedNatija = { servers: 0, audit: 0, apps: 0 }
   const hozir = new Date().toISOString()
 
   if (bosh(db, 'servers')) {
@@ -224,18 +129,9 @@ export function seedQol(db: Database): SeedNatija {
     })()
   }
 
-  if (bosh(db, 'skills')) {
-    const st = db.prepare(
-      `INSERT INTO skills (id, name, desc, version, installed, category, permissions)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    db.transaction(() => {
-      for (const s of seedSkills) {
-        st.run(s.id, s.name, s.desc, s.version, s.installed ? 1 : 0, s.category, JSON.stringify(s.permissions))
-        natija.skills++
-      }
-    })()
-  }
+  // Skilllar seed'i ATAYLAB YO'Q: skill diskdagi haqiqiy `SKILL.md` bilan
+  // bog'langan, ya'ni o'ylab topilgan qator hech qayerga ishora qilmaydi.
+  // Foydalanuvchi GitHub manbasini o'zi ulaydi (Skills sahifasi).
 
   // Audit seed'i to'g'ridan-to'g'ri yoziladi (auditYoz emas) — bular tarixiy
   // yozuvlar, ularni WS orqali "yangi hodisa" sifatida tarqatish noto'g'ri

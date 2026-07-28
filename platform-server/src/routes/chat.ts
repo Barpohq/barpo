@@ -1,12 +1,32 @@
 // Chat sessiyalari va xabarlari.
 //
-// POST /api/chat/send hozircha 501 qaytaradi — orchestrator keyingi bosqichda
-// ulanadi. Route strukturasi tayyor turibdi: o'sha agent faqat shu handler
-// ichini to'ldiradi, boshqa fayllarni o'zgartirmaydi. Javob oqimi (streaming)
-// WS orqali ketadi: chat.delta → chat.toolcard → chat.done.
+// POST /api/chat/send foydalanuvchi xabarini saqlaydi, sessiya modelini
+// qulflaydi va javob oqimini FONDA boshlaydi — javob WS orqali keladi
+// (chat.delta → chat.done yoki chat.error). Shuning uchun 202 qaytadi:
+// so'rov qabul qilindi, natija keyinroq.
 
 import { Hono } from 'hono'
-import { sessiyaOqi, sessiyaYarat, sessiyalarOqi, xabarlarOqi } from '../repo.ts'
+import {
+  ishlayotganSessiyalar,
+  javobOqizi,
+  oqimBormi,
+  oqimniToxtat,
+  rejimHolati,
+  rejimOrnat,
+  ruxsatJavobi,
+} from '../orchestrator.ts'
+import {
+  loyihaOqi,
+  sessiyaModelniOzgart,
+  sessiyaModelQulfla,
+  sessiyaOchir,
+  sessiyaOqi,
+  sessiyaSarlavhaOzgart,
+  sessiyaYarat,
+  sessiyalarOqi,
+  xabarlarOqi,
+  xabarYoz,
+} from '../repo.ts'
 
 export const chatRoutes = new Hono()
 
@@ -14,15 +34,62 @@ chatRoutes.get('/chat/sessions', (c) => {
   return c.json({ sessions: sessiyalarOqi() })
 })
 
+/**
+ * Yangi sessiya. `projectId` ixtiyoriy — berilsa sessiya loyihaga ulanadi
+ * va agent tool'lari loyiha papkasida ishlaydi.
+ */
 chatRoutes.post('/chat/sessions', async (c) => {
   let title: string | undefined
+  let projectId: string | undefined
   try {
-    const tana = (await c.req.json()) as { title?: unknown }
+    const tana = (await c.req.json()) as { title?: unknown; projectId?: unknown }
     if (typeof tana?.title === 'string') title = tana.title
+    if (typeof tana?.projectId === 'string' && tana.projectId.length > 0) {
+      projectId = tana.projectId
+    }
   } catch {
     // tana bo'sh bo'lishi mumkin — sarlavha avtomatik qo'yiladi
   }
-  return c.json({ session: sessiyaYarat(title) }, 201)
+
+  // Yo'q loyiha id'si bilan sessiya yaratilsa foreign key xatosi 500 bo'lib
+  // chiqardi — bu yerda tushunarli 404 beramiz.
+  if (projectId && !loyihaOqi(projectId)) {
+    return c.json({ error: 'Loyiha topilmadi', detail: projectId }, 404)
+  }
+
+  return c.json({ session: sessiyaYarat(title, undefined, projectId) }, 201)
+})
+
+/**
+ * Hozir agent oqimi ketayotgan sessiyalar — "fon agentlari" ko'rinishi uchun.
+ *
+ * UI (sidebar badge'lari va Agentlar sahifasi) sahifa ochilganda boshlang'ich
+ * holatni shu yerdan oladi, keyin `chat.status` WS eventlari bilan yangilaydi.
+ * Faqat WS'ga tayanib bo'lmaydi: sahifa oqim o'rtasida ochilsa, boshlanish
+ * eventi allaqachon o'tib ketgan bo'ladi.
+ *
+ * `title` sessiya jadvalidan qo'shiladi — UI id o'rniga o'qiladigan nom
+ * ko'rsatsin. Sessiya o'chirilgan bo'lsa (kutilmagan holat) `title`siz keladi.
+ */
+chatRoutes.get('/chat/running', (c) => {
+  const running = ishlayotganSessiyalar().map((s) => ({
+    ...s,
+    title: sessiyaOqi(s.sessionId)?.title,
+  }))
+  return c.json({ running })
+})
+
+/**
+ * Bitta sessiya — URL'dan tiklash uchun.
+ *
+ * Sahifa `#chat/<uuid>` bilan ochilganda UI shu yerdan sessiyaning modelini
+ * va loyihasini oladi (xabarlar alohida so'rovda). Sessiya o'chirilgan yoki
+ * URL noto'g'ri bo'lsa 404 — UI uni bo'sh chatga tushish signali deb biladi.
+ */
+chatRoutes.get('/chat/sessions/:id', (c) => {
+  const sessiya = sessiyaOqi(c.req.param('id'))
+  if (!sessiya) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  return c.json({ session: sessiya })
 })
 
 chatRoutes.get('/chat/sessions/:id/messages', (c) => {
@@ -31,14 +98,209 @@ chatRoutes.get('/chat/sessions/:id/messages', (c) => {
   return c.json({ messages: xabarlarOqi(id) })
 })
 
-// TODO(orchestrator): bu yerda foydalanuvchi xabari saqlanadi, LLM oqimi
-// boshlanadi va natija WS orqali chat.delta/chat.done bilan yuboriladi.
-chatRoutes.post('/chat/send', (c) => {
-  return c.json(
-    {
-      error: 'Orchestrator hali ulanmagan',
-      detail: "Chat oqimi keyingi bosqichda qo'shiladi (POST /api/chat/send).",
-    },
-    501,
-  )
+/** Sarlavha uzunligi chegarasi — sidebar va ro'yxatda bir qatorga sig'sin */
+const SARLAVHA_MAX = 200
+
+/**
+ * Sarlavhani qayta nomlash. Hozircha faqat `title` o'zgartiriladi: model
+ * va loyiha suhbat boshlangach qulflanadi (`/chat/send` ga q.), ularni bu
+ * yerdan almashtirish kontekstni buzardi.
+ */
+chatRoutes.patch('/chat/sessions/:id', async (c) => {
+  const id = c.req.param('id')
+  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+
+  let tana: { title?: unknown }
+  try {
+    tana = (await c.req.json()) as { title?: unknown }
+  } catch {
+    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+  }
+
+  if (typeof tana.title !== 'string') {
+    return c.json({ error: 'title majburiy' }, 400)
+  }
+  const title = tana.title.trim()
+  if (title.length === 0) {
+    return c.json({ error: "Sarlavha bo'sh bo'lmasligi kerak" }, 400)
+  }
+  if (title.length > SARLAVHA_MAX) {
+    return c.json(
+      { error: 'Sarlavha juda uzun', detail: `Eng ko'pi ${SARLAVHA_MAX} belgi` },
+      400,
+    )
+  }
+
+  sessiyaSarlavhaOzgart(id, title)
+  return c.json({ session: sessiyaOqi(id) })
 })
+
+/**
+ * Suhbatni o'chirish. Xabarlar bazada CASCADE bilan ketadi.
+ *
+ * Oqim ketayotgan bo'lsa avval to'xtatiladi: aks holda agent o'chirilgan
+ * sessiyaga javob yozishga urinardi (`xabarYoz` foreign key xatosi berardi)
+ * va WS'ga mavjud bo'lmagan suhbat eventlari kelaverardi.
+ */
+chatRoutes.delete('/chat/sessions/:id', (c) => {
+  const id = c.req.param('id')
+  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+
+  const oqimToxtatildi = oqimBormi(id) ? oqimniToxtat(id) : false
+  sessiyaOchir(id)
+  return c.json({ ochirildi: true, oqimToxtatildi })
+})
+
+interface YuborishTanasi {
+  sessionId?: unknown
+  text?: unknown
+  model?: { provider?: unknown; model?: unknown }
+}
+
+chatRoutes.post('/chat/send', async (c) => {
+  let tana: YuborishTanasi
+  try {
+    tana = (await c.req.json()) as YuborishTanasi
+  } catch {
+    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+  }
+
+  if (typeof tana.sessionId !== 'string' || tana.sessionId.length === 0) {
+    return c.json({ error: 'sessionId majburiy' }, 400)
+  }
+  if (typeof tana.text !== 'string' || tana.text.trim().length === 0) {
+    return c.json({ error: "Xabar matni bo'sh bo'lmasligi kerak" }, 400)
+  }
+
+  const sessionId = tana.sessionId
+  const matn = tana.text.trim()
+  const sessiya = sessiyaOqi(sessionId)
+  if (!sessiya) return c.json({ error: 'Sessiya topilmadi' }, 404)
+
+  if (oqimBormi(sessionId)) {
+    return c.json({ error: 'Bu sessiyada javob hali oqmoqda', detail: 'Avval kutib turing yoki to\'xtating' }, 409)
+  }
+
+  // --- Model tanlovi va provider qulfi ---
+  const sorovProvider = matnMi(tana.model?.provider)
+  const sorovModel = matnMi(tana.model?.model)
+
+  if (!sessiya.provider) {
+    // Birinchi xabar — model tanlangan bo'lishi shart
+    if (!sorovProvider || !sorovModel) {
+      return c.json(
+        {
+          error: 'Model tanlanmagan',
+          detail: "Sessiyaning birinchi xabarida model: { provider, model } yuborilishi kerak",
+        },
+        400,
+      )
+    }
+    sessiyaModelQulfla(sessionId, sorovProvider, sorovModel)
+  } else if (sorovProvider && sorovProvider !== sessiya.provider) {
+    return c.json(
+      {
+        error: "Sessiya provideri o'zgartirib bo'lmaydi",
+        detail: `Sessiya "${sessiya.provider}" provideriga bog'langan. Boshqa provider uchun yangi suhbat boshlang.`,
+      },
+      409,
+    )
+  } else if (sorovModel && sorovModel !== sessiya.model) {
+    // Bir provider ichida modelni almashtirish mumkin
+    sessiyaModelniOzgart(sessionId, sorovModel)
+  }
+
+  const yangilangan = sessiyaOqi(sessionId)
+  if (!yangilangan?.provider || !yangilangan.model) {
+    return c.json({ error: 'Sessiya modeli aniqlanmadi' }, 500)
+  }
+
+  // Foydalanuvchi xabarini saqlaymiz — javob oqimi tarixdan shu xabarni oladi
+  xabarYoz({ sessionId, role: 'user', text: matn })
+
+  const messageId = crypto.randomUUID()
+  const tanlov = { provider: yangilangan.provider, model: yangilangan.model }
+
+  // Fonda oqizamiz — javobni kutmaymiz, u WS orqali boradi
+  void javobOqizi(sessionId, messageId, tanlov)
+
+  return c.json({ messageId, model: tanlov }, 202)
+})
+
+/**
+ * Ruxsat so'roviga javob. WS `chat.permission.reply` bilan bir xil ish
+ * qiladi — mijoz qaysi biri qulay bo'lsa shuni ishlatadi.
+ */
+chatRoutes.post('/chat/permission', async (c) => {
+  let tana: { sessionId?: unknown; sorovId?: unknown; javob?: unknown }
+  try {
+    tana = (await c.req.json()) as typeof tana
+  } catch {
+    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+  }
+
+  const sessionId = matnMi(tana.sessionId)
+  const sorovId = matnMi(tana.sorovId)
+  const javob = tana.javob
+  if (!sessionId || !sorovId) {
+    return c.json({ error: 'sessionId va sorovId majburiy' }, 400)
+  }
+  if (javob !== 'ruxsat' && javob !== 'rad' && javob !== 'hardoim') {
+    return c.json({ error: "javob 'ruxsat', 'rad' yoki 'hardoim' bo'lishi kerak" }, 400)
+  }
+
+  const berildi = ruxsatJavobi(sessionId, sorovId, javob)
+  if (!berildi) {
+    return c.json(
+      { error: "So'rov topilmadi", detail: 'Muddati tugagan yoki allaqachon javob berilgan' },
+      404,
+    )
+  }
+  return c.json({ qabulQilindi: true })
+})
+
+/** Sessiyaning hozirgi ruxsat rejimi */
+chatRoutes.get('/chat/sessions/:id/rejim', (c) => {
+  const id = c.req.param('id')
+  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  return c.json({ holat: rejimHolati(id) })
+})
+
+/**
+ * Ruxsat rejimini o'zgartirish. Auto o'z-o'zidan o'chgan bo'lsa
+ * ("Qayta yoqish") ham shu marshrut ishlatiladi.
+ */
+chatRoutes.post('/chat/sessions/:id/rejim', async (c) => {
+  const id = c.req.param('id')
+  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+
+  let rejim: unknown
+  try {
+    const tana = (await c.req.json()) as { rejim?: unknown }
+    rejim = tana?.rejim
+  } catch {
+    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+  }
+
+  if (rejim !== 'tasdiq' && rejim !== 'auto') {
+    return c.json({ error: "rejim 'tasdiq' yoki 'auto' bo'lishi kerak" }, 400)
+  }
+  return c.json({ holat: await rejimOrnat(id, rejim) })
+})
+
+/** Javob oqimini to'xtatish */
+chatRoutes.post('/chat/stop', async (c) => {
+  let sessionId: string | undefined
+  try {
+    const tana = (await c.req.json()) as { sessionId?: unknown }
+    sessionId = matnMi(tana?.sessionId)
+  } catch {
+    // pastda tekshiriladi
+  }
+  if (!sessionId) return c.json({ error: 'sessionId majburiy' }, 400)
+  return c.json({ toxtatildi: oqimniToxtat(sessionId) })
+})
+
+function matnMi(qiymat: unknown): string | undefined {
+  return typeof qiymat === 'string' && qiymat.length > 0 ? qiymat : undefined
+}

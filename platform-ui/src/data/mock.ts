@@ -14,7 +14,6 @@ import type {
   BuildPlan,
   LlmCall,
   Server,
-  Skill,
   ToolCard,
   WorkflowStep,
 } from '@platforma/shared'
@@ -137,95 +136,6 @@ export const auditLog: AuditEntry[] = [
   { time: '00:12', actor: 'berlin-1 daemon', action: 'Kunlik backup', target: 'sqlite → berlin-1', level: "o'zgartirish", result: 'tasdiqlandi' },
 ]
 
-export const skills: Skill[] = [
-  {
-    id: 'rss-collector',
-    name: 'RSS Collector',
-    desc: "RSS/Atom manbalardan element yig'ish, buzilgan feed'larga chidamli",
-    version: 'v2.1',
-    installed: true,
-    category: 'Data manba',
-    permissions: [
-      { level: "o'qish", text: 'Tashqi URL\'larga HTTP so\'rov' },
-      { level: "o'zgartirish", text: "Bazaga element yozish" },
-    ],
-  },
-  {
-    id: 'telegram-publisher',
-    name: 'Telegram Publisher',
-    desc: 'Kanalga post chiqarish, approval flow bilan',
-    version: 'v1.8',
-    installed: true,
-    category: 'Chiqish kanali',
-    permissions: [
-      { level: "o'zgartirish", text: 'Telegram Bot API orqali xabar yuborish' },
-      { level: "o'qish", text: 'Kanal statistikasi' },
-    ],
-  },
-  {
-    id: 'django-deploy',
-    name: 'Django Deploy',
-    desc: "Django loyihani serverga chiqarish: venv, gunicorn, nginx, migratsiya",
-    version: 'v1.2',
-    installed: false,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'zgartirish", text: 'Serverda paket o\'rnatish va servis yaratish' },
-      { level: "o'zgartirish", text: 'Nginx konfiguratsiyasini yozish' },
-      { level: 'xavfli', text: 'Systemd servisni qayta ishga tushirish' },
-    ],
-  },
-  {
-    id: 'fastapi-deploy',
-    name: 'FastAPI Deploy',
-    desc: "FastAPI + frontend loyihani to'liq deploy qilish: venv, gunicorn, migratsiya, nginx",
-    version: 'v1.1',
-    installed: true,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'zgartirish", text: 'Serverda venv yaratish va systemd unit yozish' },
-      { level: "o'zgartirish", text: "Bazaga migratsiya qo'llash" },
-      { level: 'xavfli', text: 'Servisni qayta ishga tushirish (zero-downtime)' },
-    ],
-  },
-  {
-    id: 'rust-deploy',
-    name: 'Rust Binary Deploy',
-    desc: 'Cross-compile qilingan binary\'ni serverga ko\'chirish va servis qilish',
-    version: 'v0.9',
-    installed: false,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'zgartirish", text: 'Binary yuklash va systemd unit yaratish' },
-      { level: 'xavfli', text: 'Eski versiyani almashtirish (rollback saqlanadi)' },
-    ],
-  },
-  {
-    id: 'docker-compose-deploy',
-    name: 'Docker Compose Deploy',
-    desc: "compose.yml asosida stack ko'tarish, preview muhit bilan",
-    version: 'v1.5',
-    installed: false,
-    category: 'Deploy',
-    permissions: [
-      { level: "o'qish", text: 'Konteyner loglari va holati' },
-      { level: "o'zgartirish", text: 'docker compose up / down' },
-      { level: 'xavfli', text: 'Volume\'larni o\'chirish (har doim tasdiq bilan)' },
-    ],
-  },
-  {
-    id: 'postgres-backup',
-    name: 'Postgres Backup',
-    desc: 'Kunlik pg_dump, saqlash muddati siyosati bilan',
-    version: 'v1.0',
-    installed: false,
-    category: 'Ma\'lumotlar',
-    permissions: [
-      { level: "o'qish", text: 'Bazadan pg_dump o\'qish' },
-      { level: "o'zgartirish", text: 'Zaxira faylini berlin-1 ga yozish' },
-    ],
-  },
-]
 
 // Chat uchun tayyor javoblar (faqat demo rejim — backend ulanganda o'chadi)
 export interface CannedReply {
