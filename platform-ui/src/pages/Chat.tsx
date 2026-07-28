@@ -46,6 +46,7 @@ import {
 } from '../lib/api'
 import { useIshlayotganlar } from '../lib/ishlayotganlar'
 import { saqlangandanOqi } from '../lib/model-saqlash'
+import { useToast } from '../lib/toast'
 import { ws } from '../lib/ws'
 
 interface Msg {
@@ -115,7 +116,7 @@ export default function Chat({
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  const toast = useToast()
 
   const [modellar, setModellar] = useState<ModelInfo[]>([])
   /**
@@ -434,12 +435,6 @@ export default function Chat({
     el.style.height = `${Math.min(el.scrollHeight, KIRITISH_MAX_BALANDLIK)}px`
   }, [input])
 
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(null), 3500)
-    return () => clearTimeout(t)
-  }, [toast])
-
   const send = useCallback(
     async (xom?: string) => {
       const text = (xom ?? input).trim()
@@ -519,10 +514,11 @@ export default function Chat({
       await ruxsatJavobiYubor(sorov.sessionId, sorov.id, javob)
     } catch (xato) {
       // Yuborilmasa foydalanuvchi bilishi kerak — agent kutib turibdi
-      setToast(
+      toast(
         xato instanceof ApiXatosi
           ? `Javob yuborilmadi: ${xato.message}`
           : "Ruxsat javobi yuborilmadi",
+        'error',
       )
       setRuxsatJavoblari((r) => {
         const { [sorov.id]: _olib, ...qolgan } = r
@@ -543,8 +539,9 @@ export default function Chat({
       setRejim(await rejimOrnatSorov(sessionId, yangi))
     } catch (xato) {
       setRejim(oldingi)
-      setToast(
+      toast(
         xato instanceof ApiXatosi ? `Rejim o'zgarmadi: ${xato.message}` : "Rejim o'zgarmadi",
+        'error',
       )
     }
   }
@@ -797,12 +794,6 @@ export default function Chat({
           </div>
         </div>
       </div>
-
-      {toast && (
-        <div className="rise-in fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-line bg-panel2 px-4 py-2 text-sm shadow-xl">
-          {toast}
-        </div>
-      )}
     </div>
   )
 }

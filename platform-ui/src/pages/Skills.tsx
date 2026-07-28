@@ -20,6 +20,7 @@ import {
   skillOrnatishniBekor,
   skilllarniOl,
 } from '../lib/api'
+import { useToast } from '../lib/toast'
 import { Card, PageHead } from '../ui'
 
 // ---------------------------------------------------------------------------
@@ -324,25 +325,29 @@ function Manbalar({
 }) {
   const [url, setUrl] = useState('')
   const [ishlayapti, setIshlayapti] = useState(false)
-  const [xato, setXato] = useState<string | null>(null)
-  const [xabar, setXabar] = useState<string | null>(null)
   const [bandId, setBandId] = useState<string | null>(null)
+  const toast = useToast()
 
   const qosh = async () => {
     if (!url.trim() || ishlayapti) return
     setIshlayapti(true)
-    setXato(null)
-    setXabar(null)
     try {
       const natija = await manbaQosh(url.trim())
       setUrl('')
-      setXabar(
+      const ogoh = natija.ogohlantirishlar.length
+      toast(
         `${natija.manba.owner}/${natija.manba.repo}: ${natija.qoshildi} skill topildi` +
-          (natija.ogohlantirishlar.length > 0 ? ` · ${natija.ogohlantirishlar.length} ogohlantirish` : ''),
+          (ogoh > 0 ? ` · ${ogoh} ogohlantirish` : ''),
+        // Ogohlantirish bo'lsa sariq: skilllar baribir qo'shildi, lekin
+        // foydalanuvchi ularni ko'rib chiqsin
+        ogoh > 0 ? 'warning' : 'success',
       )
       onYangilandi()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? [x.message, x.detail].filter(Boolean).join(' — ') : "Ulab bo'lmadi")
+      toast(
+        x instanceof ApiXatosi ? [x.message, x.detail].filter(Boolean).join(' — ') : "Ulab bo'lmadi",
+        'error',
+      )
     } finally {
       setIshlayapti(false)
     }
@@ -350,14 +355,15 @@ function Manbalar({
 
   const sinxronla = async (id: string) => {
     setBandId(id)
-    setXato(null)
-    setXabar(null)
     try {
       const n = await manbaSinxronla(id)
-      setXabar(`Sinxronlandi: +${n.qoshildi} yangi, ${n.yangilandi} yangilandi, -${n.ochirildi}`)
+      toast(
+        `Sinxronlandi: +${n.qoshildi} yangi, ${n.yangilandi} yangilandi, -${n.ochirildi}`,
+        'success',
+      )
       onYangilandi()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "Sinxronlab bo'lmadi")
+      toast(x instanceof ApiXatosi ? x.message : "Sinxronlab bo'lmadi", 'error')
     } finally {
       setBandId(null)
     }
@@ -368,9 +374,10 @@ function Manbalar({
     setBandId(m.id)
     try {
       await manbaOchir(m.id)
+      toast(`${m.owner}/${m.repo} o'chirildi`, 'success')
       onYangilandi()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "O'chirib bo'lmadi")
+      toast(x instanceof ApiXatosi ? x.message : "O'chirib bo'lmadi", 'error')
     } finally {
       setBandId(null)
     }
@@ -400,9 +407,6 @@ function Manbalar({
           {ishlayapti ? 'Skanerlanmoqda…' : 'Ulash'}
         </button>
       </div>
-
-      {xato && <p className="mt-3 text-sm text-coral">{xato}</p>}
-      {xabar && <p className="mt-3 text-sm text-mint">{xabar}</p>}
 
       {manbalar.length > 0 && (
         <div className="mt-4 space-y-2 border-t border-line pt-4">

@@ -14,6 +14,7 @@ import OqimIndikatori from '../components/OqimIndikatori'
 import { ApiXatosi, sessiyaOchir, sessiyaSarlavhaOzgart } from '../lib/api'
 import type { IshlayotganlarXaritasi } from '../lib/ishlayotganlar'
 import { GURUH_TARTIBI, qisqaVaqt, sanaGuruhi, type SanaGuruhi } from '../lib/sana'
+import { useToast } from '../lib/toast'
 import { Card, PageHead } from '../ui'
 
 interface Props {
@@ -53,14 +54,8 @@ export default function Suhbatlar({
   /** O'chirish tasdig'i kutilayotgan suhbat */
   const [ochirilsinmi, setOchirilsinmi] = useState<ChatSession | null>(null)
   const [amalKetmoqda, setAmalKetmoqda] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  const toast = useToast()
   const tahrirRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(null), 3500)
-    return () => clearTimeout(t)
-  }, [toast])
 
   // Tahrir boshlanganda matn tanlangan holda fokus oladi — foydalanuvchi
   // darhol yangi nom yoza oladi
@@ -123,7 +118,7 @@ export default function Suhbatlar({
       // Eski nomni qaytarish uchun serverdan qayta so'raymiz — mahalliy
       // holatni "orqaga qaytarish"dan ishonchliroq
       yangila()
-      setToast(x instanceof ApiXatosi ? `Nom o'zgarmadi: ${x.message}` : "Nom o'zgarmadi")
+      toast(x instanceof ApiXatosi ? `Nom o'zgarmadi: ${x.message}` : "Nom o'zgarmadi", 'error')
     }
   }
 
@@ -136,7 +131,7 @@ export default function Suhbatlar({
       // Ochiq suhbat o'chirilgan bo'lsa — bo'sh chatga tushamiz
       if (s.id === ochiqSessiya) onYangiSuhbat()
     } catch (x) {
-      setToast(x instanceof ApiXatosi ? `O'chirilmadi: ${x.message}` : "Suhbat o'chirilmadi")
+      toast(x instanceof ApiXatosi ? `O'chirilmadi: ${x.message}` : "Suhbat o'chirilmadi", 'error')
       setOchirilsinmi(null)
     } finally {
       setAmalKetmoqda(false)
@@ -370,12 +365,6 @@ export default function Suhbatlar({
               </div>
             </div>
           </Card>
-        </div>
-      )}
-
-      {toast && (
-        <div className="rise-in fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-line bg-panel2 px-4 py-2 text-sm shadow-xl">
-          {toast}
         </div>
       )}
     </div>
