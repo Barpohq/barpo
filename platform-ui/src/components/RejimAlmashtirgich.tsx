@@ -40,7 +40,7 @@ export default function RejimAlmashtirgich({ holat, onOzgart, bandmi }: Props) {
           ? 'border-lazur-dim text-lazur hover:brightness-110'
           : ozidanOchgan
             ? 'border-gold/50 text-gold hover:border-gold'
-            : 'border-line text-faint hover:border-lazur-dim hover:text-muted'
+            : 'border-transparent text-faint hover:bg-panel2/60 hover:text-muted'
       }`}
     >
       {yorliq}

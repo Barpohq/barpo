@@ -8,11 +8,24 @@
 // tanlangan model yorlig'i ko'rinadi.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ModelInfo } from '@platforma/shared'
+import type { ManbaTuri, ModelInfo } from '@platforma/shared'
 import { modelniSaqla } from '../lib/model-saqlash'
+
+/**
+ * To'lov modeli yorlig'i. Obuna va API kalitini ajratish shart: ikkalasi ham
+ * "OpenAI" deb ko'rinsa, foydalanuvchi obunasi bor deb o'ylab pullik API
+ * kanalidan ishlatib yuboradi.
+ */
+const MANBA_YORLIQ: Record<ManbaTuri, { belgi: string; matn: string; rang: string }> = {
+  obuna: { belgi: '⬢', matn: 'obuna', rang: 'text-mint' },
+  mahalliy: { belgi: '⌂', matn: 'mahalliy', rang: 'text-mint' },
+  kalit: { belgi: '◇', matn: 'API kalit', rang: 'text-faint' },
+}
 
 /** $/1M tokenni o'qilishi oson shaklga keltiradi */
 function narxMatni(m: ModelInfo): string {
+  // Obunada tokenlar oylik to'lovga kiradi — $ ko'rsatish chalg'itadi
+  if (m.manbaTuri === 'obuna') return 'obunada'
   if (m.cost.input === 0 && m.cost.output === 0) return 'bepul'
   const f = (n: number) => (n < 1 ? n.toFixed(2) : n.toFixed(1))
   return `$${f(m.cost.input)}/$${f(m.cost.output)}`
@@ -79,17 +92,19 @@ export default function ModelTanlagich({
         )
       : modellar
 
-    // Server tartibini saqlaymiz — Map kiritilish tartibini eslaydi
-    const xarita = new Map<string, ModelInfo[]>()
+    // Server tartibini saqlaymiz — Map kiritilish tartibini eslaydi.
+    // Kalit provider id — bir xil nomli, lekin turli manbali providerlar
+    // (OpenAI kalit va OpenAI Codex obunasi) qo'shilib ketmasligi uchun.
+    const xarita = new Map<string, { boshi: ModelInfo; modellari: ModelInfo[] }>()
     for (const m of mos) {
-      const bor = xarita.get(m.providerName)
-      if (bor) bor.push(m)
-      else xarita.set(m.providerName, [m])
+      const bor = xarita.get(m.provider)
+      if (bor) bor.modellari.push(m)
+      else xarita.set(m.provider, { boshi: m, modellari: [m] })
     }
-    return [...xarita.entries()]
+    return [...xarita.values()]
   }, [modellar, qidiruv])
 
-  const jamiMos = guruhlar.reduce((s, [, v]) => s + v.length, 0)
+  const jamiMos = guruhlar.reduce((s, g) => s + g.modellari.length, 0)
 
   function tanla(m: ModelInfo) {
     modelniSaqla({ provider: m.provider, model: m.id })
@@ -101,11 +116,19 @@ export default function ModelTanlagich({
   // Qulflangan holat — faqat yorliq
   if (qulflangan) {
     return (
-      <div className="flex items-center gap-2 text-xs text-faint">
+      <div className="flex items-center gap-2 px-2.5 py-1 text-xs text-faint">
         <span className="inline-block size-1.5 rounded-full bg-lazur" aria-hidden />
         <span className="font-mono">
           {tanlangan ? `${tanlangan.providerName} · ${tanlangan.name}` : 'model tanlangan'}
         </span>
+        {tanlangan && (
+          <span
+            className={`font-mono text-[10px] ${MANBA_YORLIQ[tanlangan.manbaTuri].rang}`}
+            title={`${MANBA_YORLIQ[tanlangan.manbaTuri].matn} — ${tanlangan.manba}`}
+          >
+            {MANBA_YORLIQ[tanlangan.manbaTuri].belgi} {MANBA_YORLIQ[tanlangan.manbaTuri].matn}
+          </span>
+        )}
         <span title="Suhbat boshlangach provider o'zgartirilmaydi">🔒</span>
       </div>
     )
@@ -119,19 +142,28 @@ export default function ModelTanlagich({
         disabled={yuklanmoqda || modellar.length === 0}
         aria-expanded={ochiq}
         aria-haspopup="listbox"
-        className="flex items-center gap-2 rounded-lg border border-line bg-panel px-3 py-1.5 text-sm transition hover:border-lazur-dim disabled:opacity-50"
+        title="Model tanlash — suhbat boshlangach provider qulflanadi"
+        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[13px] transition disabled:opacity-50 ${
+          ochiq ? 'border-lazur-dim bg-panel2' : 'border-transparent hover:bg-panel2/60'
+        }`}
       >
         {yuklanmoqda ? (
           <span className="text-muted">modellar yuklanmoqda…</span>
         ) : tanlangan ? (
           <>
             <span className="font-mono text-xs text-lazur">{tanlangan.providerName}</span>
-            <span>{tanlangan.name}</span>
+            <span
+              className={`font-mono text-[10px] ${MANBA_YORLIQ[tanlangan.manbaTuri].rang}`}
+              title={`${MANBA_YORLIQ[tanlangan.manbaTuri].matn} — ${tanlangan.manba}`}
+            >
+              {MANBA_YORLIQ[tanlangan.manbaTuri].belgi}
+            </span>
+            <span className="truncate">{tanlangan.name}</span>
           </>
         ) : (
           <span className="text-muted">{modellar.length ? 'Model tanlang' : 'Model topilmadi'}</span>
         )}
-        <span className="text-faint" aria-hidden>
+        <span className="ml-0.5 text-faint" aria-hidden>
           ▾
         </span>
       </button>
@@ -150,7 +182,9 @@ export default function ModelTanlagich({
               onChange={(e) => setQidiruv(e.target.value)}
               placeholder="Model yoki provider nomi…"
               aria-label="Model qidirish"
-              className="w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint"
+              // `fokus-tashqarida`: global halqa o'rniga maydonning o'z
+              // chegarasi — aks holda ochilgach ikki qavat chegara ko'rinadi
+              className="fokus-tashqarida w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none transition placeholder:text-faint focus:border-lazur-dim"
             />
           </div>
 
@@ -159,11 +193,21 @@ export default function ModelTanlagich({
               <p className="px-4 py-6 text-center text-sm text-muted">Mos model topilmadi</p>
             )}
 
-            {guruhlar.map(([provider, guruhModellari]) => (
-              <div key={provider}>
-                <div className="sticky top-0 flex items-center justify-between bg-panel2 px-3 py-1.5 font-mono text-[11px] text-muted">
-                  <span>{provider}</span>
-                  <span className="text-faint">{guruhModellari.length}</span>
+            {guruhlar.map(({ boshi, modellari: guruhModellari }) => {
+              const yorliq = MANBA_YORLIQ[boshi.manbaTuri]
+              return (
+              <div key={boshi.provider}>
+                <div className="sticky top-0 flex items-center justify-between gap-2 bg-panel2 px-3 py-1.5 font-mono text-[11px] text-muted">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate">{boshi.providerName}</span>
+                    <span
+                      className={`shrink-0 ${yorliq.rang}`}
+                      title={`${yorliq.matn} — ${boshi.manba}`}
+                    >
+                      {yorliq.belgi} {yorliq.matn}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-faint">{guruhModellari.length}</span>
                 </div>
                 {guruhModellari.map((m) => {
                   const faol = tanlangan?.provider === m.provider && tanlangan.id === m.id
@@ -185,7 +229,9 @@ export default function ModelTanlagich({
                         <span className="block text-muted">{kontekstMatni(m.contextWindow)}</span>
                         <span
                           className={
-                            m.cost.input === 0 && m.cost.output === 0 ? 'block text-mint' : 'block text-gold'
+                            m.manbaTuri === 'obuna' || (m.cost.input === 0 && m.cost.output === 0)
+                              ? 'block text-mint'
+                              : 'block text-gold'
                           }
                         >
                           {narxMatni(m)}
@@ -195,7 +241,8 @@ export default function ModelTanlagich({
                   )
                 })}
               </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

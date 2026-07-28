@@ -25,6 +25,41 @@ interface Props {
   qulflangan?: boolean
 }
 
+/**
+ * Hover'da chiqadigan to'liq papka yo'li.
+ *
+ * Brauzerning `title` atributi o'rniga: u ~1 soniya kechikadi, uslubi
+ * tizimniki va uzun yo'lni o'zicha kesadi. Yo'l esa aynan to'liq ko'rinishi
+ * kerak — agent qaysi papkada fayl yaratayotganini bilish muhim.
+ *
+ * `pointer-events-none`: popup sichqonchani ushlab qolmasin, aks holda
+ * ostidagi tugmani bosib bo'lmaydi.
+ */
+function PapkaPopup({ loyiha }: { loyiha: Project | null }) {
+  return (
+    <span
+      role="tooltip"
+      className="pointer-events-none absolute bottom-full right-0 z-50 mb-1.5 hidden w-max max-w-[min(28rem,calc(100vw-3rem))] rounded-lg border border-line bg-panel px-2.5 py-1.5 shadow-xl group-hover:block"
+    >
+      {loyiha ? (
+        <>
+          <span className="block font-mono text-[10px] tracking-widest text-faint uppercase">
+            Ish papkasi
+          </span>
+          {/* break-all: uzun yo'l kesilmasin, o'ralsin */}
+          <span className="mt-0.5 block font-mono text-[11px] break-all text-lazur">
+            {loyiha.papka}
+          </span>
+        </>
+      ) : (
+        <span className="block text-[11px] text-muted">
+          Loyihaga ulanmagan — suhbat o'z vaqtinchalik papkasida ishlaydi
+        </span>
+      )}
+    </span>
+  )
+}
+
 export default function LoyihaTanlagich({
   loyihalar,
   tanlangan,
@@ -56,38 +91,35 @@ export default function LoyihaTanlagich({
     }
   }
 
-  // Qulflangan holatda ro'yxat ochilmaydi — faqat holat ko'rinadi
+  // Qulflangan holatda ro'yxat ochilmaydi — faqat holat ko'rinadi.
+  // To'liq papka yo'li hover popup'ida: yorliqda faqat nom turadi, lekin
+  // agent qaysi papkada ishlayotganini bilish baribir kerak bo'ladi.
   if (qulflangan) {
     return (
-      <span
-        title={
-          tanlangan
-            ? `Loyiha papkasi: ${tanlangan.papka}`
-            : "Bu suhbat loyihaga ulanmagan — o'z vaqtinchalik papkasida ishlaydi"
-        }
-        className="shrink-0 rounded-lg border border-line px-2.5 py-1 font-mono text-[11px] text-faint"
-      >
-        {yorliq}
+      <span className="group relative shrink-0">
+        <span className="block rounded-lg border border-transparent px-2.5 py-1 font-mono text-[11px] text-faint">
+          {yorliq}
+        </span>
+        <PapkaPopup loyiha={tanlangan} />
       </span>
     )
   }
 
   return (
-    <div className="relative shrink-0">
+    <div className="group relative shrink-0">
+      {/* Popup faqat ro'yxat yopiqligida — aks holda ikkisi ustma-ust tushadi */}
+      {!ochiq && <PapkaPopup loyiha={tanlangan} />}
       <button
         type="button"
         onClick={() => setOchiq((o) => !o)}
         aria-expanded={ochiq}
         aria-label={`Loyiha: ${tanlangan?.name ?? 'tanlanmagan'}`}
-        title={
-          tanlangan
-            ? `Loyiha papkasi: ${tanlangan.papka}`
-            : 'Loyiha tanlanmagan — suhbat o\'z papkasida ishlaydi'
-        }
         className={`rounded-lg border px-2.5 py-1 font-mono text-[11px] transition ${
           tanlangan
             ? 'border-lazur-dim text-lazur hover:brightness-110'
-            : 'border-line text-faint hover:border-lazur-dim hover:text-muted'
+            : ochiq
+              ? 'border-lazur-dim bg-panel2 text-muted'
+              : 'border-transparent text-faint hover:bg-panel2/60 hover:text-muted'
         }`}
       >
         {yorliq}
@@ -147,7 +179,9 @@ export default function LoyihaTanlagich({
                 }}
                 placeholder="yangi loyiha nomi…"
                 aria-label="Yangi loyiha nomi"
-                className="min-w-0 flex-1 rounded-lg border border-line bg-panel2 px-2 py-1 text-[13px] outline-none placeholder:text-faint focus:border-lazur-dim"
+                // `fokus-tashqarida`: fokusni maydonning o'z chegarasi
+                // ko'rsatadi — global halqa ustiga tushsa ikki qavat bo'lardi
+                className="fokus-tashqarida min-w-0 flex-1 rounded-lg border border-line bg-panel2 px-2 py-1 text-[13px] outline-none placeholder:text-faint focus:border-lazur-dim"
               />
               <button
                 type="button"
