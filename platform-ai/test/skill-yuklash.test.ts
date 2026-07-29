@@ -102,8 +102,8 @@ describe('skilllarniPromptga', () => {
 
   test('skill matni ISHONCHSIZ deb belgilanadi', () => {
     const matn = skilllarniPromptga([{ nom: 'x', tavsif: 't', yol: '/x' }])
-    expect(matn).toContain('ISHONCHSIZ')
-    expect(matn).toContain('BEKOR QILA')
+    expect(matn).toContain('UNTRUSTED')
+    expect(matn).toContain('CANNOT override')
   })
 })
 

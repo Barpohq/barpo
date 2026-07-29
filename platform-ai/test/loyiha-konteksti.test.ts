@@ -114,7 +114,7 @@ describe('loyihaKontekstiniOqi — belgi chegarasi', () => {
   test('kesilgan matnning oxiri promptda ham bilinadi', () => {
     yoz('AGENTS.md', 'c'.repeat(KONTEKST_CHEGARASI + 1))
     const bolim = kontekstniPromptga(loyihaKontekstiniOqi(papka)!)
-    expect(bolim).toContain('kesildi')
+    expect(bolim).toContain('truncated')
   })
 })
 
@@ -140,12 +140,14 @@ describe('AGENT_SISTEM_PROMPT — kontekstni qo\'shish', () => {
     const bolim = kontekstniPromptga({ fayl: 'AGENTS.md', matn: 'loyiha matni', kesildi: false })
     const prompt = AGENT_SISTEM_PROMPT('/ish', bolim)
     // Ruxsat qoidasi kontekstdan oldin turishi kerak
-    expect(prompt.indexOf('Ruxsatni chetlab')).toBeLessThan(prompt.indexOf('loyiha matni'))
+    expect(prompt.indexOf('work around the permission system')).toBeLessThan(
+      prompt.indexOf('loyiha matni'),
+    )
   })
 
   test('promptda kontekst xavfsizlikni bekor qila olmasligi aytiladi', () => {
     const bolim = kontekstniPromptga({ fayl: 'AGENTS.md', matn: 'x', kesildi: false })
-    expect(bolim).toContain('BEKOR QILA OLMAYDI')
+    expect(bolim).toContain('CANNOT override')
   })
 })
 

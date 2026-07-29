@@ -78,8 +78,8 @@ export type ServerListKirishi = Static<typeof serverListSxemasi>
 export function serverlarniMatnga(serverlar: ServerYozuvi[]): string {
   if (serverlar.length === 0) {
     return [
-      "Platformaga hali server ulanmagan.",
-      "Foydalanuvchi ularni platformaning 'Serverlar' sahifasidan qo'shadi.",
+      'No servers are connected to this platform yet.',
+      "The user adds them from the platform's 'Serverlar' page.",
     ].join(' ')
   }
 
@@ -96,8 +96,8 @@ export function serverlarniMatnga(serverlar: ServerYozuvi[]): string {
     tekisla(sarlavha),
     ...qatorlar.map(tekisla),
     '',
-    "Serverda buyruq bajarish uchun `bash` bilan `ssh <NOM> '<buyruq>'` ishlat —",
-    'parolsiz ulanish allaqachon sozlangan.',
+    "To run a command on a server, use `bash` with `ssh <NOM> '<command>'` —",
+    'passwordless access is already configured.',
   ].join('\n')
 }
 
@@ -172,13 +172,13 @@ export function serverToollari(manba?: ServerManbasi): AgentTool<never>[] {
  */
 export const SERVER_PROMPT_QISMI = {
   /** Tool ro'yxatiga qo'shiladigan qator */
-  royxat: ["- serverList: platformaga ulangan serverlar ro'yxati (nom, host, port, user)"],
+  royxat: ['- serverList: the servers connected to this platform (name, host, port, user)'],
   /** Qanday ishlatish bo'yicha ko'rsatma */
   qoida: [
-    "Foydalanuvchi serverni nom bilan tilga olsa yoki qanday serverlar borligini",
-    "so'rasa, avval `serverList` ni chaqir — nomlarni taxmin QILMA.",
-    "Serverda buyruq bajarish uchun `bash` bilan `ssh <nom> '<buyruq>'` ishlat;",
-    "parolsiz ulanish sozlangan. Masofadagi buyruqlar uchun ham odatdagi",
-    "ruxsat qoidalari amal qiladi.",
+    'When the user refers to a server by name, or asks which servers exist,',
+    'call `serverList` first — NEVER guess a server name.',
+    'To run something on a server, use `bash` with `ssh <name> \'<command>\'`;',
+    'passwordless access is already configured. Remote commands follow the same',
+    'permission rules as local ones.',
   ],
 } as const

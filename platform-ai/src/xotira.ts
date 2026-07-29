@@ -234,25 +234,25 @@ export function xotiralarniPromptga(
 
   const qatorlar = [
     '',
-    '--- Loyiha xotirasi ---',
-    'Bu loyiha haqida ilgari saqlab qo\'yilgan faktlar. Quyida faqat NOM va',
-    'TAVSIF bor — kerakli bo\'lsa `read` bilan faylni to\'liq o\'qi.',
+    '--- Project memory ---',
+    'Facts saved earlier about this project. Only the NAME and DESCRIPTION are',
+    'shown below — if one is relevant, read the file in full with `read`.',
   ]
 
   if (indeks) {
     qatorlar.push(
       '',
-      `Indeks (${XOTIRA_INDEKSI}) — xotiralar bo'yicha yo'l xaritasi:`,
+      `Index (${XOTIRA_INDEKSI}) — a roadmap over the memories:`,
       '',
       indeks.matn,
       ...(indeks.kesildi
-        ? ['', `(indeks ${XOTIRA_INDEKS_CHEGARASI} belgida kesildi — to'lig'ini \`read\` bilan o'qi)`]
+        ? ['', `(index truncated at ${XOTIRA_INDEKS_CHEGARASI} characters — read the file for the rest)`]
         : []),
     )
   }
 
   if (xotiralar.length === 0) {
-    qatorlar.push('', 'Hozircha saqlangan xotira yo\'q.')
+    qatorlar.push('', 'No memories saved yet.')
   } else {
     qatorlar.push('', '<project_memory>')
     for (const x of xotiralar) {
@@ -268,29 +268,47 @@ export function xotiralarniPromptga(
 
   qatorlar.push(
     '',
-    'YOZISH. Loyiha haqida uzoq muddat foydali fakt bilsang — saqlab qo\'y:',
-    'qabul qilingan qaror va uning SABABI, foydalanuvchi bergan qoida,',
-    'arxitektura chegarasi, tashqi manba havolasi. Buning uchun `write`',
-    `bilan \`${papka}/<nom>.md\` fayl yoz:`,
+    'WRITING. When you learn something about this project that stays useful',
+    'beyond the current conversation, save it. Each memory is one file holding',
+    'one fact. Write it with `write` to',
+    `\`${papka}/<name>.md\`:`,
     '',
     '---',
-    'name: <kebab-case-nom>',
-    "description: <bir qatorli tavsif — keyingi sessiyada shu bo'yicha tanlanadi>",
+    'name: <kebab-case-name>',
+    'description: <one line — this is what a future session reads to decide if',
+    '  the memory is relevant>',
     `turi: <${XOTIRA_TURLARI.join(' | ')}>`,
     '---',
     '',
-    "<fakt. Qaror bo'lsa **Nega:** va **Qanday qo'llash:** qatorlarini qo'sh.",
-    "Bog'liq xotiraga [[nom]] bilan havola ber.>",
+    '<the fact. For a decision, add **Nega:** (why) and **Qanday qo\'llash:**',
+    '(how to apply) lines. Link related memories with [[name]].>',
     '',
-    `Keyin \`${join(papka, XOTIRA_INDEKSI)}\` indeksiga bitta qator qo'sh:`,
-    '`- [Sarlavha](<nom>.md) — qisqa izoh`. Indeks — xotiralar ro\'yxati,',
-    'xotira MATNI u yerga yozilmaydi.',
+    'WHAT BELONGS HERE, by type:',
+    `- ${XOTIRA_TURLARI[0]}: a decision that was made and THE REASON behind it —`,
+    '  especially when the reason is not visible in the code itself.',
+    `- ${XOTIRA_TURLARI[1]}: an architectural boundary or constraint that future`,
+    '  work must respect.',
+    `- ${XOTIRA_TURLARI[2]}: a rule the user gave you about how to work, plus`,
+    '  why they gave it.',
+    `- ${XOTIRA_TURLARI[3]}: a pointer to an external resource (URL, dashboard,`,
+    '  ticket).',
     '',
-    'YOZMA: kodda ko\'rinib turgan narsa (tuzilma, funksiya nomlari), bir',
-    'martalik detal, faqat shu suhbatga tegishli narsa, parol va API kalitlari.',
-    'Avval mavjud xotirani tekshir — takrorlash o\'rniga `edit` bilan yangila.',
-    'Fakt noto\'g\'ri chiqsa faylni o\'chir.',
-    '--- Loyiha xotirasi tugadi ---',
+    `Then add one line to the index at \`${join(papka, XOTIRA_INDEKSI)}\`:`,
+    '`- [Title](<name>.md) — short hook`. The index is a list of memories; the',
+    'memory TEXT never goes there.',
+    '',
+    'DO NOT SAVE: anything already visible in the code (structure, function',
+    'names, what a file does), how a specific bug was fixed, one-off details,',
+    'anything that only matters to this conversation, or passwords and API',
+    'keys. If you are unsure whether a fact will still matter next week, it',
+    'probably does not belong here.',
+    '',
+    'Before saving, check the existing memories above — update the matching one',
+    'with `edit` instead of creating a near-duplicate. Delete a memory file if',
+    'the fact turns out to be wrong. Memories reflect what was true when they',
+    'were written: if one names a file or a flag, verify it still exists before',
+    'acting on it.',
+    '--- Project memory end ---',
   )
 
   return qatorlar.join('\n')

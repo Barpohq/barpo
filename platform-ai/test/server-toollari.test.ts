@@ -60,7 +60,7 @@ describe('serverlarniMatnga', () => {
 
   test('bo\'sh ro\'yxat — xato emas, tushuntirish', () => {
     const matn = serverlarniMatnga([])
-    expect(matn).toContain('server ulanmagan')
+    expect(matn).toContain('No servers are connected')
     // Agent foydalanuvchiga nima qilish kerakligini ayta olsin
     expect(matn).toContain('Serverlar')
   })
@@ -105,7 +105,7 @@ describe('serverList tool', () => {
   test('bo\'sh manba bilan ham xato tashlamaydi', async () => {
     const { matn, soni } = await toolniChaqir(serverListToolYarat(() => []))
     expect(soni).toBe(0)
-    expect(matn).toContain('server ulanmagan')
+    expect(matn).toContain('No servers are connected')
   })
 
   test('parametrsiz chaqiriladi — sxema bo\'sh obyekt', () => {
@@ -144,7 +144,7 @@ describe('prompt bilan moslik', () => {
     const prompt = AGENT_SISTEM_PROMPT('/ish', undefined, undefined, undefined, true)
     expect(prompt).toContain('serverList')
     // Ko'rsatma ham tushsin — faqat nom yetarli emas
-    expect(prompt).toContain('taxmin QILMA')
+    expect(prompt).toContain('NEVER guess a server name')
   })
 
   test('serverlarBor=false bo\'lsa prompt uni umuman tilga olmaydi', () => {

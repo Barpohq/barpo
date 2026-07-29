@@ -343,16 +343,16 @@ export function qidiruvToollari(kontekst: { env: { cwd: string } }): AgentTool<n
 export const QIDIRUV_PROMPT_QISMI = {
   /** Tool ro'yxatiga qo'shiladigan qatorlar */
   royxat: [
-    '- grep: fayllar ichidan regex bilan qidirish (`fayl:qator:matn`)',
-    "- find: glob bo'yicha fayl nomini topish",
-    "- ls: papka ro'yxatini ko'rish",
+    '- grep: search inside files with a regex (`file:line:text`)',
+    '- find: locate files by glob',
+    '- ls: list a directory',
   ],
   /** Qanday ishlatish bo'yicha ko'rsatma */
   qoida: [
-    'Fayl qidirishda `bash` EMAS, `grep`/`find`/`ls` ni ishlat — ular tezroq',
-    "va ruxsat so'ramaydi. `bash` faqat boshqa ilojisi bo'lmaganda kerak.",
-    'Bu uch tool faqat ish papkasi ichida ishlaydi va standart holda `.git`,',
-    '`node_modules`, `dist` kabi papkalarni tashlab ketadi (`all: true` bilan',
-    "ularni ham ko'rish mumkin).",
+    'To find files use `grep`/`find`/`ls`, NOT `bash` — they are faster and ask',
+    'for no permission. Reach for `bash` only when nothing else will do. Those',
+    'three tools work only inside the working directory and by default skip',
+    '`.git`, `node_modules`, `dist` and similar (pass `all: true` to include',
+    'them).',
   ],
 } as const

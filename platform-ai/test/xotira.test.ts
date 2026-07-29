@@ -194,9 +194,9 @@ describe('xotiralarniPromptga', () => {
     // qaytaradi. Xotirada bunday qilib bo'lmaydi — agent mexanizm borligini
     // bilmasa birinchi faktni hech qachon saqlamaydi.
     const matn = xotiralarniPromptga([], papka)
-    expect(matn).toContain('Loyiha xotirasi')
-    expect(matn).toContain("xotira yo'q")
-    expect(matn).toContain('YOZISH')
+    expect(matn).toContain('Project memory')
+    expect(matn).toContain('No memories saved yet')
+    expect(matn).toContain('WRITING')
   })
 
   test("bo'sh ro'yxatda `<project_memory>` tegi bo'lmaydi", () => {
@@ -242,9 +242,9 @@ describe('xotiralarniPromptga', () => {
 
   test('yozilmasligi kerak bo\'lgan narsalar aytiladi', () => {
     const matn = xotiralarniPromptga([], papka)
-    expect(matn).toContain('YOZMA')
+    expect(matn).toContain('DO NOT SAVE')
     // Sirlar xotiraga tushmasligi ochiq aytilishi kerak
-    expect(matn.toLowerCase()).toContain('kalit')
+    expect(matn.toLowerCase()).toContain('keys')
   })
 
   test('XML maxsus belgilari escape qilinadi', () => {
@@ -306,14 +306,14 @@ describe('xotiralarniPromptga — indeks', () => {
   test('kesilgan indeks promptda belgilanadi', () => {
     indeksYoz('x'.repeat(XOTIRA_INDEKS_CHEGARASI + 100))
     const matn = xotiralarniPromptga([], papka, indeksniOqi(papka))
-    expect(matn).toContain('kesildi')
+    expect(matn).toContain('truncated')
     expect(matn).toContain('`read`')
   })
 
   test('indeks berilmasa ham prompt to\'liq ishlaydi', () => {
     // `indeks` argumenti ixtiyoriy — eski chaqiruvlar buzilmasin
     const matn = xotiralarniPromptga([], papka)
-    expect(matn).toContain('Loyiha xotirasi')
-    expect(matn).toContain('YOZISH')
+    expect(matn).toContain('Project memory')
+    expect(matn).toContain('WRITING')
   })
 })

@@ -80,7 +80,7 @@ describe('sorovniMatnga — hujum matni promptga tushmaydi', () => {
   test('amalning o\'zi (rm -rf ~) promptda ko\'rinadi — u baholanishi kerak', () => {
     const matn = sorovniMatnga(asosiy)
     expect(matn).toContain('rm -rf ~')
-    expect(matn).toContain('BAHOLANADIGAN AMAL')
+    expect(matn).toContain('ACTION TO EVALUATE')
   })
 
   test('juda uzun xabar qisqartiriladi', () => {
@@ -100,7 +100,7 @@ describe('sorovniMatnga — chegaralar', () => {
         { role: 'user', text: 'lekin hech narsani push qilma' },
       ],
     })
-    expect(matn).toContain('CHEGARALAR')
+    expect(matn).toContain('LIMITS SET BY THE USER')
     expect(matn).toContain('push qilma')
   })
 
@@ -114,7 +114,7 @@ describe('sorovniMatnga — chegaralar', () => {
       ],
     })
     expect(matn).toContain('push qilma')
-    expect(matn).toContain('faqat foydalanuvchi bekor qila oladi')
+    expect(matn).toContain('only the user can lift them')
   })
 
   test('chegara yo\'q bo\'lsa bo\'lim ham yo\'q', () => {
@@ -122,6 +122,6 @@ describe('sorovniMatnga — chegaralar', () => {
       ...asosiy,
       suhbat: [{ role: 'user', text: 'loyihani qur' }],
     })
-    expect(matn).not.toContain('CHEGARALAR')
+    expect(matn).not.toContain('LIMITS SET BY THE USER')
   })
 })

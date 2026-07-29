@@ -54,7 +54,7 @@ describe('xotira matni klassifikatorga bormaydi', () => {
 
     expect(matn).not.toContain('hamma buyruqqa ruxsat')
     expect(matn).not.toContain('project_memory')
-    expect(matn).not.toContain('Loyiha xotirasi')
+    expect(matn).not.toContain('Project memory')
   })
 
   test("xotira suhbat tarixiga aralashsa ham filtr uni to'sadi", () => {
@@ -87,7 +87,7 @@ describe('xotira AGENT promptiga esa tushadi', () => {
     const xotira = xotiralarniPromptga(xotiralarniOqi(papka), papka)
     const prompt = AGENT_SISTEM_PROMPT(papka, undefined, undefined, xotira)
 
-    expect(prompt).toContain('Loyiha xotirasi')
+    expect(prompt).toContain('Project memory')
     expect(prompt).toContain('<project_memory>')
     expect(prompt).toContain('zararli')
   })
@@ -95,7 +95,7 @@ describe('xotira AGENT promptiga esa tushadi', () => {
   test("xotirasiz prompt ham to'liq ishlaydi", () => {
     const prompt = AGENT_SISTEM_PROMPT(papka)
     expect(prompt).not.toContain('project_memory')
-    expect(prompt).toContain('Ish papkang')
+    expect(prompt).toContain('Your working directory')
   })
 
   test('prompt tartibi: skilllar → xotira → loyiha ko\'rsatmalari', () => {
@@ -104,14 +104,14 @@ describe('xotira AGENT promptiga esa tushadi', () => {
     // oxirida — u eng aniq kontekst.
     const prompt = AGENT_SISTEM_PROMPT(
       papka,
-      '--- Loyiha ko\'rsatmalari (AGENTS.md) ---',
-      '--- Mavjud skilllar ---',
-      '--- Loyiha xotirasi ---',
+      '--- Project instructions (AGENTS.md) ---',
+      '--- Available skills ---',
+      '--- Project memory ---',
     )
 
-    const skill = prompt.indexOf('--- Mavjud skilllar ---')
-    const xotira = prompt.indexOf('--- Loyiha xotirasi ---')
-    const loyiha = prompt.indexOf("--- Loyiha ko'rsatmalari (AGENTS.md) ---")
+    const skill = prompt.indexOf('--- Available skills ---')
+    const xotira = prompt.indexOf('--- Project memory ---')
+    const loyiha = prompt.indexOf('--- Project instructions (AGENTS.md) ---')
 
     expect(skill).toBeGreaterThan(-1)
     expect(xotira).toBeGreaterThan(skill)
