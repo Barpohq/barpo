@@ -38,52 +38,11 @@ export const seedAuditLog: AuditEntry[] = [
 // O'rnatilgan ilovalar
 // ---------------------------------------------------------------------------
 
-export const seedApps: AppManifest[] = [
-  {
-    id: 'ai-news-bot',
-    icon: '📰',
-    name: 'ai-news-bot',
-    tagline: "AI yangiliklarini yig'ib, saralab, Telegram kanalga chiqaradi",
-    version: 'v1.4.2',
-    service: 'helsinki-1 · docker · uptime 31 kun',
-    status: 'running',
-    widgets: [
-      {
-        type: 'stats',
-        items: [
-          { label: 'Bugungi klasterlar', value: '247' },
-          { label: 'Kanalga chiqdi', value: '4', hint: '1 tasdiq kutmoqda' },
-          { label: 'Approval rate', value: '96%', accent: 'var(--color-lazur)' },
-          { label: 'Bugungi xarajat', value: '$0.084', accent: 'var(--color-gold)' },
-        ],
-      },
-      {
-        type: 'table',
-        title: 'Oxirgi postlar',
-        columns: ['Vaqt', 'Sarlavha', 'Holat'],
-        rows: [
-          ['12:06', 'Gemini 3 Flash narxi 40% tushdi', 'nashr ✓'],
-          ['12:04', 'Til sinovi natijalari: kichik modellar', 'tasdiq kutmoqda'],
-          ['11:59', "OpenAI yangi realtime API e'lon qildi", 'nashr ✓'],
-          ['11:58', 'Mistral open-weights model chiqardi', 'nashr ✓'],
-          ['11:58', 'Claude Fable 5 benchmark natijalari', 'nashr ✓'],
-        ],
-      },
-      {
-        type: 'bars',
-        title: 'Manba turlari (bugungi 412 element)',
-        suffix: ' ta',
-        items: [
-          { label: 'RSS (rasmiy bloglar)', value: 214 },
-          { label: 'Hacker News', value: 102 },
-          { label: 'Reddit', value: 71 },
-          { label: 'Google News (fallback)', value: 25 },
-        ],
-      },
-      { type: 'note', text: "Keyingi run: bugun 18:00 (Toshkent). Til sinovi tugagach writer arzon modelga o'tadi." },
-    ],
-  },
-]
+// Ilovalar seed'i ATAYLAB YO'Q: ilova yozuvi haqiqiy manifest va ishlayotgan
+// servisga ishora qiladi, o'ylab topilgan dashboard hech qayerga ulanmagan
+// bo'sh sahifa bo'lib qolardi. Ilova chatda quriladi va `appPublish` orqali
+// o'rnatiladi.
+export const seedApps: AppManifest[] = []
 
 // ---------------------------------------------------------------------------
 // Seed qo'llash

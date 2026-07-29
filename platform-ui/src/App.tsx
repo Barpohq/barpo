@@ -335,43 +335,33 @@ export default function App() {
                 suhbatlar endi Chat ro'yxatida indikator bilan ko'rinadi,
                 umumiy soni esa Agentlar yonidagi badge'da. */}
 
-            {/* Dinamik bo'lim — ilovalar o'z manifesti bilan shu yerga qo'shiladi */}
-            <div className="mt-4 border-t border-line pt-3">
-              <div className="px-3 pb-1.5 text-[10px] font-semibold tracking-widest text-faint uppercase">
-                Ilovalar
+            {/* Dinamik bo'lim — ilovalar o'z manifesti bilan shu yerga qo'shiladi.
+                Hech qanday ilova o'rnatilmagan bo'lsa bo'lim umuman ko'rinmaydi:
+                bo'sh sarlavha va o'rniga qo'yilgan matn ham ma'lumot emas. */}
+            {apps.length > 0 && (
+              <div className="mt-4 border-t border-line pt-3">
+                <div className="px-3 pb-1.5 text-[10px] font-semibold tracking-widest text-faint uppercase">
+                  Ilovalar
+                </div>
+                <div className="space-y-0.5">
+                  {apps.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => setPage(`app:${a.id}`)}
+                      tabIndex={pro ? 0 : -1}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] transition ${
+                        page === `app:${a.id}` ? 'bg-panel2 font-semibold text-lazur' : 'text-muted hover:bg-panel2/60 hover:text-ink'
+                      }`}
+                    >
+                      <span className="grid size-4 shrink-0 place-items-center text-[13px]" aria-hidden>
+                        {a.icon}
+                      </span>
+                      <span className="truncate font-mono text-xs">{a.name}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-0.5">
-                {apps.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => setPage(`app:${a.id}`)}
-                    tabIndex={pro ? 0 : -1}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] transition ${
-                      page === `app:${a.id}` ? 'bg-panel2 font-semibold text-lazur' : 'text-muted hover:bg-panel2/60 hover:text-ink'
-                    }`}
-                  >
-                    <span className="grid size-4 shrink-0 place-items-center text-[13px]" aria-hidden>
-                      {a.icon}
-                    </span>
-                    <span className="truncate font-mono text-xs">{a.name}</span>
-                  </button>
-                ))}
-                <button
-                  onClick={() => setPage('chat')}
-                  tabIndex={pro ? 0 : -1}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] text-faint transition hover:text-muted"
-                >
-                  <span className="grid size-4 place-items-center" aria-hidden>+</span>
-                  Yangi ilova — chatda ayting
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-line p-3 font-mono text-[10px] leading-relaxed text-faint">
-            Hamma qatlam ochiq:
-            <br />
-            loglar · tmux · audit · xarajat
+            )}
           </div>
         </nav>
 

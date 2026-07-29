@@ -7,6 +7,7 @@ import type { AppManifest, AuditEntry, ChatSession, Server, Skill } from '@platf
 import { app } from '../src/app.ts'
 import { auditYoz } from '../src/audit.ts'
 import { bazaOch, dbOrnat } from '../src/db.ts'
+import { ilovaSaqla } from '../src/repo.ts'
 import { seedQol } from '../src/seed.ts'
 import { hub } from '../src/ws/hub.ts'
 
@@ -63,18 +64,42 @@ describe('GET /api/skills', () => {
 })
 
 describe('GET /api/apps', () => {
+  // Ilovalar seed'i YO'Q: dashboard haqiqiy manifestdan quriladi va chatdagi
+  // `appPublish` orqali o'rnatiladi. Shuning uchun testlar o'z manifestini
+  // o'zi yozadi.
+  const sinovIlova: AppManifest = {
+    id: 'xarajat-bot',
+    icon: '💸',
+    name: 'xarajat-bot',
+    tagline: 'Xarajat kuzatuvchi',
+    version: 'v0.1.0',
+    service: 'frankfurt-1 · docker',
+    status: 'running',
+    widgets: [{ type: 'stats', items: [{ label: 'Bugun', value: '$0.12' }] }],
+  }
+
+  test("bo'sh ro'yxat qaytadi", async () => {
+    const { status, body } = await get<{ apps: AppManifest[] }>('/api/apps')
+    expect(status).toBe(200)
+    expect(body.apps).toEqual([])
+  })
+
   test('manifestlar ro\'yxatini qaytaradi', async () => {
+    ilovaSaqla(sinovIlova, db)
+
     const { status, body } = await get<{ apps: AppManifest[] }>('/api/apps')
     expect(status).toBe(200)
     expect(body.apps).toHaveLength(1)
-    expect(body.apps[0]?.id).toBe('ai-news-bot')
-    expect(body.apps[0]?.widgets.length).toBe(4)
+    expect(body.apps[0]?.id).toBe('xarajat-bot')
+    expect(body.apps[0]?.widgets.length).toBe(1)
   })
 
   test('bitta ilova manifesti id bo\'yicha olinadi', async () => {
-    const { status, body } = await get<{ manifest: AppManifest }>('/api/apps/ai-news-bot')
+    ilovaSaqla(sinovIlova, db)
+
+    const { status, body } = await get<{ manifest: AppManifest }>('/api/apps/xarajat-bot')
     expect(status).toBe(200)
-    expect(body.manifest.name).toBe('ai-news-bot')
+    expect(body.manifest.name).toBe('xarajat-bot')
     expect(body.manifest.widgets[0]?.type).toBe('stats')
   })
 
