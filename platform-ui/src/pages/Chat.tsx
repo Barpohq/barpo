@@ -134,6 +134,22 @@ export default function Chat({
   // yaratilgunga qadar o'zgartirilishi mumkin, keyin qulflanadi.
   const [loyihalar, setLoyihalar] = useState<Project[]>([])
   const [loyiha, setLoyiha] = useState<Project | null>(null)
+  /**
+   * `loyihalar` ning ref nusxasi — suhbat tiklash effekti uchun.
+   *
+   * `modellarRef` bilan bir xil sabab: tiklash effekti `ochiqSessiya` ga
+   * bog'langan va loyihalar ro'yxati kelganda qayta ishlamaydi. Ikkalasi
+   * parallel yuklanadi, qaysi biri oldin tugashi noma'lum.
+   */
+  const loyihalarRef = useRef<Project[]>([])
+  loyihalarRef.current = loyihalar
+  /**
+   * Tiklanayotgan sessiyaning loyiha id'si.
+   *
+   * Ref, chunki loyihalar ro'yxati effektdan KEYIN kelishi mumkin — o'shanda
+   * ro'yxat yuklash effekti shu id bo'yicha loyihani topib qo'yadi.
+   */
+  const tiklanganLoyiha = useRef<string | null>(null)
 
   const [sessionId, setSessionId] = useState<string | null>(null)
   /**
@@ -145,9 +161,8 @@ export default function Chat({
    * o'tkazmasdan.
    */
   const sessionIdRef = useRef<string | null>(null)
-  /** Javob kutayotgan ruxsat so'rovlari va allaqachon berilgan javoblar */
+  /** Javob kutayotgan ruxsat so'rovlari — javob berilgani darhol chiqib ketadi */
   const [ruxsatlar, setRuxsatlar] = useState<RuxsatSorovi[]>([])
-  const [ruxsatJavoblari, setRuxsatJavoblari] = useState<Record<string, RuxsatJavobi>>({})
   const [rejim, setRejim] = useState<RejimHolati>({ rejim: 'tasdiq' })
   const endRef = useRef<HTMLDivElement>(null)
   const kiritishRef = useRef<HTMLTextAreaElement>(null)
@@ -199,7 +214,6 @@ export default function Chat({
     // boshqa suhbatning javob kutayotgan kartasi bu yerda ko'rinib qolardi.
     setMsgs([])
     setRuxsatlar([])
-    setRuxsatJavoblari({})
     kutilayotgan.current = null
     setBusy(false)
 
@@ -224,6 +238,17 @@ export default function Chat({
         (m) => m.provider === sessiya.provider && m.id === sessiya.model,
       )
       if (mos) setTanlangan(mos)
+
+      // Loyiha ham xuddi shunday tiklanadi — sessiya bazada `projectId` bilan
+      // saqlangan, lekin UI holati yangi chatdan qolgan bo'lishi mumkin.
+      // Ro'yxat hali kelmagan bo'lsa `tiklanganLoyiha` ref'i saqlab turadi va
+      // loyihalarni yuklash effekti tanlovni o'sha yerda yakunlaydi.
+      tiklanganLoyiha.current = sessiya.projectId ?? null
+      setLoyiha(
+        sessiya.projectId
+          ? (loyihalarRef.current.find((l) => l.id === sessiya.projectId) ?? null)
+          : null,
+      )
 
       try {
         const [xabarlar, rejimHolati] = await Promise.all([
@@ -301,7 +326,15 @@ export default function Chat({
     let bekor = false
     loyihalarOl()
       .then((royxat) => {
-        if (!bekor) setLoyihalar(royxat)
+        if (bekor) return
+        setLoyihalar(royxat)
+        // Tiklash effekti bizdan oldin tugagan bo'lsa u loyihani topa
+        // olmagan (ro'yxat hali bo'sh edi) — shu yerda yakunlaymiz.
+        const kutilayotgan = tiklanganLoyiha.current
+        if (kutilayotgan) {
+          const topilgan = royxat.find((l) => l.id === kutilayotgan)
+          if (topilgan) setLoyiha(topilgan)
+        }
       })
       .catch(() => undefined)
     return () => {
@@ -520,22 +553,23 @@ export default function Chat({
   }, [])
 
   async function ruxsatBer(sorov: RuxsatSorovi, javob: RuxsatJavobi) {
-    // Javobni darhol ko'rsatamiz — server tasdiqlashini kutmaymiz
-    setRuxsatJavoblari((r) => ({ ...r, [sorov.id]: javob }))
+    // Javob berilgan karta chatdan darhol yo'qoladi — server tasdiqlashini
+    // kutmaymiz. Aks holda uzun oqimda «✓ Ruxsat berildi» bloklari yig'ilib,
+    // haqiqiy javob matnini pastga surib yuborardi. Amal natijasi baribir
+    // tool kartasida ko'rinadi.
+    setRuxsatlar((r) => r.filter((s) => s.id !== sorov.id))
     try {
       await ruxsatJavobiYubor(sorov.sessionId, sorov.id, javob)
     } catch (xato) {
-      // Yuborilmasa foydalanuvchi bilishi kerak — agent kutib turibdi
+      // Yuborilmasa foydalanuvchi bilishi kerak — agent kutib turibdi.
+      // Kartani qaytaramiz, foydalanuvchi qayta urina olsin.
       toast(
         xato instanceof ApiXatosi
           ? `Javob yuborilmadi: ${xato.message}`
           : "Ruxsat javobi yuborilmadi",
         'error',
       )
-      setRuxsatJavoblari((r) => {
-        const { [sorov.id]: _olib, ...qolgan } = r
-        return qolgan
-      })
+      setRuxsatlar((r) => (r.some((s) => s.id === sorov.id) ? r : [...r, sorov]))
     }
   }
 
@@ -587,12 +621,16 @@ export default function Chat({
     sessiyaXabarchi.current?.(null)
     setMsgs([])
     setRuxsatlar([])
-    setRuxsatJavoblari({})
     // Rejim tanlovi saqlanadi, lekin "o'chdi" sababi tozalanadi
     setRejim((r) => ({ rejim: r.rejim }))
     // LOYIHA TANLOVI ATAYLAB SAQLANADI: "loyiha ichida yangi chat ochish"
     // eng ko'p kerak bo'ladigan yo'l. Boshqa loyihaga o'tish uchun
     // tanlagich endi qulfsiz.
+    //
+    // Ref esa tozalanadi: u tiklanayotgan sessiyaning kutilayotgan loyihasi,
+    // yangi chatda kutiladigan hech narsa yo'q. Aks holda loyihalar ro'yxati
+    // kech kelsa foydalanuvchi endigina o'zgartirgan tanlovni bosib ketardi.
+    tiklanganLoyiha.current = null
     kutilayotgan.current = null
     setBusy(false)
   }
@@ -666,7 +704,6 @@ export default function Chat({
                     <RuxsatKartasi
                       key={sorov.id}
                       sorov={sorov}
-                      berilganJavob={ruxsatJavoblari[sorov.id]}
                       onJavob={(javob) => void ruxsatBer(sorov, javob)}
                     />
                   ))}

@@ -14,8 +14,6 @@ import { Card } from '../ui'
 interface Props {
   sorov: RuxsatSorovi
   onJavob: (javob: RuxsatJavobi) => void
-  /** Javob berilgan bo'lsa — tugmalar o'rniga natija ko'rinadi */
-  berilganJavob?: RuxsatJavobi
 }
 
 const turBelgisi: Record<RuxsatSorovi['tur'], string> = {
@@ -37,27 +35,15 @@ function naqshYorligi(naqsh: string): string {
   return qolgan.length > 0 ? `${amal}: …/${nom}` : `…/${nom}`
 }
 
-export default function RuxsatKartasi({ sorov, onJavob, berilganJavob }: Props) {
+export default function RuxsatKartasi({ sorov, onJavob }: Props) {
+  // Javob berilgach karta chatdan olib tashlanadi (Chat.tsx). Bu flag esa
+  // olib tashlanish oralig'ida ikkinchi bosishning oldini oladi.
   const [yuborilmoqda, setYuborilmoqda] = useState(false)
 
   function javobBer(javob: RuxsatJavobi) {
-    if (yuborilmoqda || berilganJavob) return
+    if (yuborilmoqda) return
     setYuborilmoqda(true)
     onJavob(javob)
-  }
-
-  if (berilganJavob) {
-    const radMi = berilganJavob === 'rad'
-    return (
-      <Card className="mt-3 px-4 py-2.5">
-        <span className={`text-sm ${radMi ? 'text-coral' : 'text-mint'}`}>
-          {radMi ? '⊘ Rad etildi' : '✓ Ruxsat berildi'}
-          {berilganJavob === 'hardoim' && (
-            <span className="text-faint"> — «{sorov.naqsh}» endi so'ralmaydi</span>
-          )}
-        </span>
-      </Card>
-    )
   }
 
   return (
