@@ -49,6 +49,7 @@ import { indeksniOqi, xotiralarniOqi, xotiralarniPromptga } from './xotira.ts'
 import { ChegaralanganMuhit } from './muhit.ts'
 import type { RejimBoshqaruvchi } from './rejim.ts'
 import { qidiruvToollariXom } from './qidiruv-toollari.ts'
+import { SERVER_PROMPT_QISMI, serverToollariXom, type ServerManbasi } from './server-toollari.ts'
 import type { RuxsatBoshqaruvchi } from './ruxsat.ts'
 import type { Sarflov, SuhbatXabari } from './suhbat.ts'
 
@@ -101,6 +102,14 @@ export interface AgentSozlamalari {
    * ikki qatlamli himoya hosil bo'ladi.
    */
   klassifikatorTarixi?: SuhbatXabari[]
+  /**
+   * Platformaga ulangan serverlar ro'yxatini beradigan manba.
+   *
+   * Berilmasa `serverList` tool'i UMUMAN e'lon qilinmaydi va prompt ham
+   * uni tilga olmaydi (`server-toollari.ts` ga q.). Inversiya: serverlar
+   * bazasi `platform-server` da, bu paket unga bog'liq emas.
+   */
+  serverManbasi?: ServerManbasi
   /** Har tool chaqiruvidan oldin — audit uchun. Bloklamaydi. */
   toolKuzatuvchi?: (nom: string, args: unknown) => void
   /** Qo'shimcha hook'lar — config'dagilarga qo'shiladi */
@@ -149,12 +158,17 @@ const NATIJA_CHEGARASI = 2000
  *
  * Uchala matn ham KLASSIFIKATORGA BORMAYDI — u alohida prompt
  * (`klassifikator.ts`) bilan ishlaydi va bu funksiyani umuman chaqirmaydi.
+ *
+ * `serverlarBor` — `serverList` tool'i e'lon qilinganmi. Yuqoridagi uchtadan
+ * FARQLI o'laroq bu matn emas, bayroq: tool mavjud bo'lmaganda uni tilga
+ * olish modelni yo'q imkoniyatga undardi.
  */
 export const AGENT_SISTEM_PROMPT = (
   ishPapkasi: string,
   loyihaKonteksti?: string,
   skilllar?: string,
   xotira?: string,
+  serverlarBor = false,
 ) =>
   [
     "Sen platformaning AI yordamchisisan. Foydalanuvchi bilan o'zbek tilida",
@@ -168,7 +182,9 @@ export const AGENT_SISTEM_PROMPT = (
     '- find: glob bo\'yicha fayl nomini topish',
     '- ls: papka ro\'yxatini ko\'rish',
     '- bash: buyruq bajarish',
+    ...(serverlarBor ? SERVER_PROMPT_QISMI.royxat : []),
     '',
+    ...(serverlarBor ? [...SERVER_PROMPT_QISMI.qoida, ''] : []),
     'Fayl qidirishda `bash` EMAS, `grep`/`find`/`ls` ni ishlat — ular tezroq',
     'va ruxsat so\'ramaydi. `bash` faqat boshqa ilojisi bo\'lmaganda kerak.',
     'Bu uch tool faqat ish papkasi ichida ishlaydi va standart holda `.git`,',
@@ -349,6 +365,18 @@ export async function* agentOqimi(
         indeksniOqi(sozlama.ishPapkasi),
       )
 
+      // Tool ro'yxati bir marta quriladi va prompt bayrog'i undan OLINADI:
+      // `serverList` config'da o'chirilgan bo'lishi ham mumkin, u holda
+      // prompt uni tilga olmasligi kerak. Ikkisini alohida hisoblasak,
+      // ular bir-biridan uzoqlashib "yo'q tool haqidagi ko'rsatma" paydo
+      // bo'lardi.
+      const toollar = toollarniTayyorla(
+        toolKonteksti,
+        sozlamalar.agent.toollar.yoqilgan,
+        sozlama.serverManbasi,
+      )
+      const serverlarBor = toollar.some((t) => t.name === 'serverList')
+
       const agent = new Agent({
         initialState: {
           systemPrompt: AGENT_SISTEM_PROMPT(
@@ -356,9 +384,10 @@ export async function* agentOqimi(
             loyihaKonteksti ? kontekstniPromptga(loyihaKonteksti) : undefined,
             skilllar ?? undefined,
             xotira,
+            serverlarBor,
           ),
           model,
-          tools: toollarniTayyorla(toolKonteksti, sozlamalar.agent.toollar.yoqilgan),
+          tools: toollar,
           messages: kontekst,
         },
         streamFn: models.streamSimple.bind(models),
@@ -507,16 +536,19 @@ export async function* agentOqimi(
 function toollarniTayyorla(
   kontekst: { env: ChegaralanganMuhit },
   yoqilgan: readonly string[],
+  serverManbasi?: ServerManbasi,
 ): AgentTool<never>[] {
-  // pi'ning tayyor tool'lari + o'zimizning qidiruv tool'lari. Ikkalasi ham
-  // kontekstni oxirgi argument sifatida oladi, shuning uchun quyidagi
-  // o'ram ularga bir xil qo'llanadi.
+  // pi'ning tayyor tool'lari + o'zimizning qidiruv va server tool'lari.
+  // Hammasi kontekstni oxirgi argument sifatida oladi, shuning uchun
+  // quyidagi o'ram ularga bir xil qo'llanadi (`serverList` kontekstni
+  // ishlatmaydi, lekin shaklga rioya qiladi).
   const barchasi = [
     createReadTool(),
     createWriteTool(),
     createEditTool(),
     createBashTool(),
     ...qidiruvToollariXom(),
+    ...serverToollariXom(serverManbasi),
   ]
 
   // Configda o'chirilgan tool UMUMAN E'LON QILINMAYDI — agent uning

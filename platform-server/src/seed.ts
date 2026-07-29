@@ -8,19 +8,11 @@
 // skill do'koni) ulanadi — o'shanda bu fayl faqat bo'sh o'rnatish uchun qoladi.
 
 import type { Database } from 'bun:sqlite'
-import type { AppManifest, AuditEntry, Server } from '@platforma/shared'
+import type { AppManifest, AuditEntry } from '@platforma/shared'
 
-// ---------------------------------------------------------------------------
-// Serverlar
-// ---------------------------------------------------------------------------
-
-export const seedServers: Server[] = [
-  { id: 'frankfurt-1', name: 'frankfurt-1', role: 'Platforma yadrosi', region: 'Hetzner · FSN1', status: 'healthy', cpu: 23, ram: 41, disk: 37, daemon: 'v0.3.1 · ulangan', uptime: '84 kun' },
-  { id: 'helsinki-1', name: 'helsinki-1', role: 'ai-news-bot', region: 'Hetzner · HEL1', status: 'warning', cpu: 12, ram: 58, disk: 84, daemon: 'v0.3.1 · ulangan', uptime: '31 kun', note: 'Disk 84% — models_cache tozalash tavsiya etiladi' },
-  { id: 'tashkent-1', name: 'tashkent-1', role: 'Media / fayl ombori', region: 'UZ · TAS', status: 'healthy', cpu: 4, ram: 22, disk: 51, daemon: 'v0.3.0 · ulangan', uptime: '112 kun' },
-  { id: 'nyc-1', name: 'nyc-1', role: 'Proxy / fetch chiqish nuqtasi', region: 'DO · NYC3', status: 'healthy', cpu: 8, ram: 30, disk: 19, daemon: 'v0.3.1 · ulangan', uptime: '58 kun' },
-  { id: 'berlin-1', name: 'berlin-1', role: 'Zaxira (backup)', region: 'Contabo · BER', status: 'healthy', cpu: 2, ram: 14, disk: 62, daemon: 'v0.3.1 · ulangan', uptime: '203 kun' },
-]
+// Serverlar seed'i ATAYLAB YO'Q (007-migratsiyadan beri): server yozuvi
+// haqiqiy SSH ulanishiga ishora qiladi, o'ylab topilgan qator "ulanmaydigan
+// server" bo'lib qolardi. Foydalanuvchi serverni Servers sahifasidan qo'shadi.
 
 // ---------------------------------------------------------------------------
 // Audit log (eng eskisidan yangisiga — INSERT tartibi shu bo'lishi kerak,
@@ -103,7 +95,6 @@ function bosh(db: Database, jadval: string): boolean {
 }
 
 export interface SeedNatija {
-  servers: number
   audit: number
   apps: number
 }
@@ -113,21 +104,8 @@ export interface SeedNatija {
  * faqat bo'sh jadvallar to'ldiriladi, shuning uchun qayta chaqirish xavfsiz.
  */
 export function seedQol(db: Database): SeedNatija {
-  const natija: SeedNatija = { servers: 0, audit: 0, apps: 0 }
+  const natija: SeedNatija = { audit: 0, apps: 0 }
   const hozir = new Date().toISOString()
-
-  if (bosh(db, 'servers')) {
-    const st = db.prepare(
-      `INSERT INTO servers (id, name, role, region, status, cpu, ram, disk, daemon, uptime, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    db.transaction(() => {
-      for (const s of seedServers) {
-        st.run(s.id, s.name, s.role, s.region, s.status, s.cpu, s.ram, s.disk, s.daemon, s.uptime, s.note ?? null)
-        natija.servers++
-      }
-    })()
-  }
 
   // Skilllar seed'i ATAYLAB YO'Q: skill diskdagi haqiqiy `SKILL.md` bilan
   // bog'langan, ya'ni o'ylab topilgan qator hech qayerga ishora qilmaydi.

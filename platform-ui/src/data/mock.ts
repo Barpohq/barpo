@@ -13,7 +13,6 @@ import type {
   AuditEntry,
   BuildPlan,
   LlmCall,
-  Server,
   ToolCard,
   WorkflowStep,
 } from '@platforma/shared'
@@ -31,7 +30,6 @@ export type {
   BuildSession,
   DeployOption,
   LlmCall,
-  Server,
   Skill,
   StatItem,
   ToolCard,
@@ -74,14 +72,6 @@ export const agents: Agent[] = [
       { label: "O'rtacha narx", value: '$0.0007' },
     ],
   },
-]
-
-export const servers: Server[] = [
-  { id: 'frankfurt-1', name: 'frankfurt-1', role: 'Platforma yadrosi', region: 'Hetzner · FSN1', status: 'healthy', cpu: 23, ram: 41, disk: 37, daemon: 'v0.3.1 · ulangan', uptime: '84 kun' },
-  { id: 'helsinki-1', name: 'helsinki-1', role: 'ai-news-bot', region: 'Hetzner · HEL1', status: 'warning', cpu: 12, ram: 58, disk: 84, daemon: 'v0.3.1 · ulangan', uptime: '31 kun', note: "Disk 84% — models_cache tozalash tavsiya etiladi" },
-  { id: 'tashkent-1', name: 'tashkent-1', role: 'Media / fayl ombori', region: 'UZ · TAS', status: 'healthy', cpu: 4, ram: 22, disk: 51, daemon: 'v0.3.0 · ulangan', uptime: '112 kun' },
-  { id: 'nyc-1', name: 'nyc-1', role: 'Proxy / fetch chiqish nuqtasi', region: 'DO · NYC3', status: 'healthy', cpu: 8, ram: 30, disk: 19, daemon: 'v0.3.1 · ulangan', uptime: '58 kun' },
-  { id: 'berlin-1', name: 'berlin-1', role: 'Zaxira (backup)', region: 'Contabo · BER', status: 'healthy', cpu: 2, ram: 14, disk: 62, daemon: 'v0.3.1 · ulangan', uptime: '203 kun' },
 ]
 
 export const workflowSteps: WorkflowStep[] = [

@@ -26,18 +26,31 @@ export interface Agent {
 // Serverlar
 // ---------------------------------------------------------------------------
 
+// Bazada faqat ULANISH ma'lumoti saqlanadi. Jonli holat (metrikalar,
+// online/offline) `ServerMetrika` sifatida har so'rovda SSH orqali olinadi —
+// saqlanmaydi, chunki eskirgan qiymat "ishonchli ko'ringan yolg'on" bo'lardi.
 export interface Server {
   id: string
+  /** SSH alias — `ssh <name>` shu nom bilan ishlaydi. Faqat [a-z0-9-]. */
   name: string
-  role: string
-  region: string
-  status: 'healthy' | 'warning' | 'offline'
-  cpu: number
-  ram: number
-  disk: number
-  daemon: string
-  uptime: string
-  note?: string
+  host: string
+  port: number
+  /** Odatda 'root' — platforma serverni to'liq boshqarishi uchun */
+  username: string
+  createdAt: string
+}
+
+/** SSH orqali jonli o'qiladigan holat — bazaga yozilmaydi */
+export interface ServerMetrika {
+  holat: 'ulangan' | 'xato'
+  /** holat='xato' bo'lsa sabab shu yerda */
+  xato?: string
+  /** "3 kun 4 soat" ko'rinishida */
+  uptime?: string
+  /** Foizlar: 0-100. CPU — 1 daqiqalik load / yadro soni. */
+  cpu?: number
+  ram?: number
+  disk?: number
 }
 
 // ---------------------------------------------------------------------------

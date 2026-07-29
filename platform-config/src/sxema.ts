@@ -99,7 +99,7 @@ export const MAYDONLAR = [
   {
     yol: 'agent.toollar.yoqilgan',
     tur: 'matnRoyxati',
-    standart: ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'],
+    standart: ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'serverList'],
     izoh: "Agentga beriladigan tool'lar. Ro'yxatdan olib tashlangan tool umuman ko'rinmaydi — agent uning borligini bilmaydi.",
   },
   {

@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
 import { bazaOch } from '../src/db.ts'
-import { ilovaSaqla, ilovalarOqi, serverlarOqi } from '../src/repo.ts'
+import { ilovaSaqla, ilovalarOqi } from '../src/repo.ts'
 import { seedQol } from '../src/seed.ts'
 
 let db: Database
@@ -19,7 +19,6 @@ afterEach(() => {
 describe('seedQol', () => {
   test('birinchi chaqiruvda hamma jadval to\'ladi', () => {
     const natija = seedQol(db)
-    expect(natija.servers).toBe(5)
     expect(natija.audit).toBe(12)
     expect(natija.apps).toBe(1)
   })
@@ -28,8 +27,7 @@ describe('seedQol', () => {
     seedQol(db)
     const ikkinchi = seedQol(db)
 
-    expect(ikkinchi).toEqual({ servers: 0, audit: 0, apps: 0 })
-    expect(serverlarOqi(db)).toHaveLength(5)
+    expect(ikkinchi).toEqual({ audit: 0, apps: 0 })
     expect(ilovalarOqi(db)).toHaveLength(1)
   })
 })

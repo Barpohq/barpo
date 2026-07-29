@@ -1,6 +1,6 @@
 # Qolgan joy — davom etish qo'llanmasi
 
-_Oxirgi yangilanish: 2026-07-28. Boshqa kompyuterda davom etish uchun shu fayldan boshlang._
+_Oxirgi yangilanish: 2026-07-29. Boshqa kompyuterda davom etish uchun shu fayldan boshlang._
 
 ## Hozirgi holat
 
@@ -9,7 +9,7 @@ backend, Bun + TypeScript (Hono)**, AI qatlami `pi-agent-core` ustiga qurilgan
 (pi — [earendil-works/pi](https://github.com/earendil-works/pi), terminal uchun
 coding agent; biz shu g'oyalarni web uchun moslashtiramiz).
 
-**Testlar:** 792/792 yashil (`bun test`), barcha paketlar `tsc --noEmit` toza.
+**Testlar:** 923/923 yashil (`bun test`), barcha paketlar `tsc --noEmit` toza.
 
 Ilgari qayd etilgan `muhit.test.ts` dagi 6 ta yiqilish TUZATILDI — sabab
 `ChegaralanganMuhit` ish papkasini kanonizatsiya qilmasligi edi (macOS'da
@@ -36,7 +36,7 @@ pastdagi eski "Qolgan reja" endi majburiy tartib emas, g'oyalar zaxirasi.
 
 ```bash
 bun install
-bun test                                     # 602 test
+bun test                                     # 923 test
 bun run schema                               # config sxemasini qayta yasash
 cd platform-server && bun run src/index.ts   # backend :8787
 cd platform-ui && bun run dev                # UI
@@ -50,6 +50,64 @@ cd platform-ui && bun run dev                # UI
 4. ~~**Loyiha (project) mantig'i + background agentlar ko'rinishi**~~ ✅ (quyida)
 5. ~~**Suhbatlar tarixi: sidebar ro'yxati + alohida sahifa**~~ ✅ (quyida)
 6. ~~**Skilllar: GitHub manbadan o'rnatish va agentga ulash**~~ ✅ (quyida)
+7. ~~**Serverlar: parolsiz SSH ulanish + jonli metrikalar**~~ ✅ (quyida)
+
+### 7-bosqichda nima qilindi (2026-07-29)
+
+Mock `Servers.tsx` haqiqiy SSH boshqaruviga almashtirildi. Server qo'shish =
+parolsiz ulanishni O'RNATISH: platforma kaliti serverning root useriga
+joylanadi, keyin platformada ham, terminalda ham `ssh <nom>` parolsiz ishlaydi.
+
+**Model (007-migratsiya):** bazada faqat ULANISH ma'lumoti (name/host/port/
+username) — jonli holat (cpu/ram/disk/uptime) har so'rovda SSH orqali o'qiladi
+va SAQLANMAYDI: eskirgan qiymat "ishonchli ko'ringan yolg'on" bo'lardi. Eski
+mock jadval DROP qilindi, serverlar seed'i olib tashlandi.
+
+**Uch qismli SSH sxemasi (`platform-server/src/ssh.ts`):**
+
+1. **Platforma kaliti** — `~/.platforma/ssh/id_ed25519`, foydalanuvchi
+   shaxsiy kalitidan ATAYLAB alohida (bekor qilish = serverdan bitta shu
+   kalitni o'chirish). Bir marta `ssh-keygen` bilan yaratiladi, parolsiz.
+2. **Boshqariladigan config** — `~/.platforma/ssh/config`, har saqlashda
+   bazadagi ro'yxatdan TO'LIQ qayta yoziladi (haqiqat manbai baza — skilllar
+   papkasi bilan bir xil qoida). `~/.ssh/config` ga faqat bitta `Include`
+   qatori, AYNAN BOSHIGA: OpenSSH'da `Include` biror `Host` blokidan keyin
+   kelsa o'sha blokka tegishli bo'lib qolib global ishlamaydi.
+3. **Kalit joylash** — ikki yo'l, tartibi muhim: avval foydalanuvchining
+   mavjud kalitlari bilan BatchMode urinish (kirsa parol umuman kerak emas),
+   bo'lmasa formadagi bir martalik parol `sshpass -e` orqali (SSHPASS env —
+   argv'da ko'rinmaydi, bazaga YOZILMAYDI, javob qaytishi bilan yo'qoladi).
+
+**Muhim mayda qarorlar:**
+
+- `UserKnownHostsFile` platforma papkasida + `StrictHostKeyChecking
+  accept-new` — birinchi ulanishda interaktiv prompt server jarayonida
+  osilib qolardi; foydalanuvchi known_hosts'iga ham tegilmaydi.
+- Platforma ulanishlari `-F <boshqariladigan config>` bilan — foydalanuvchi
+  shaxsiy sozlamalari (ProxyJump va h.k.) platformaga aralashmaydi.
+- POST tartibi: avval kalit joylash, KEYIN baza — ulanmasa bazada
+  "ishlamaydigan server" yozuvi qolmaydi (502 + aniq sabab).
+- `metrikaOl` hech qachon throw qilmaydi — UI karta xato holatini ko'rsatadi,
+  HTTP 200. Metrika bitta ssh chaqiruvida KEY=value qatorlar bilan keladi,
+  parser tartibga bog'lanmagan, yetishmagan qator maydonni bo'sh qoldiradi.
+- O'chirishda kalit serverning o'zida QOLADI (o'chirilayotgan server aynan
+  ulanmayotgan bo'lishi mumkin) — UI buni tasdiq modalida ochiq aytadi.
+- Nom/host/username qat'iy allowlist regex bilan — ular ssh_config fayliga
+  va buyruq qatoriga tushadi, nazoratsiz matn kirmasligi shart.
+- Barcha tashqi buyruqlar `BuyruqBajaruvchi` interfeysi orqali —
+  `bajaruvchiOrnat()` bilan testlar soxta bajaruvchi qo'yadi (`dbOrnat`
+  uslubi). Yo'llar `PLATFORMA_SSH` / `PLATFORMA_USER_SSH_CONFIG` env bilan
+  ko'chiriladi. JS tomonda 20s timeout — ConnectTimeout'dan tashqari.
+
+**Sinalgan:** 34 yangi test (ssh.test.ts, serverlar.test.ts) + jonli smoke:
+alohida port/baza/papka bilan backend ko'tarilib, haqiqiy ssh-keygen kalit
+yaratdi, ulanib bo'lmaydigan hostga POST 10s da aniq 502 qaytardi, baza toza
+qoldi. Haqiqiy serverga ulanish hali sinalmagan (qo'l ostida server yo'q edi).
+
+**Qoldirilgan:** o'chirishda serverdan kalitni olib tashlash (best-effort),
+WS orqali metrika oqimi (hozir har ochilishda bir marta so'raladi), agent
+tool'larini server ustida ishlatish (`ssh <nom> <buyruq>` allaqachon ishlaydi,
+lekin agent qatlamiga ulanmagan).
 
 ### 6-bosqichda nima qilindi (2026-07-28)
 
@@ -223,8 +281,8 @@ alohida Projects sahifasi, mavjud tashqi papkaga ulanish.
 
 ## G'oyalar zaxirasi (eski reja — endi majburiy tartib emas)
 
-1. **UI sahifalarni API'ga ulash** — `Servers.tsx`, `Audit.tsx` hali mock
-   ma'lumot ishlatadi (`Skills.tsx` 6-bosqichda ulandi).
+1. **UI sahifalarni API'ga ulash** — `Audit.tsx` hali mock ma'lumot
+   ishlatadi (`Skills.tsx` 6-bosqichda, `Servers.tsx` 7-bosqichda ulandi).
 2. **`allowed-tools` ni majburlash** — hozir faqat ko'rsatiladi. Bizning
    ruxsat qatlamimiz buni ko'tara oladi (pi'da yo'q edi).
 3. **Config web UI** — JSON Schema'dan forma avtomatik quriladi.

@@ -17,6 +17,8 @@ import type {
   RejimHolati,
   RuxsatJavobi,
   RuxsatRejimi,
+  Server,
+  ServerMetrika,
   Skill,
   SkillManba,
   SkillQamrov,
@@ -318,4 +320,39 @@ export async function skillOrnatishniBekor(
     body: JSON.stringify({ qamrov, projectIds }),
   })
   return javob.skill
+}
+
+// ---------------------------------------------------------------------------
+// Serverlar
+// ---------------------------------------------------------------------------
+
+export function serverlarOl(): Promise<{ servers: Server[] }> {
+  return sorov<{ servers: Server[] }>('/api/servers')
+}
+
+/**
+ * Server qo'shadi: backend platforma kalitini serverga joylaydi va
+ * `ssh <name>` ishlaydigan holatga keltiradi. `parol` ixtiyoriy — mavjud
+ * kalitlaringiz serverga kira olsa kerak emas; berilsa ham SAQLANMAYDI.
+ */
+export async function serverQosh(malumot: {
+  name: string
+  host: string
+  port?: number | string
+  username?: string
+  parol?: string
+}): Promise<{ server: Server; ulanishXatosi?: string }> {
+  return sorov<{ server: Server; ulanishXatosi?: string }>('/api/servers', {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify(malumot),
+  })
+}
+
+export function serverOchir(id: string): Promise<{ ok: boolean; eslatma?: string }> {
+  return sorov<{ ok: boolean; eslatma?: string }>(`/api/servers/${id}`, { method: 'DELETE' })
+}
+
+export function serverMetrikaOl(id: string): Promise<{ metrika: ServerMetrika }> {
+  return sorov<{ metrika: ServerMetrika }>(`/api/servers/${id}/metrika`)
 }

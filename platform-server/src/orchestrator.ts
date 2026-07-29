@@ -38,7 +38,14 @@ import type {
 } from '@platforma/shared'
 import { auditYoz } from './audit.ts'
 import { sessiyaIshPapkasi } from './ish-papkasi.ts'
-import { faolSkilllar, sessiyaLoyihaPapkasi, sessiyaOqi, xabarlarOqi, xabarYoz } from './repo.ts'
+import {
+  faolSkilllar,
+  serverlarOqi,
+  sessiyaLoyihaPapkasi,
+  sessiyaOqi,
+  xabarlarOqi,
+  xabarYoz,
+} from './repo.ts'
 import { loyihagaSinxronla } from './skill-ombor.ts'
 import { hub } from './ws/hub.ts'
 
@@ -237,6 +244,18 @@ export async function javobOqizi(
           // Klassifikator FAQAT matnli tarixni ko'radi — tool natijalari
           // unga hech qachon bormaydi (prompt injection himoyasi)
           klassifikatorTarixi: klassifikatorTarixiniTayyorla(sessionId),
+          // `serverList` tool'ining manbai. Funksiya sifatida beriladi —
+          // ro'yxat har chaqiruvda bazadan yangi o'qiladi, chunki
+          // foydalanuvchi suhbat davomida server qo'shishi/o'chirishi
+          // mumkin. Faqat ulanish maydonlari uzatiladi (`id`/`createdAt`
+          // agentga kerak emas).
+          serverManbasi: () =>
+            serverlarOqi().map((s) => ({
+              name: s.name,
+              host: s.host,
+              port: s.port,
+              username: s.username,
+            })),
           toolKuzatuvchi: (nom, args) => {
             auditYoz('agent', `tool: ${nom}`, toolNishoni(nom, args), toolDarajasi(nom), 'OK')
           },

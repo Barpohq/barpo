@@ -29,15 +29,21 @@ import { db as globalDb } from './db.ts'
 interface ServerQator {
   id: string
   name: string
-  role: string
-  region: string
-  status: Server['status']
-  cpu: number
-  ram: number
-  disk: number
-  daemon: string
-  uptime: string
-  note: string | null
+  host: string
+  port: number
+  username: string
+  created_at: string
+}
+
+function serverQatordan(q: ServerQator): Server {
+  return {
+    id: q.id,
+    name: q.name,
+    host: q.host,
+    port: q.port,
+    username: q.username,
+    createdAt: q.created_at,
+  }
 }
 
 export function serverlarOqi(baza?: Database): Server[] {
@@ -45,7 +51,44 @@ export function serverlarOqi(baza?: Database): Server[] {
   return d
     .query<ServerQator, []>('SELECT * FROM servers ORDER BY rowid')
     .all()
-    .map((q) => ({ ...q, note: q.note ?? undefined }))
+    .map(serverQatordan)
+}
+
+export function serverIdBoyicha(id: string, baza?: Database): Server | null {
+  const d = baza ?? globalDb()
+  const q = d.query<ServerQator, [string]>('SELECT * FROM servers WHERE id = ?').get(id)
+  return q ? serverQatordan(q) : null
+}
+
+export function serverNomBoyicha(name: string, baza?: Database): Server | null {
+  const d = baza ?? globalDb()
+  const q = d.query<ServerQator, [string]>('SELECT * FROM servers WHERE name = ?').get(name)
+  return q ? serverQatordan(q) : null
+}
+
+export function serverYarat(
+  malumot: { name: string; host: string; port: number; username: string },
+  baza?: Database,
+): Server {
+  const d = baza ?? globalDb()
+  const server: Server = {
+    id: crypto.randomUUID(),
+    name: malumot.name,
+    host: malumot.host,
+    port: malumot.port,
+    username: malumot.username,
+    createdAt: new Date().toISOString(),
+  }
+  d.query(
+    'INSERT INTO servers (id, name, host, port, username, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(server.id, server.name, server.host, server.port, server.username, server.createdAt)
+  return server
+}
+
+export function serverOchir(id: string, baza?: Database): boolean {
+  const d = baza ?? globalDb()
+  const q = d.query('DELETE FROM servers WHERE id = ?').run(id)
+  return q.changes > 0
 }
 
 // ---------------------------------------------------------------------------

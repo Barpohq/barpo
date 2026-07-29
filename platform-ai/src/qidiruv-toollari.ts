@@ -48,7 +48,7 @@ import { findQidir, grepQidir, lsRoyxat } from './qidiruv-motor.ts'
  * `agent.ts` dagi `toollarniTayyorla()` uni qanday chaqirishini bilamiz:
  * kontekst OXIRGI argument sifatida uzatiladi.
  */
-export interface QidiruvTooli<TParams = unknown> {
+export interface QidiruvTooli<TParams = unknown, TTafsilot = QidiruvTafsiloti | undefined> {
   name: string
   label: string
   description: string
@@ -59,7 +59,7 @@ export interface QidiruvTooli<TParams = unknown> {
     signal: AbortSignal | undefined,
     onUpdate: unknown,
     kontekst: { env: { cwd: string } },
-  ): Promise<AgentToolResult<QidiruvTafsiloti | undefined>>
+  ): Promise<AgentToolResult<TTafsilot>>
 }
 
 /** UI va loglar uchun tafsilot — qaysi backend ishladi, kesildimi */

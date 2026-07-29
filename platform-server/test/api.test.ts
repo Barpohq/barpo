@@ -41,21 +41,12 @@ describe('GET /api/health', () => {
 })
 
 describe('GET /api/servers', () => {
-  test('seed dagi 5 serverni qaytaradi', async () => {
+  // Serverlar seed'i yo'q (007-migratsiya): yozuv haqiqiy SSH ulanishiga
+  // ishora qiladi. To'liq qo'shish/o'chirish oqimi `serverlar.test.ts` da.
+  test("bo'sh ro'yxat qaytadi", async () => {
     const { status, body } = await get<{ servers: Server[] }>('/api/servers')
     expect(status).toBe(200)
-    expect(body.servers).toHaveLength(5)
-
-    const helsinki = body.servers.find((s) => s.id === 'helsinki-1')
-    expect(helsinki?.status).toBe('warning')
-    expect(helsinki?.disk).toBe(84)
-    expect(helsinki?.note).toContain('models_cache')
-  })
-
-  test('note yo\'q serverda maydon undefined bo\'ladi', async () => {
-    const { body } = await get<{ servers: Server[] }>('/api/servers')
-    const frankfurt = body.servers.find((s) => s.id === 'frankfurt-1')
-    expect(frankfurt?.note).toBeUndefined()
+    expect(body.servers).toEqual([])
   })
 })
 

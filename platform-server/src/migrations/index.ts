@@ -20,5 +20,6 @@ import { migratsiya as m003 } from './003-tool-cards.ts'
 import { migratsiya as m004 } from './004-agent-xabarlari.ts'
 import { migratsiya as m005 } from './005-loyihalar.ts'
 import { migratsiya as m006 } from './006-skilllar.ts'
+import { migratsiya as m007 } from './007-serverlar-haqiqiy.ts'
 
-export const migratsiyalar: Migratsiya[] = [m001, m002, m003, m004, m005, m006]
+export const migratsiyalar: Migratsiya[] = [m001, m002, m003, m004, m005, m006, m007]
