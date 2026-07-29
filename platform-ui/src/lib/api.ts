@@ -17,6 +17,7 @@ import type {
   RejimHolati,
   RuxsatJavobi,
   RuxsatRejimi,
+  RuxsatSorovi,
   Server,
   ServerMetrika,
   Skill,
@@ -181,6 +182,21 @@ export function ruxsatJavobiYubor(
     headers: jsonSarlavha,
     body: JSON.stringify({ sessionId, sorovId, javob }),
   })
+}
+
+/**
+ * Sessiyada javob kutayotgan ruxsat so'rovlari.
+ *
+ * `chat.permission` WS eventiga QO'SHIMCHA yo'l: event bir marta yuboriladi
+ * va yetib bormasligi mumkin (sahifa oqim o'rtasida ochilgan, WS qayta
+ * ulanmoqda, sessiya filtri hali o'rnatilmagan). Shusiz agent javob kutib
+ * turadi, foydalanuvchi esa nima kutilayotganini ko'rmaydi.
+ */
+export async function kutayotganRuxsatlarOl(sessionId: string): Promise<RuxsatSorovi[]> {
+  const javob = await sorov<{ sorovlar: RuxsatSorovi[] }>(
+    `/api/chat/sessions/${sessionId}/ruxsatlar`,
+  )
+  return javob.sorovlar
 }
 
 export async function rejimOl(sessionId: string): Promise<RejimHolati> {

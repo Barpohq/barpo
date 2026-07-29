@@ -699,12 +699,75 @@ function jsonOqi(xom: string | null): unknown[] | undefined {
 
 export function xabarlarOqi(sessionId: string, baza?: Database): ChatMessage[] {
   const d = baza ?? globalDb()
-  return d
+  const xabarlar = d
     .query<XabarQator, [string]>(
       'SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at, rowid',
     )
     .all(sessionId)
     .map(xabarQatordan)
+
+  // Tool kartalari `tool_chaqiruvlar` jadvalidan USTUN olinadi.
+  //
+  // Sabab: u yerga har chaqiruv OQIM DAVOMIDA yoziladi, `tool_cards`
+  // ustuniga esa oqim OXIRIDA. Oqim uzilgan bo'lsa (provider xatosi, server
+  // qayta ishga tushdi) ustun bo'sh qoladi-yu, jadvalda yozuvlar turadi —
+  // ilgari o'sha bajarilgan buyruqlar tarixda umuman ko'rinmasdi.
+  //
+  // Ruxsat qarori ham faqat shu jadvalda bor, ya'ni "bu buyruq nega
+  // bajarildi" ma'lumoti eski ustundan kelmaydi.
+  const chaqiruvlar = new Map<string, ToolChaqiruv[]>()
+  for (const q of d
+    .query<ToolQator, [string]>(
+      'SELECT * FROM tool_chaqiruvlar WHERE session_id = ? ORDER BY created_at, rowid',
+    )
+    .all(sessionId)) {
+    const royxat = chaqiruvlar.get(q.message_id)
+    if (royxat) royxat.push(toolQatordan(q))
+    else chaqiruvlar.set(q.message_id, [toolQatordan(q)])
+  }
+
+  if (chaqiruvlar.size === 0) return xabarlar
+
+  const natija = xabarlar.map((x) => {
+    const bazadagi = chaqiruvlar.get(x.id)
+    if (!bazadagi) return x
+    chaqiruvlar.delete(x.id)
+    return { ...x, toolCards: bazadagi }
+  })
+
+  // YETIM CHAQIRUVLAR — xabari yozilmay qolgan javob.
+  //
+  // Bunday bo'lishi mumkin: jarayon oqim o'rtasida to'xtasa (server qayta
+  // ishga tushdi, quvvat uzildi) assistant xabari YOZILMAYDI, chaqiruvlar
+  // esa allaqachon bazada. Ularni tashlab ketsak, foydalanuvchi bajarilgan
+  // buyruqlarni umuman ko'rmasdi — bu aynan shu jadval oldini olishi kerak
+  // bo'lgan ma'lumot yo'qolishi.
+  //
+  // Shuning uchun yetimlar uchun sun'iy javob quriladi. `agentMessages`
+  // qo'yilmaydi: yarim qolgan kontekst keyingi turn'ni yiqitardi.
+  for (const [messageId, kartalar] of chaqiruvlar) {
+    natija.push({
+      id: messageId,
+      sessionId,
+      role: 'assistant',
+      text: "⚠︎ Javob tugamadi — oqim uzilgan. Bajarilgan amallar quyida.",
+      toolCards: kartalar,
+      createdAt: yetimVaqti(d, messageId),
+    })
+  }
+
+  // Sun'iy xabarlar oxiriga qo'shildi — vaqt bo'yicha o'z joyiga qaytaramiz
+  return natija.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+}
+
+/** Yetim chaqiruvlar to'plamining birinchi yozuv vaqti — tartib uchun */
+function yetimVaqti(d: Database, messageId: string): string {
+  const q = d
+    .query<{ vaqt: string | null }, [string]>(
+      'SELECT MIN(created_at) AS vaqt FROM tool_chaqiruvlar WHERE message_id = ?',
+    )
+    .get(messageId)
+  return q?.vaqt ?? new Date().toISOString()
 }
 
 export function xabarYoz(
@@ -744,6 +807,127 @@ export function xabarYoz(
   d.prepare('UPDATE chat_sessions SET updated_at = ? WHERE id = ?').run(toliq.createdAt, toliq.sessionId)
 
   return toliq
+}
+
+// ---------------------------------------------------------------------------
+// Tool chaqiruvlari
+// ---------------------------------------------------------------------------
+//
+// Har chaqiruv AVVAL shu yerga yoziladi, KEYIN UI'ga tarqatiladi
+// (`orchestrator.ts` dagi `toolYubor`). Tartib ataylab shunday: WS eventi
+// yo'qolishi mumkin va oqim o'rtasida uzilishi ham mumkin — bazadagi yozuv
+// esa qoladi. Ilgari aksincha edi va uzilgan oqimda bajarilgan buyruqlar
+// izsiz yo'qolardi.
+//
+// `xabarlarOqi` kartalarni SHU JADVALDAN oladi (eski
+// `chat_messages.tool_cards` ustunidan emas): u yerga yozuv oqim oxirida
+// tushadi, ya'ni uzilgan javobda bo'sh qoladi. Ustun eski xabarlar uchun
+// zaxira bo'lib qoladi.
+
+interface ToolQator {
+  id: string
+  session_id: string
+  message_id: string
+  nom: string
+  args: string
+  holat: ToolChaqiruv['holat']
+  natija: string | null
+  tafsilot: string | null
+  ruxsat: string | null
+  klassifikator: string | null
+  created_at: string
+  updated_at: string
+}
+
+function toolQatordan(q: ToolQator): ToolChaqiruv {
+  return {
+    id: q.id,
+    nom: q.nom,
+    args: q.args,
+    holat: q.holat,
+    natija: q.natija ?? undefined,
+    tafsilot: jsonObyekt<ToolChaqiruv['tafsilot']>(q.tafsilot),
+    ruxsat: jsonObyekt<ToolChaqiruv['ruxsat']>(q.ruxsat),
+    klassifikator: jsonObyekt<ToolChaqiruv['klassifikator']>(q.klassifikator),
+  }
+}
+
+/** Buzuq JSON butun javobni o'qib bo'lmaydigan qilmasin — `undefined` qaytadi */
+function jsonObyekt<T>(xom: string | null): T | undefined {
+  if (!xom) return undefined
+  try {
+    return JSON.parse(xom) as T
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Tool chaqiruvini yozadi yoki yangilaydi (id bo'yicha UPSERT).
+ *
+ * Bitta chaqiruv bir necha marta keladi: `ishlamoqda` → natija bo'laklari →
+ * `tugadi`. Har safar shu funksiya chaqiriladi va yozuv ustiga yoziladi.
+ *
+ * `COALESCE` ataylab: keyingi yangilanishda `ruxsat` yoki `klassifikator`
+ * berilmagan bo'lsa, allaqachon yozilgani O'CHIRILMAYDI. Ruxsat qarori
+ * chaqiruv o'rtasida keladi, tugash eventi esa uni bilmaydi.
+ */
+export function toolChaqiruvYoz(
+  chaqiruv: ToolChaqiruv & { sessionId: string; messageId: string },
+  baza?: Database,
+): void {
+  const d = baza ?? globalDb()
+  const hozir = new Date().toISOString()
+  d.prepare(
+    `INSERT INTO tool_chaqiruvlar
+       (id, session_id, message_id, nom, args, holat, natija, tafsilot, ruxsat,
+        klassifikator, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       nom           = excluded.nom,
+       args          = excluded.args,
+       holat         = excluded.holat,
+       natija        = excluded.natija,
+       tafsilot      = COALESCE(excluded.tafsilot, tool_chaqiruvlar.tafsilot),
+       ruxsat        = COALESCE(excluded.ruxsat, tool_chaqiruvlar.ruxsat),
+       klassifikator = COALESCE(excluded.klassifikator, tool_chaqiruvlar.klassifikator),
+       updated_at    = excluded.updated_at`,
+  ).run(
+    chaqiruv.id,
+    chaqiruv.sessionId,
+    chaqiruv.messageId,
+    chaqiruv.nom,
+    chaqiruv.args,
+    chaqiruv.holat,
+    chaqiruv.natija ?? null,
+    chaqiruv.tafsilot ? JSON.stringify(chaqiruv.tafsilot) : null,
+    chaqiruv.ruxsat ? JSON.stringify(chaqiruv.ruxsat) : null,
+    chaqiruv.klassifikator ? JSON.stringify(chaqiruv.klassifikator) : null,
+    hozir,
+    hozir,
+  )
+}
+
+/** Bitta javobning tool chaqiruvlari, bajarilish tartibida */
+export function toolChaqiruvlarOqi(messageId: string, baza?: Database): ToolChaqiruv[] {
+  const d = baza ?? globalDb()
+  return d
+    .query<ToolQator, [string]>(
+      'SELECT * FROM tool_chaqiruvlar WHERE message_id = ? ORDER BY created_at, rowid',
+    )
+    .all(messageId)
+    .map(toolQatordan)
+}
+
+/** Sessiyadagi hamma tool chaqiruvi — diagnostika va tarixni tiklash uchun */
+export function sessiyaToolChaqiruvlariOqi(sessionId: string, baza?: Database): ToolChaqiruv[] {
+  const d = baza ?? globalDb()
+  return d
+    .query<ToolQator, [string]>(
+      'SELECT * FROM tool_chaqiruvlar WHERE session_id = ? ORDER BY created_at, rowid',
+    )
+    .all(sessionId)
+    .map(toolQatordan)
 }
 
 // ---------------------------------------------------------------------------

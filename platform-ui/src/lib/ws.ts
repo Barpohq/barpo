@@ -116,7 +116,7 @@ class WsKlient {
     // zarar qilmaydi. Sessiyani tozalash uchun `null` yuboriladi: `undefined`
     // JSON'da maydonni butunlay yo'qotadi, server esa uni "o'zgarishsiz
     // qoldir" deb tushunadi.
-    this.yubor({
+    this.yuborYokiKut({
       type: 'sub',
       channels: [...this.kanallar],
       sessionId: sessionId ?? null,
@@ -135,6 +135,24 @@ class WsKlient {
     if (this.soket?.readyState !== WebSocket.OPEN) return false
     this.soket.send(JSON.stringify(event))
     return true
+  }
+
+  /**
+   * Soket ochiq bo'lmasa `onopen` gacha kutadigan yuborish.
+   *
+   * NEGA KERAK. `sub` — yagona event turi bo'lib, uning YETIB BORMASLIGI
+   * jimgina ma'lumot yo'qotadi: server chat eventlarini sessiya bo'yicha
+   * filtrlaydi, ya'ni `sub` tushmasa mijoz `chat.permission` ni UMUMAN
+   * olmaydi va agent javob kutib turaveradi. Oddiy `yubor()` esa soket
+   * ochiq bo'lmasa `false` qaytarib jimgina tashlab yuborardi.
+   *
+   * Bu poyga haqiqiy: birinchi xabar yuborilayotganda soket hali ulanayotgan
+   * yoki qayta ulanayotgan bo'lishi mumkin. `onopen` obunalarni baribir
+   * tiklaydi, lekin u paytgacha oraliq bor.
+   */
+  private yuborYokiKut(event: ClientEvent): void {
+    if (this.yubor(event)) return
+    this.ulan()
   }
 
   get ulanganmi(): boolean {

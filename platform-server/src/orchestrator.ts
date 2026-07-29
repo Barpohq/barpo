@@ -34,6 +34,7 @@ import type {
   RejimHolati,
   RuxsatJavobi,
   RuxsatRejimi,
+  RuxsatSorovi,
   ToolChaqiruv,
 } from '@platforma/shared'
 import { auditYoz } from './audit.ts'
@@ -43,6 +44,7 @@ import {
   serverlarOqi,
   sessiyaLoyihaPapkasi,
   sessiyaOqi,
+  toolChaqiruvYoz,
   xabarlarOqi,
   xabarYoz,
 } from './repo.ts'
@@ -226,9 +228,65 @@ export async function javobOqizi(
    */
   let ozimizniki = true
 
+  /**
+   * Hozir bajarilayotgan tool chaqiruvining id'si.
+   *
+   * Ruxsat so'rovi va uning qarori QAYSI chaqiruvga tegishli ekanini shu
+   * bilan bog'laymiz. Bu ishonchli, chunki tool'lar KETMA-KET bajariladi
+   * (`agent.ts`: `toolExecution: 'sequential'`) — bir vaqtda faqat bittasi
+   * ruxsat kutishi mumkin. Muqobil yo'l (`toolCallId` ni muhit va ruxsat
+   * qatlamlaridan o'tkazish) uch faylning interfeysini buzardi.
+   */
+  let faolTool: string | undefined
+
+  /**
+   * So'rov id → qaysi tool chaqiruvi uni so'ragan.
+   *
+   * `faolTool` YETARLI EMAS. Ruxsat so'rovi javob kelguncha kutadi, ya'ni
+   * qaror so'rovdan ANCHA KEYIN keladi va o'sha paytda `faolTool` boshqa
+   * chaqiruvni ko'rsatayotgan bo'lishi mumkin. Bir sessiyada ikkita oqim
+   * qisqa vaqt yonma-yon yashashi ham mumkin (foydalanuvchi to'xtatib,
+   * darhol yangi xabar yubordi) — u holda ruxsat boshqaruvchisi ikkalasiga
+   * ham xabar beradi.
+   *
+   * Shuning uchun `sorovId` bor qaror SHU jadval bo'yicha bog'lanadi va
+   * begona so'rov (boshqa oqimniki) JIMGINA TASHLANADI — noto'g'ri kartaga
+   * yozilgandan ko'ra yozilmagani yaxshi.
+   */
+  const sorovningTooli = new Map<string, string>()
+
+  /**
+   * Tool chaqiruvini AVVAL bazaga yozadi, KEYIN UI'ga tarqatadi.
+   *
+   * Tartib muhim: WS eventi yo'qolishi mumkin va oqim o'rtasida uzilishi
+   * ham mumkin, bazadagi yozuv esa qoladi. Aks holda (ilgarigidek) uzilgan
+   * javobda bajarilgan buyruqlar izsiz yo'qolardi.
+   *
+   * Baza xatosi oqimni TO'XTATMAYDI: suhbat davom etgani yozuvdan muhimroq
+   * va xato holatida ham kamida UI to'g'ri ko'rsatadi.
+   */
   const toolYubor = (tool: ToolChaqiruv) => {
     toolKartalari.set(tool.id, tool)
+    try {
+      toolChaqiruvYoz({ ...tool, sessionId, messageId })
+    } catch {
+      // jim o'tamiz — sabab yuqoridagi izohda
+    }
     hub.broadcast({ type: 'chat.tool', sessionId, messageId, tool })
+  }
+
+  /**
+   * Mavjud kartani yangilaydi (ruxsat qarori, klassifikator yorlig'i).
+   *
+   * Karta hali yo'q bo'lsa jim o'tamiz: ruxsat so'raladigan amallarning
+   * hammasi tool orqali keladi, ya'ni bunday holat kutilmaydi — lekin
+   * kelsa ham oqim buzilmasligi kerak.
+   */
+  const toolniYangila = (id: string | undefined, ozgarish: Partial<ToolChaqiruv>) => {
+    if (!id) return
+    const mavjud = toolKartalari.get(id)
+    if (!mavjud) return
+    toolYubor({ ...mavjud, ...ozgarish })
   }
 
   try {
@@ -280,6 +338,9 @@ export async function javobOqizi(
           break
 
         case 'tool_boshlandi':
+          // Ruxsat so'rovi shu chaqiruv ichida keladi — qaysi kartaga
+          // biriktirishni bilishimiz uchun eslab qolamiz
+          faolTool = hodisa.id
           toolYubor({
             id: hodisa.id,
             nom: hodisa.nom,
@@ -303,11 +364,19 @@ export async function javobOqizi(
             holat: hodisa.xatomi ? xatoHolati(hodisa.natija) : 'tugadi',
             natija: hodisa.natija,
             tafsilot: hodisa.tafsilot,
+            // Ruxsat va klassifikator qarorlari chaqiruv O'RTASIDA kelgan —
+            // tugash eventi ularni bilmaydi, shuning uchun ko'chirib olamiz
+            ruxsat: mavjud?.ruxsat,
+            klassifikator: mavjud?.klassifikator,
           })
+          if (faolTool === hodisa.id) faolTool = undefined
           break
         }
 
         case 'ruxsat_kerak':
+          // Qaysi chaqiruv so'raganini ESLAB QOLAMIZ: javob keyinroq
+          // keladi va o'shanda `faolTool` boshqasini ko'rsatishi mumkin
+          if (faolTool) sorovningTooli.set(hodisa.sorov.id, faolTool)
           hub.broadcast({ type: 'chat.permission', sessionId, messageId, sorov: hodisa.sorov })
           // Oqim javob kelguncha to'xtab turadi — sidebar buni sariq badge
           // bilan ajratib ko'rsatadi, chunki bu foydalanuvchi aralashuvini
@@ -322,7 +391,36 @@ export async function javobOqizi(
           )
           break
 
+        case 'ruxsat_qarori': {
+          // Amal QANDAY tasdiqdan o'tgani kartaga (va u orqali bazaga)
+          // yoziladi: auto klassifikatormi, foydalanuvchi bosdimi, "har
+          // doim" naqshi ishladimi, rad etildimi yoki muddat tugadimi.
+          // Shusiz "bu buyruq nega bajarildi?" savoliga javob yo'q edi.
+          //
+          // `sorovId` bor bo'lsa — so'ragan chaqiruvga bog'lanadi (u allaqachon
+          // tugagan bo'lishi mumkin). Yo'q bo'lsa (hardoim/auto/taqiq) qaror
+          // ayni shu payt ishlayotgan chaqiruv ichida sinxron chiqqan.
+          const nishonTool = hodisa.qaror.sorovId
+            ? sorovningTooli.get(hodisa.qaror.sorovId)
+            : faolTool
+          // Begona so'rov (boshqa oqimniki) — jimgina tashlaymiz
+          if (hodisa.qaror.sorovId && !nishonTool) break
+          toolniYangila(nishonTool, { ruxsat: hodisa.qaror })
+          if (hodisa.qaror.sorovId) sorovningTooli.delete(hodisa.qaror.sorovId)
+          auditYoz(
+            'platforma',
+            'ruxsat qarori',
+            `${hodisa.qaror.manba}: ${hodisa.qaror.naqsh ?? '—'}`.slice(0, 120),
+            'xavfli',
+            hodisa.qaror.berildi ? 'tasdiqlandi' : 'rad etildi',
+          )
+          break
+        }
+
         case 'klassifikator':
+          toolniYangila(faolTool, {
+            klassifikator: { qaror: hodisa.qaror, izoh: hodisa.izoh },
+          })
           hub.broadcast({
             type: 'chat.klassifikator',
             sessionId,
@@ -415,7 +513,14 @@ export async function javobOqizi(
   // Tekshirmasak `xabarYoz` foreign key xatosi tashlardi — u esa bu yerda
   // ushlanmaydi, chunki `finally` allaqachon o'tgan.
   const sessiyaBor = sessiyaOqi(sessionId) !== null
-  if (sessiyaBor && (saqlanadigan.length > 0 || toolCards.length > 0)) {
+  // Turn'ni YO'QOTMASLIK sharti: matn, tool yoki agent konteksti — uchtadan
+  // biri bo'lsa yoziladi. Ilgari faqat birinchi ikkitasi tekshirilardi va
+  // provider bo'sh javob qaytarganda (yoki xato jimgina yutilganda) butun
+  // javob bazaga umuman tushmasdi: foydalanuvchi xabari tarixda yolg'iz
+  // qolib, keyingi turn'da nima bo'lganini hech kim bilmasdi.
+  const yozishKerak =
+    saqlanadigan.length > 0 || toolCards.length > 0 || (agentXabarlari?.length ?? 0) > 0
+  if (sessiyaBor && yozishKerak) {
     xabarYoz({
       id: messageId,
       sessionId,
@@ -509,6 +614,23 @@ export async function rejimOrnat(
   hub.broadcast({ type: 'chat.rejim', sessionId, holat })
   auditYoz('foydalanuvchi', 'ruxsat rejimi', rejim, "o'zgartirish", 'OK')
   return holat
+}
+
+/**
+ * Sessiyada hozir javob kutayotgan ruxsat so'rovlari.
+ *
+ * NEGA KERAK. `chat.permission` — bir marta yuboriladigan WS eventi. U
+ * yetib bormasa (mijoz hali `sub` yubormagan, qayta ulanish oynasi, sahifa
+ * oqim o'rtasida ochilgan) so'rov UI'da HECH QACHON ko'rinmaydi va agent
+ * javob kutib turaveradi — foydalanuvchi uchun bu "chat qotib qoldi".
+ *
+ * Eventga qo'shimcha ravishda SO'RASH mumkin bo'lgan manba shu poyganing
+ * butun sinfini zararsiz qiladi: UI sahifa ochilganda va har qayta
+ * ulanishda holatni shu yerdan tiklaydi. `chat.status` dagi
+ * `ruxsat-kutmoqda` bilan bir xil mantiq (`GET /api/chat/running`).
+ */
+export function kutayotganRuxsatlar(sessionId: string): RuxsatSorovi[] {
+  return ruxsatBoshqaruvchisi(sessionId).kutayotganSorovlar
 }
 
 /** Ruxsat so'roviga javob berish — WS yoki REST orqali keladi */

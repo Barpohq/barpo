@@ -35,6 +35,7 @@ import {
   loyihaYarat as loyihaYaratSorov,
   modellarOl,
   oqimniToxtat,
+  kutayotganRuxsatlarOl,
   rejimOl,
   rejimOrnat as rejimOrnatSorov,
   ruxsatJavobiYubor,
@@ -251,13 +252,18 @@ export default function Chat({
       )
 
       try {
-        const [xabarlar, rejimHolati] = await Promise.all([
+        const [xabarlar, rejimHolati, kutayotganlar] = await Promise.all([
           xabarlarOl(ochiqSessiya),
           rejimOl(ochiqSessiya).catch(() => null),
+          // Oqim o'rtasida ochilgan suhbat ruxsat kutayotgan bo'lishi mumkin.
+          // `chat.permission` allaqachon o'tib ketgan — uni faqat shu yerdan
+          // tiklab olamiz, aks holda agent javob kutib qotib qolardi.
+          kutayotganRuxsatlarOl(ochiqSessiya).catch(() => []),
         ])
         if (bekor) return
         setMsgs(xabarlar.map(xabarniMoslash))
         setRejim(rejimHolati ?? { rejim: 'tasdiq' })
+        setRuxsatlar(kutayotganlar)
       } catch {
         // Xabarlar yuklanmasa ham sessiyani ochamiz — foydalanuvchi davom
         // ettira oladi, tarix esa keyingi yangilashda kelishi mumkin
@@ -393,7 +399,11 @@ export default function Chat({
           break
 
         case 'chat.klassifikator':
-          // Qaror oxirgi tool kartasiga yorliq bo'lib yopishadi
+          // Yorliqni endi SERVER kartaga yozadi (`chat.tool` bilan keladi va
+          // bazaga ham tushadi), bu yerda faqat oraliq holat qoplanadi:
+          // klassifikator eventi kartaning keyingi yangilanishidan oldin
+          // kelsa, yorliq shu yerda darhol ko'rinadi. Ikkalasi bir xil
+          // qiymatni yozadi, ya'ni ustma-ust tushishi zarar qilmaydi.
           setMsgs((m) =>
             m.map((x) => {
               if (x.id !== event.messageId || !x.toolCards?.length) return x
@@ -407,6 +417,30 @@ export default function Chat({
 
         case 'chat.rejim':
           setRejim(event.holat)
+          break
+
+        case 'chat.status':
+          // ZAXIRA YO'L. `chat.status` sessiya bo'yicha FILTRLANMAYDI, ya'ni
+          // u `chat.permission` dan farqli o'laroq har doim yetib keladi.
+          // Server "ruxsat kutmoqda" desa-yu bizda karta bo'lmasa — demak
+          // `chat.permission` yo'lda yo'qolgan (sessiya filtri hali
+          // o'rnatilmagan, WS qayta ulanmoqda). So'rovni o'zimiz so'raymiz.
+          //
+          // Shusiz agent 5 daqiqa javob kutib, keyin rad etilgan bo'lardi —
+          // foydalanuvchi esa nima bo'layotganini umuman ko'rmasdi.
+          if (event.holat === 'ruxsat-kutmoqda' && event.sessionId === sessionIdRef.current) {
+            const kutilayotganSessiya = event.sessionId
+            void kutayotganRuxsatlarOl(kutilayotganSessiya)
+              .then((sorovlar) => {
+                // Javob kelguncha suhbat almashgan bo'lishi mumkin
+                if (sessionIdRef.current !== kutilayotganSessiya) return
+                setRuxsatlar((r) => {
+                  const yangilar = sorovlar.filter((s) => !r.some((m) => m.id === s.id))
+                  return yangilar.length > 0 ? [...r, ...yangilar] : r
+                })
+              })
+              .catch(() => undefined)
+          }
           break
 
         case 'chat.done':
@@ -500,15 +534,19 @@ export default function Chat({
           ws.sessiyaniKuzat(sid)
           // URL'ga yozamiz — endi sahifa yangilansa suhbat tiklanadi
           sessiyaXabarchi.current?.(sid)
-          // Sessiyagacha tanlangan rejimni serverga yetkazamiz
-          if (rejim.rejim === 'auto') {
-            try {
-              setRejim(await rejimOrnatSorov(sid, 'auto'))
-            } catch {
-              // Rejim o'rnatilmasa tasdiq holicha qoladi — xabar berish shart emas,
-              // almashtirgich holatni ko'rsatib turadi
-              setRejim({ rejim: 'tasdiq' })
-            }
+          // Sessiyagacha tanlangan rejimni serverga yetkazamiz.
+          //
+          // IKKALA qiymat ham yuboriladi, faqat `auto` emas. Serverning
+          // standarti ham `tasdiq`, ya'ni jimgina o'tib ketish "ishlab
+          // turgandek" ko'rinardi — lekin u holda UI ko'rsatgan rejim va
+          // server haqiqatan qo'llayotgan rejim HECH QACHON solishtirilmasdi.
+          // Endi javob holatni tasdiqlaydi (yoki tuzatadi).
+          try {
+            setRejim(await rejimOrnatSorov(sid, rejim.rejim))
+          } catch {
+            // Rejim o'rnatilmasa server standarti (tasdiq) kuchda qoladi —
+            // xavfsiz tomon. Almashtirgich shu holatni ko'rsatadi.
+            setRejim({ rejim: 'tasdiq' })
           }
         }
 
@@ -698,18 +736,24 @@ export default function Chat({
                     {m.xato}
                   </div>
                 )}
-                {/* Ruxsat so'rovlari oxirgi javob ostida turadi */}
-                {m.oqmoqda &&
-                  ruxsatlar.map((sorov) => (
-                    <RuxsatKartasi
-                      key={sorov.id}
-                      sorov={sorov}
-                      onJavob={(javob) => void ruxsatBer(sorov, javob)}
-                    />
-                  ))}
               </div>
             ),
           )}
+
+          {/* Ruxsat so'rovlari — suhbat OXIRIDA, alohida.
+              Ilgari ular oqayotgan javob xabari ichida turardi (`m.oqmoqda`).
+              Bu jimgina yo'qotish manbai edi: so'rov o'sha xabar QO'SHILGUNCHA
+              kelsa (yangi sessiyada birinchi xabar shunday — avval sessiya
+              yaratiladi, keyin javob xabari qo'shiladi) yopishadigan joy
+              topilmay karta umuman chizilmasdi. Agent esa javob kutib
+              turaverardi. Endi karta xabarlardan mustaqil. */}
+          {ruxsatlar.map((sorov) => (
+            <RuxsatKartasi
+              key={sorov.id}
+              sorov={sorov}
+              onJavob={(javob) => void ruxsatBer(sorov, javob)}
+            />
+          ))}
 
           {/* Auto o'z-o'zidan o'chgan bo'lsa sabab va qayta yoqish tugmasi */}
           {rejim.rejim === 'tasdiq' && rejim.sabab && (

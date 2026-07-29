@@ -9,6 +9,7 @@ import { Hono } from 'hono'
 import {
   ishlayotganSessiyalar,
   javobOqizi,
+  kutayotganRuxsatlar,
   oqimBormi,
   oqimniToxtat,
   rejimHolati,
@@ -257,6 +258,20 @@ chatRoutes.post('/chat/permission', async (c) => {
     )
   }
   return c.json({ qabulQilindi: true })
+})
+
+/**
+ * Sessiyada javob kutayotgan ruxsat so'rovlari.
+ *
+ * UI buni sahifa ochilganda va WS qayta ulanganda so'raydi: `chat.permission`
+ * bir marta yuboriladi va yetib bormasligi mumkin (`kutayotganRuxsatlar`
+ * izohiga q.). Shusiz agent javob kutib turadi, foydalanuvchi esa nima
+ * kutilayotganini ko'rmaydi.
+ */
+chatRoutes.get('/chat/sessions/:id/ruxsatlar', (c) => {
+  const id = c.req.param('id')
+  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  return c.json({ sorovlar: kutayotganRuxsatlar(id) })
 })
 
 /** Sessiyaning hozirgi ruxsat rejimi */

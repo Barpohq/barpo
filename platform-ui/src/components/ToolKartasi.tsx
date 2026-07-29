@@ -8,10 +8,32 @@
 // coral rangda.
 
 import { useState } from 'react'
-import type { ToolChaqiruv } from '@platforma/shared'
+import type { RuxsatManbasi, ToolChaqiruv } from '@platforma/shared'
 
 /** Yopiq holatda ko'rsatiladigan maksimal qator */
 const QISQA_QATOR = 6
+
+/**
+ * Amal qanday tasdiqdan o'tgani — kartaning pastida bir qator.
+ *
+ * Bu diagnostika emas, MAS'ULIYAT izi: foydalanuvchi keyinroq "bu buyruq
+ * nega bajarildi?" deb so'raganda javob shu yerda turadi.
+ *
+ * Xavfsiz amallar (ish papkasidagi `read`, `ls`…) bu qatorni UMUMAN
+ * olmaydi: ular ruxsat qatlamiga kirmaydi, ya'ni qaror ham yo'q. Qator
+ * borligi o'zi "bu amal tekshiruvdan o'tgan" degani.
+ */
+const ruxsatMatni: Record<RuxsatManbasi, string> = {
+  hardoim: '"har doim" tanlangani uchun bajarildi',
+  auto: 'auto rejim: klassifikator ruxsat berdi',
+  'auto-blok': 'auto rejim: klassifikator bloklandi',
+  foydalanuvchi: 'siz ruxsat berdingiz',
+  'foydalanuvchi-hardoim': 'siz "har doim" ruxsat berdingiz',
+  rad: 'siz rad etdingiz',
+  muddat: "javob kelmadi — muddat tugadi, rad etildi",
+  bekor: "javob to'xtatildi — amal bajarilmadi",
+  taqiqlangan: "qat'iy taqiq ro'yxatida — hech kimdan so'ralmaydi",
+}
 
 const nomBelgisi: Record<string, string> = {
   read: '📖',
@@ -113,6 +135,20 @@ export default function ToolKartasi({ tool }: { tool: ToolChaqiruv }) {
         >
           <span aria-hidden>{tool.klassifikator.qaror === 'ruxsat' ? '✓' : '⊘'}</span>
           <span className="min-w-0 flex-1">{tool.klassifikator.izoh}</span>
+        </div>
+      )}
+
+      {/* Klassifikator izohi bilan ikkalasi ham chiqishi mumkin: biri
+          "nima uchun" (izoh), bu esa "kim qaror qildi" (manba). */}
+      {tool.ruxsat && (
+        <div
+          className={`flex items-start gap-1.5 border-t border-line px-3 py-1.5 text-[11px] ${
+            tool.ruxsat.berildi ? 'text-faint' : 'text-gold'
+          }`}
+          title={tool.ruxsat.naqsh ? `naqsh: ${tool.ruxsat.naqsh}` : undefined}
+        >
+          <span aria-hidden>{tool.ruxsat.berildi ? '🔓' : '🔒'}</span>
+          <span className="min-w-0 flex-1">{ruxsatMatni[tool.ruxsat.manba]}</span>
         </div>
       )}
     </div>

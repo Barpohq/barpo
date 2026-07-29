@@ -300,6 +300,9 @@ export class ChegaralanganMuhit implements ExecutionEnv {
     // Qat'iy taqiq — klassifikatorga ham, foydalanuvchiga ham bormaydi.
     // Bu yagona shartsiz kafolat: qolgan hamma himoya ehtimoliy.
     if (baho.toifa === 'taqiqlangan') {
+      // Qaror yozib qo'yiladi: foydalanuvchi buyruq NEGA bajarilmaganini
+      // ko'rsin. Bu yagona yo'l — bu yerda ruxsat umuman so'ralmaydi.
+      this.ruxsat.taqiqlanganiniYoz(baho.naqsh)
       return {
         ok: false,
         error: new ExecutionError(

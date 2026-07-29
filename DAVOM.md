@@ -51,6 +51,53 @@ cd platform-ui && bun run dev                # UI
 5. ~~**Suhbatlar tarixi: sidebar ro'yxati + alohida sahifa**~~ ✅ (quyida)
 6. ~~**Skilllar: GitHub manbadan o'rnatish va agentga ulash**~~ ✅ (quyida)
 7. ~~**Serverlar: parolsiz SSH ulanish + jonli metrikalar**~~ ✅ (quyida)
+8. ~~**Ishonchlilik: jim yo'qolgan xatolar + tool chaqiruvlarini saqlash**~~ ✅ (quyida)
+
+### 8-bosqichda nima qilindi (2026-07-29)
+
+Uchta jimgina ma'lumot yo'qotuvchi xato tuzatildi. Hammasi bir sinfdan:
+javob oqimi buzilganda iz qolmasdi.
+
+**1. Provider xatosi yutilardi.** pi-agent-core provider xatosini
+`prompt()` dan TASHLAMAYDI — uni oxirgi assistant xabariga
+`stopReason: 'error'` bo'lib yozib qo'yadi. `agentOqimi` buni tekshirmasdi,
+ya'ni oqim MUVAFFAQIYATLI hisoblanardi: matn bo'sh, tool yo'q, xato yo'q.
+Foydalanuvchi uchun bu "chat boshlandi va darhol tugadi, hech narsa
+bo'lmadi". Bazaga ham hech narsa tushmasdi (`orchestrator.ts` bo'sh javobni
+yozmasdi) — ya'ni savol tarixda yolg'iz qolardi.
+
+Haqiqiy misollar (foydalanuvchi bazasidan): OpenRouter `400 Reasoning is
+mandatory for this endpoint`, Codex `invalidated oauth token`.
+
+Endi `oqimXatosi()` (`agent.ts`) buni ushlaydi va `chat.error` bo'lib
+chiqadi; saqlash sharti ham kengaytirildi (matn/tool/kontekst — uchtadan
+biri bo'lsa yoziladi).
+
+**2. Tool chaqiruvlari faqat oqim OXIRIDA saqlanardi.** Yangi
+`tool_chaqiruvlar` jadvali (009-migratsiya): har chaqiruv AVVAL bazaga
+yoziladi, KEYIN UI'ga tarqatiladi. Ruxsat QANDAY berilgani ham saqlanadi —
+auto klassifikator / foydalanuvchi / "har doim" / rad / muddat / bekor /
+qat'iy taqiq (`RuxsatManbasi`). Tool kartasida shu qator ko'rinadi.
+`xabarlarOqi` kartalarni shu jadvaldan oladi, xabari yozilmay qolgan
+chaqiruvlar uchun esa sun'iy javob quradi — yetim yozuv ko'rinmay ketmasin.
+
+**3. Ruxsat so'rovi bekor qilishni ko'rmasdi.** `sora()` abort signalini
+tinglamasdi, ya'ni "To'xtatish" bosilgan oqim shu yerda 5 DAQIQA osilib
+turardi. Ikki oqibati bor edi: (a) eski karta UI'da tirik qolib, bosilsa
+foydalanuvchi to'xtatgan buyruq BAJARILARDI; (b) muddat tugagach qaror
+KEYINGI oqimning kartasiga yozilib, "kim ruxsat berdi" izi yolg'on
+bo'lardi. Endi signal tinglanadi va qaror `sorovId` bo'yicha aynan
+so'ragan chaqiruvga bog'lanadi (`sorovningTooli`).
+
+Yon tuzatishlar: ruxsat kartasi endi oqayotgan xabar ICHIDA emas, suhbat
+oxirida alohida turadi (ilgari xabar hali qo'shilmagan bo'lsa karta umuman
+chizilmasdi); `GET /api/chat/sessions/:id/ruxsatlar` — yo'qolgan
+`chat.permission` ni tiklash uchun; rejim serverga ikkala qiymatda ham
+yuboriladi.
+
+⚠︎ **Migratsiya raqami 8 ATAYLAB tashlab ketilgan** — ba'zi mahalliy
+bazalarda 8-raqam ostida tashlab yuborilgan tajriba (`command_runs`)
+yozilgan. 009 uni `DROP TABLE IF EXISTS` bilan tozalaydi.
 
 ### 7-bosqichda nima qilindi (2026-07-29)
 

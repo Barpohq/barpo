@@ -196,6 +196,11 @@ export interface ToolChaqiruv {
   }
   /** Auto rejimda klassifikator shu amal bo'yicha chiqargan qaror */
   klassifikator?: KlassifikatorQarori
+  /**
+   * Amal qanday tasdiqdan o'tgani. Bazaga tool chaqiruvi bilan birga
+   * yoziladi, ya'ni suhbat qayta ochilganda ham ko'rinadi.
+   */
+  ruxsat?: RuxsatQarori
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +237,49 @@ export interface KlassifikatorQarori {
   toolId?: string
   qaror: 'ruxsat' | 'blok'
   izoh: string
+}
+
+/**
+ * Amal QANDAY tasdiqdan o'tgani — tool chaqiruvi bilan birga saqlanadi.
+ *
+ * Bu javobning O'ZI emas, javob QAYERDAN kelgani. Foydalanuvchi keyinroq
+ * "bu buyruq nega bajarildi?" deb so'raganda yagona ishonchli manba shu:
+ *
+ *   `hardoim`    — shu sessiyada avval "Har doim" tanlangan, qayta so'ralmadi
+ *   `auto`       — auto rejimda klassifikator ruxsat berdi
+ *   `auto-blok`  — auto rejimda klassifikator bloklandi
+ *   `foydalanuvchi` — foydalanuvchi "Ruxsat berish" bosdi
+ *   `foydalanuvchi-hardoim` — foydalanuvchi "Har doim" bosdi
+ *   `rad`        — foydalanuvchi rad etdi
+ *   `muddat`     — javob kelmadi, muddat tugab RAD etildi
+ *   `bekor`      — javob oqimi to'xtatildi, so'rov o'z-o'zidan yopildi
+ *   `taqiqlangan` — qat'iy taqiq ro'yxati, hech kimdan so'ralmaydi
+ *
+ * `bekor` va `rad` ATAYLAB ajratilgan: birinchisida foydalanuvchi butun
+ * javobni to'xtatgan, ikkinchisida aynan shu amalni rad etgan. Ikkalasini
+ * "siz rad etdingiz" deb ko'rsatish yolg'on bo'lardi.
+ */
+export type RuxsatManbasi =
+  | 'hardoim'
+  | 'auto'
+  | 'auto-blok'
+  | 'foydalanuvchi'
+  | 'foydalanuvchi-hardoim'
+  | 'rad'
+  | 'muddat'
+  | 'bekor'
+  | 'taqiqlangan'
+
+/** Ruxsat qarori — qanday hal bo'lgani, tool chaqiruviga biriktiriladi */
+export interface RuxsatQarori {
+  /** Foydalanuvchiga ko'rsatiladigan so'rov id'si; so'ralmagan bo'lsa yo'q */
+  sorovId?: string
+  manba: RuxsatManbasi
+  /** Ruxsat berildimi (`rad`/`auto-blok`/`muddat`/`taqiqlangan` da `false`) */
+  berildi: boolean
+  /** "Har doim" da eslab qolingan naqsh */
+  naqsh?: string
+  vaqt: string
 }
 
 export interface RuxsatSorovi {

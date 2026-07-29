@@ -23,7 +23,7 @@ import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-age
 import type { Api, Model, Models } from '@earendil-works/pi-ai'
 import type { Config } from '@platforma/config'
 import { standartConfig } from '@platforma/config'
-import type { ModelTanlovi, RuxsatRejimi, RuxsatSorovi } from '@platforma/shared'
+import type { ModelTanlovi, RuxsatQarori, RuxsatRejimi, RuxsatSorovi } from '@platforma/shared'
 import { modelsKolleksiyasi } from './aniqlash.ts'
 import {
   keyinZanjiri,
@@ -65,6 +65,12 @@ export type AgentHodisasi =
       tafsilot?: { diff?: string; qisqartirilgan?: boolean }
     }
   | { tur: 'ruxsat_kerak'; sorov: RuxsatSorovi }
+  /**
+   * Ruxsat masalasi hal bo'ldi — qaror qayerdan kelgani bilan.
+   * Chaqiruvchi buni AYNAN O'SHA PAYT ishlayotgan tool chaqiruviga
+   * biriktiradi (tool'lar ketma-ket bajariladi, ya'ni bittasi aniq).
+   */
+  | { tur: 'ruxsat_qarori'; qaror: RuxsatQarori }
   | { tur: 'klassifikator'; qaror: 'ruxsat' | 'blok'; izoh: string }
   | { tur: 'rejim'; rejim: RuxsatRejimi; sabab?: string }
   /** Kontekst siqildi — UI foydalanuvchiga bildiradi */
@@ -138,6 +144,42 @@ export function klassifikatorTarixi(xabarlar: SuhbatXabari[]): KlassifikatorXaba
 
 /** Tool natijasi juda uzun bo'lsa UI uchun qisqartiriladi */
 const NATIJA_CHEGARASI = 2000
+
+/**
+ * Oqim provider xatosi bilan tugaganmi — tugagan bo'lsa sabab matni.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────┐
+ * │ NEGA BU KERAK. `agent.prompt()` provider xatosida XATO TASHLAMAYDI.  │
+ * │ pi-agent-core xatoni oxirgi `assistant` xabariga yozib qo'yadi       │
+ * │ (`stopReason: 'error'`, `errorMessage: '...'`) va jimgina qaytadi.   │
+ * │                                                                      │
+ * │ Buni tekshirmasak oqim MUVAFFAQIYATLI deb hisoblanardi: matn bo'sh,  │
+ * │ tool yo'q, xato yo'q. Foydalanuvchi uchun bu "chat boshlandi va      │
+ * │ darhol tugadi, hech narsa bo'lmadi" — sababi ko'rinmaydi. Bazada     │
+ * │ ham iz qolmasdi (`orchestrator.ts`: bo'sh javob yozilmaydi).         │
+ * │                                                                      │
+ * │ Haqiqiy misollar: OpenRouter `400 Reasoning is mandatory for this    │
+ * │ endpoint`, Codex `invalidated oauth token`. Ikkalasi ham shu yo'ldan │
+ * │ o'tib, foydalanuvchiga bo'sh javob bo'lib ko'ringan.                 │
+ * └──────────────────────────────────────────────────────────────────────┘
+ *
+ * `aborted` bu yerda XATO EMAS: bekor qilishni chaqiruvchi o'zi biladi
+ * (`signal.aborted`) va uni alohida xabar bilan bildiradi.
+ *
+ * Faqat OXIRGI assistant xabari tekshiriladi: undan oldingilari muvaffaqiyatli
+ * tugagan turn'lar (tool zanjiri) va ular javobni buzmagan.
+ */
+export function oqimXatosi(xabarlar: readonly unknown[]): string | undefined {
+  for (let i = xabarlar.length - 1; i >= 0; i -= 1) {
+    const x = xabarlar[i] as
+      | { role?: string; stopReason?: string; errorMessage?: string }
+      | undefined
+    if (x?.role !== 'assistant') continue
+    if (x.stopReason !== 'error') return undefined
+    return x.errorMessage?.trim() || 'provider javobni qaytara olmadi'
+  }
+  return undefined
+}
 
 /**
  * Agentning system prompti.
@@ -343,6 +385,9 @@ export async function* agentOqimi(
   const qarorBekor = sozlama.ruxsat.qarorlarniKuzat((q) =>
     qoy({ tur: 'klassifikator', qaror: q.qaror, izoh: q.izoh }),
   )
+  const ruxsatQaroriBekor = sozlama.ruxsat.ruxsatQarorlariniKuzat((qaror) =>
+    qoy({ tur: 'ruxsat_qarori', qaror }),
+  )
   const rejimBekor = sozlama.rejim?.kuzat((o) =>
     qoy({ tur: 'rejim', rejim: o.rejim, sabab: o.sabab }),
   )
@@ -367,6 +412,7 @@ export async function* agentOqimi(
   const tozala = () => {
     ruxsatBekor()
     qarorBekor()
+    ruxsatQaroriBekor()
     rejimBekor?.()
     sozlama.ruxsat.klassifikatorniUla(undefined)
   }
@@ -591,6 +637,15 @@ export async function* agentOqimi(
 
       if (sozlama.signal?.aborted) {
         qoy({ tur: 'xato', xabar: "So'rov bekor qilindi" })
+        return
+      }
+
+      // Provider xatosi `prompt()` dan tashqariga chiqmaydi — u oxirgi
+      // assistant xabarida yozilib qoladi (`oqimXatosi` izohiga q.).
+      // Tekshirmasak bo'sh javob "muvaffaqiyat" bo'lib ketardi.
+      const providerXatosi = oqimXatosi(agent.state.messages)
+      if (providerXatosi) {
+        qoy({ tur: 'xato', xabar: providerXatosi })
         return
       }
 
