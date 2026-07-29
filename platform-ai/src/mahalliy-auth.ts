@@ -42,13 +42,14 @@ function tokenIzla(qiymat: unknown, chuqurlik = 0): OAuthCredential | undefined 
   const muddat = birinchiRaqam(o, ['expiresAt', 'expires_at', 'expires', 'expiresIn', 'expires_in'])
 
   if (access && refresh) {
-    return {
-      type: 'oauth',
-      access,
-      refresh,
-      // Muddat topilmasa yoki o'tib ketgan bo'lsa 0 — pi-ai darhol yangilaydi
-      expires: muddatniNormalla(muddat),
-    }
+    // Codex `~/.codex/auth.json` da muddatni alohida maydonda saqlamaydi —
+    // u faqat JWT ichida (`exp`) turadi. Ochiq maydon bo'lsa u ustun, bo'lmasa
+    // access_token'ni ochib ko'ramiz. Aks holda muddat 0 bo'lib qolar edi va
+    // pi-ai hali 10 kun yaroqli tokenni har ishga tushishda yangilardi —
+    // OpenAI esa refresh'da tokenni rotatsiya qilib, eskisini bekor qiladi.
+    const expires = muddat !== undefined ? muddatniNormalla(muddat) : jwtMuddati(access)
+
+    return { type: 'oauth', access, refresh, expires }
   }
 
   // Yuqori qavatda topilmadi — ichki obyektlarni ko'ramiz
@@ -79,6 +80,35 @@ function birinchiRaqam(o: Record<string, unknown>, kalitlar: string[]): number |
     }
   }
   return undefined
+}
+
+/**
+ * JWT payload'idagi `exp` da'vosini millisekundli absolut vaqt sifatida
+ * qaytaradi. Token JWT bo'lmasa yoki `exp` topilmasa — 0 (muddati noma'lum,
+ * pi-ai yangilaydi).
+ *
+ * Imzo TEKSHIRILMAYDI: bu token bizga tegishli emas va biz uni faqat o'z
+ * serverimizga uzatamiz. Bizga kerakli yagona narsa — qachon yangilash kerak
+ * degan maslahat. Imzo yaroqsiz bo'lsa ham buni OpenAI o'zi rad etadi.
+ */
+function jwtMuddati(token: string): number {
+  const qismlar = token.split('.')
+  if (qismlar.length !== 3) return 0
+  try {
+    const payload = qismlar[1] ?? ''
+    // JWT base64url ishlatadi; atob standart base64 kutadi
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const toldirilgan = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    const dava = JSON.parse(atob(toldirilgan)) as unknown
+    if (typeof dava !== 'object' || dava === null) return 0
+    const exp = (dava as Record<string, unknown>).exp
+    // `exp` — RFC 7519 bo'yicha doim sekundli Unix vaqti
+    if (typeof exp !== 'number' || !Number.isFinite(exp) || exp <= 0) return 0
+    return exp * 1000
+  } catch {
+    // Buzuq base64 yoki JSON — muddat noma'lum
+    return 0
+  }
 }
 
 /**

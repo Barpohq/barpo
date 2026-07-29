@@ -13,10 +13,13 @@ export {
   keshniTozala,
   modellarniAniqla,
   modelsKolleksiyasi,
+  MUDDAT_ZAXIRASI,
   STANDART_KREDENSIAL_YOLI,
   type AniqlashNatijasi,
   type AniqlashSozlamalari,
 } from './aniqlash.ts'
+
+export { codexGaYoz, type SinxronNatija } from './manba-sinxron.ts'
 
 export { FaylKredensialOmbori, XotiraKredensialOmbori } from './kredensial.ts'
 

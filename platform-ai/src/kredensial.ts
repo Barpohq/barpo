@@ -2,10 +2,16 @@
 // providerlarning kalitlari va OAuth tokenlarini o'qiydi/yozadi.
 //
 // Nega o'z faylimiz? pi-ai OAuth tokenini muddati tugaganda avtomatik
-// yangilaydi va natijani `modify` orqali qaytarib yozadi. Agar biz to'g'ridan
-// to'g'ri ~/.claude yoki ~/.codex fayliga yozsak, boshqa dasturning holatini
-// buzgan bo'lardik. Shuning uchun mahalliy fayllardan faqat O'QIYMIZ
-// (mahalliy-auth.ts), yangilangan tokenni esa o'z faylimizga yozamiz.
+// yangilaydi va natijani `modify` orqali qaytarib yozadi. Holatimizni o'z
+// faylimizda saqlaymiz, mahalliy fayllardan esa boshlang'ich tokenni
+// o'qiymiz (mahalliy-auth.ts).
+//
+// AMMO: OpenAI refresh tokenni rotatsiya qiladi — refresh'dan keyin eskisi
+// bekor bo'ladi. Agar yangi tokenni faqat o'zimizda saqlasak, ~/.codex dagi
+// token o'lib qoladi va terminaldagi `codex` ishlamay qoladi. Shuning uchun
+// codex provideri uchun yangilangan tokenni manba fayliga ham qaytaramiz
+// (manba-sinxron.ts). Bu ataylab qilingan istisno: ikkala dastur bitta
+// obunani baham ko'rgani uchun ikkalasi ham eng so'nggi tokenni bilishi shart.
 //
 // `modify` — yagona yozish yo'li va u serializatsiya qilinadi: bir vaqtda
 // ikkita so'rov kelsa, ikkinchisi birinchisini kutadi. Aks holda ikkalasi ham
@@ -15,6 +21,10 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai'
+import { codexGaYoz } from './manba-sinxron.ts'
+
+/** Manba fayliga qaytariladigan providerlar */
+const CODEX_ID = 'openai-codex'
 
 /** Fayldagi ko'rinish: provider id → credential */
 type Fayl = Record<string, Credential>
@@ -23,9 +33,15 @@ export class FaylKredensialOmbori implements CredentialStore {
   private yol: string
   /** Ketma-ket bajarish navbati — modify/delete shu zanjirga ulanadi */
   private navbat: Promise<unknown> = Promise.resolve()
+  /** Manba fayliga sinxronlashni o'chirish (testlar uchun) */
+  private manbagaSinxron: boolean
+  /** Uy papkasi — testlarda vaqtinchalik papka beriladi */
+  private uy: string | undefined
 
-  constructor(yol: string) {
+  constructor(yol: string, sozlama?: { manbagaSinxron?: boolean; uy?: string }) {
     this.yol = yol
+    this.manbagaSinxron = sozlama?.manbagaSinxron ?? true
+    this.uy = sozlama?.uy
   }
 
   async read(providerId: string): Promise<Credential | undefined> {
@@ -48,8 +64,27 @@ export class FaylKredensialOmbori implements CredentialStore {
       if (yangi === undefined) return fayl[providerId] // o'zgarishsiz qoldirildi
       fayl[providerId] = yangi
       await this.faylniYoz(fayl)
+      // Manba fayliga ham qaytaramiz — aks holda rotatsiyadan keyin
+      // ~/.codex dagi refresh_token o'lik qoladi. Navbat ichida bo'lgani
+      // uchun bir vaqtda ikkita yozuv urinmaydi.
+      this.manbagaQaytar(providerId, yangi)
       return yangi
     })
+  }
+
+  /**
+   * Yangilangan tokenni manba dasturning fayliga qaytaradi.
+   * Hech qachon xato tashlamaydi — sinxronizatsiya muvaffaqiyatsiz bo'lsa ham
+   * bizning omborimizda token saqlangan va platforma ishlayveradi.
+   */
+  private manbagaQaytar(providerId: string, credential: Credential): void {
+    if (!this.manbagaSinxron) return
+    if (providerId !== CODEX_ID || credential.type !== 'oauth') return
+    try {
+      codexGaYoz(credential, this.uy)
+    } catch {
+      // codexGaYoz o'zi ham xato tashlamaydi, bu qo'shimcha himoya qatlami
+    }
   }
 
   async delete(providerId: string): Promise<void> {

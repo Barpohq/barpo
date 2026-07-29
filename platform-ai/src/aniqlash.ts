@@ -47,6 +47,20 @@ export const STANDART_KREDENSIAL_YOLI = new URL(
 ).pathname
 
 /**
+ * Muddat zaxirasi: tokenni tugashidan shuncha oldin yangilaymiz.
+ *
+ * pi-ai o'zi faqat muddat TUGAGANDA yangilaydi (`Date.now() >= expires`).
+ * Biz omborga yozayotganda `expires` ni shu qadar oldinga surib qo'yamiz —
+ * shunda pi-ai bir kun oldin yangilaydi va foydalanuvchi hech qachon
+ * "token ishlamay qoldi" holatiga tushmaydi.
+ *
+ * Nega aynan 1 kun? Codex access_token'i 10 kun yashaydi, ya'ni zaxira
+ * umrning ~10% i. Bu bir kunlik uzilish (PC o'chiq, internetsiz) tokenni
+ * o'ldirishiga yo'l qo'ymaydi, lekin keraksiz tez-tez rotatsiya ham qilmaydi.
+ */
+export const MUDDAT_ZAXIRASI = 24 * 60 * 60 * 1000
+
+/**
  * Qo'shimcha to'lovsiz ishlatiladiganlar tepada: mahalliy (bepul), keyin
  * obuna (oylik to'lovga kiradi), oxirida API kaliti (har token pullik).
  */
@@ -225,13 +239,26 @@ async function mahalliyAuthlarniUla(
     }
     const { providerId, manba, credential } = natija.topilma
     manbalar.set(providerId, manba)
+    // Muddatni zaxira qadar oldinga suramiz — pi-ai tugashidan bir kun oldin
+    // yangilaydi. `expires` 0 bo'lsa (muddat noma'lum) 0 bo'lib qolaveradi:
+    // manfiy qilib yubormaymiz, aks holda ma'nosi o'zgaradi.
+    const zaxirali: typeof credential = {
+      ...credential,
+      expires: credential.expires > 0 ? credential.expires - MUDDAT_ZAXIRASI : 0,
+    }
     try {
       await ombor.modify(providerId, async (hozirgi) => {
         // Omborda allaqachon yangiroq token bo'lsa — tegmaymiz. pi-ai uni
         // o'zi refresh qilib turgan bo'lishi mumkin, mahalliy fayldagisi esa
         // eskirgan bo'lishi mumkin.
-        if (hozirgi?.type === 'oauth' && hozirgi.expires > credential.expires) return undefined
-        return credential
+        //
+        // Muhim: token bir xil bo'lsa ham qayta yozmaymiz. Aks holda har
+        // aniqlashda `modify` manba fayliga yozishni qo'zg'atardi.
+        if (hozirgi?.type === 'oauth') {
+          if (hozirgi.access === zaxirali.access) return undefined
+          if (hozirgi.expires > zaxirali.expires) return undefined
+        }
+        return zaxirali
       })
     } catch (xato) {
       ogohlantirishlar.push({

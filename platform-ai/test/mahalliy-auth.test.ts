@@ -113,3 +113,79 @@ describe('codexAuth', () => {
     expect(natija.topilma?.credential.access).toBe('c1')
   })
 })
+
+// Codex `auth.json` da muddat alohida maydonda YO'Q — u faqat JWT ichida.
+// Buni o'qimasak muddat 0 bo'lib qoladi va pi-ai hali yaroqli tokenni
+// har ishga tushishda yangilaydi (OpenAI esa rotatsiya qilib eskisini o'ldiradi).
+describe('JWT exp orqali muddat', () => {
+  /** Imzosi yaroqsiz, lekin payload'i haqiqiy JWT tuzadi (test uchun yetarli) */
+  function jwtYasa(dava: Record<string, unknown>): string {
+    const b64 = (o: unknown) =>
+      Buffer.from(JSON.stringify(o))
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '')
+    return `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64(dava)}.imzo`
+  }
+
+  test('ochiq maydon bo\'lmasa access_token JWT dan o\'qiladi', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60 // 10 kun
+    codexFayliYoz(
+      JSON.stringify({
+        tokens: { access_token: jwtYasa({ exp }), refresh_token: 'r', id_token: 'x' },
+      }),
+    )
+    const natija = await codexAuth(uy)
+    expect(natija.topilma?.credential.expires).toBe(exp * 1000)
+  })
+
+  test('ochiq expires_at maydoni JWT dan ustun turadi', async () => {
+    const jwtExp = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60
+    codexFayliYoz(
+      JSON.stringify({
+        tokens: {
+          access_token: jwtYasa({ exp: jwtExp }),
+          refresh_token: 'r',
+          expires_at: 4_000_000_000_000,
+        },
+      }),
+    )
+    const natija = await codexAuth(uy)
+    expect(natija.topilma?.credential.expires).toBe(4_000_000_000_000)
+  })
+
+  test('muddati o\'tgan JWT o\'tgan vaqtni qaytaradi (pi-ai yangilaydi)', async () => {
+    const exp = Math.floor(Date.now() / 1000) - 3600 // bir soat oldin
+    codexFayliYoz(
+      JSON.stringify({ tokens: { access_token: jwtYasa({ exp }), refresh_token: 'r' } }),
+    )
+    const natija = await codexAuth(uy)
+    expect(natija.topilma?.credential.expires).toBe(exp * 1000)
+    expect(natija.topilma?.credential.expires).toBeLessThan(Date.now())
+  })
+
+  test('JWT bo\'lmagan token — muddat 0, throw yo\'q', async () => {
+    codexFayliYoz(
+      JSON.stringify({ tokens: { access_token: 'oddiy-satr', refresh_token: 'r' } }),
+    )
+    const natija = await codexAuth(uy)
+    expect(natija.topilma?.credential.expires).toBe(0)
+  })
+
+  test('buzuq JWT payload — muddat 0, throw yo\'q', async () => {
+    codexFayliYoz(
+      JSON.stringify({ tokens: { access_token: 'aaa.!!!buzuq!!!.ccc', refresh_token: 'r' } }),
+    )
+    const natija = await codexAuth(uy)
+    expect(natija.topilma?.credential.expires).toBe(0)
+  })
+
+  test('exp maydoni yo\'q JWT — muddat 0', async () => {
+    codexFayliYoz(
+      JSON.stringify({ tokens: { access_token: jwtYasa({ sub: 'kimdir' }), refresh_token: 'r' } }),
+    )
+    const natija = await codexAuth(uy)
+    expect(natija.topilma?.credential.expires).toBe(0)
+  })
+})
