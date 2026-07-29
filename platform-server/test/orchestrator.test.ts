@@ -65,7 +65,9 @@ mock.module('@platforma/ai', () => ({
 
 const { app } = await import('../src/app.ts')
 const { bazaOch, dbOrnat } = await import('../src/db.ts')
-const { ishlayotganSessiyalar, javobOqizi, oqimBormi } = await import('../src/orchestrator.ts')
+const { ishlayotganSessiyalar, javobOqizi, oqimBormi, oqimniToxtat } = await import(
+  '../src/orchestrator.ts'
+)
 const { sessiyaYarat, xabarlarOqi, xabarYoz } = await import('../src/repo.ts')
 const { hub } = await import('../src/ws/hub.ts')
 
@@ -235,6 +237,77 @@ describe('javobOqizi — xato holatlari', () => {
     const natija = await javobOqizi(s.id, 'xabar-8', tanlov)
     expect(natija.xato).toBe('nimadir')
     expect(natija.messageId).toBe('xabar-8')
+  })
+})
+
+// Foydalanuvchi "To'xtatish" bosgani XATO EMAS. Ilgari abort ham xato yo'lidan
+// o'tib javob matniga "⚠︎ Javob to'liq kelmadi: ..." qo'shilardi va UI qizil
+// ogohlantirish chizardi — tool kartasi allaqachon "to'xtatildi" deb turgani
+// ustiga ikkinchi ogohlantirish bo'lib ko'rinardi.
+describe("javobOqizi — foydalanuvchi to'xtatgani", () => {
+  /** Oqim o'rtasida `oqimniToxtat` chaqiradigan soxta hodisalar */
+  function toxtatuvchiOqim(sessionId: string) {
+    return [
+      { tur: 'delta', matn: 'Yarim javob' },
+      {
+        get tur() {
+          // Getter oqim shu hodisaga yetganda ishlaydi — ya'ni `javobOqizi`
+          // ichida, ro'yxatga yozuv qo'shilgandan keyin.
+          oqimniToxtat(sessionId)
+          return 'xato'
+        },
+        xabar: "So'rov bekor qilindi",
+      },
+    ]
+  }
+
+  test("to'xtatilganda matnga xato belgisi qo'shilmaydi", async () => {
+    const s = sessiyaYarat('sinov', db)
+    soxtaHodisalar = toxtatuvchiOqim(s.id)
+
+    await javobOqizi(s.id, 'stop-1', tanlov)
+
+    const xabarlar = xabarlarOqi(s.id, db)
+    expect(xabarlar[0]?.text).toBe('Yarim javob')
+    expect(xabarlar[0]?.text).not.toContain("to'liq kelmadi")
+  })
+
+  test("to'xtatilganda chat.error emas, chat.done keladi", async () => {
+    const s = sessiyaYarat('sinov', db)
+    soxtaHodisalar = toxtatuvchiOqim(s.id)
+
+    await javobOqizi(s.id, 'stop-2', tanlov)
+
+    const turlari = chatEventlari().map((e) => e.type)
+    expect(turlari).not.toContain('chat.error')
+    expect(turlari).toContain('chat.done')
+  })
+
+  test("to'xtatilganda yakuniy status 'tugadi'", async () => {
+    const s = sessiyaYarat('sinov', db)
+    soxtaHodisalar = toxtatuvchiOqim(s.id)
+
+    await javobOqizi(s.id, 'stop-3', tanlov)
+
+    const holatlar = olingan
+      .filter((e) => e.type === 'chat.status')
+      .map((e) => (e as { holat: string }).holat)
+    expect(holatlar.at(-1)).toBe('tugadi')
+    expect(holatlar).not.toContain('xato')
+  })
+
+  test('haqiqiy xato (abortsiz) hamon xato belgisini oladi', async () => {
+    // Nazorat testi: yuqoridagi tuzatish oddiy xatolarni bosib qo'ymasin
+    soxtaHodisalar = [
+      { tur: 'delta', matn: 'Yarim' },
+      { tur: 'xato', xabar: 'ulanish uzildi' },
+    ]
+    const s = sessiyaYarat('sinov', db)
+
+    await javobOqizi(s.id, 'stop-4', tanlov)
+
+    expect(xabarlarOqi(s.id, db)[0]?.text).toContain("to'liq kelmadi")
+    expect(chatEventlari().map((e) => e.type)).toContain('chat.error')
   })
 })
 

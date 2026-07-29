@@ -506,8 +506,14 @@ export async function javobOqizi(
 
   const toolCards = [...toolKartalari.values()]
 
+  // Foydalanuvchi o'zi to'xtatgani XATO EMAS. Ilgari abort ham `xato` yo'lidan
+  // o'tib, javob matniga "⚠︎ Javob to'liq kelmadi: So'rov bekor qilindi"
+  // qo'shilardi — ustiga tool kartasi allaqachon "to'xtatildi" deb turgani
+  // uchun bir hodisa ikki marta ogohlantirish sifatida ko'rinardi.
+  const toxtatildi = boshqaruv.signal.aborted
+
   // Javobni saqlash: bo'sh bo'lsa ham yozamiz (xato holatida sabab ko'rinsin)
-  const saqlanadigan = xato ? xatoliMatn(toplangan, xato) : toplangan
+  const saqlanadigan = xato && !toxtatildi ? xatoliMatn(toplangan, xato) : toplangan
   // Sessiya oqim davomida o'chirilgan bo'lishi mumkin (DELETE /chat/sessions/:id
   // avval `abort()` qiladi, lekin oqim shu nuqtaga baribir yetib keladi).
   // Tekshirmasak `xabarYoz` foreign key xatosi tashlardi — u esa bu yerda
@@ -536,9 +542,18 @@ export async function javobOqizi(
     })
   }
 
-  if (xato) {
+  if (xato && !toxtatildi) {
     hub.broadcast({ type: 'chat.error', sessionId, messageId, error: xato })
     auditYoz('chat', 'LLM javobi xato', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'rad etildi')
+  } else if (toxtatildi) {
+    // UI uchun bu oddiy tugash: oqim yopiladi, qizil ogohlantirish chiqmaydi.
+    hub.broadcast({
+      type: 'chat.done',
+      sessionId,
+      messageId,
+      usage: { input: 0, output: 0, cost: 0 },
+    })
+    auditYoz('chat', "LLM javobi to'xtatildi", `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
   } else {
     auditYoz('chat', 'LLM javobi', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
   }
@@ -546,7 +561,7 @@ export async function javobOqizi(
   // Yakuniy holat — to'xtatish (abort) ham shu yerdan o'tadi: bekor qilingan
   // oqim ham shu nuqtaga yetib keladi, ya'ni sidebar indikatori har holatda
   // yopiladi. Bizni yangi oqim almashtirgan bo'lsa tarqatmaymiz (yuqoriga q.).
-  if (ozimizniki) holatTarqat(sessionId, xato ? 'xato' : 'tugadi')
+  if (ozimizniki) holatTarqat(sessionId, xato && !toxtatildi ? 'xato' : 'tugadi')
 
   return { messageId, matn: toplangan, toolCards, xato }
 }
