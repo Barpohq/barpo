@@ -27,7 +27,10 @@ import {
   manbaniSkanerla,
   skillniOmborga,
   skillniOmbordanOchir,
+  skillOmborYoli,
 } from '../skill-ombor.ts'
+import { standartniOmborga } from '../standart-skilllar.ts'
+import { rmSync } from 'node:fs'
 export const skillsRoutes = new Hono()
 
 // ---------------------------------------------------------------------------
@@ -195,20 +198,34 @@ skillsRoutes.post('/skills/:id/ornat', async (c) => {
   }
 
   // Fayllarni ombor ga tushiramiz. Allaqachon o'rnatilgan bo'lsa ham qayta
-  // yuklaymiz — repo yangilangan bo'lishi mumkin.
-  try {
-    await skillniOmborga(
-      { owner: manba.owner, repo: manba.repo, ref: manba.ref },
-      manba.ref,
-      skill.yol,
-      manba.id,
-      skill.id,
-    )
-  } catch (xato) {
-    return c.json(
-      { error: xato instanceof Error ? xato.message : "Yuklab bo'lmadi" },
-      502,
-    )
+  // yuklaymiz — manba yangilangan bo'lishi mumkin.
+  //
+  // Manba turi shu yerda tarmoqlanadi: standart skilllar diskdan
+  // nusxalanadi (tarmoq kerak emas), GitHub'dagilar tarball orqali
+  // yuklanadi. Ombordagi natija ikkalasida ham bir xil — shuning uchun
+  // bundan keyingi hamma qadam umumiy.
+  if (manba.tur === 'platforma') {
+    const nishon = skillOmborYoli(manba.id, skill.id)
+    // Qayta o'rnatishda eski holat qolmasin (GitHub yo'lidagi bilan bir xil)
+    rmSync(nishon, { recursive: true, force: true })
+    if (!standartniOmborga(skill.yol, nishon)) {
+      return c.json({ error: "Standart skill papkasi topilmadi" }, 500)
+    }
+  } else {
+    try {
+      await skillniOmborga(
+        { owner: manba.owner, repo: manba.repo, ref: manba.ref },
+        manba.ref,
+        skill.yol,
+        manba.id,
+        skill.id,
+      )
+    } catch (xato) {
+      return c.json(
+        { error: xato instanceof Error ? xato.message : "Yuklab bo'lmadi" },
+        502,
+      )
+    }
   }
 
   if (qamrov === 'global') {

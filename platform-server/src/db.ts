@@ -59,6 +59,27 @@ export function migratsiyalarniQolla(db: Database): void {
   for (const m of [...migratsiyalar].sort((a, b) => a.raqam - b.raqam)) {
     if (qollangan.has(m.raqam)) continue
 
+    if (m.pragmaTashqarida) {
+      // ┌──────────────────────────────────────────────────────────────┐
+      // │ TRANZAKSIYASIZ YO'L — faqat jadval qayta quradigan           │
+      // │ migratsiyalar uchun.                                          │
+      // │                                                               │
+      // │ SQLite'da `CHECK` cheklovini o'zgartirishning yagona yo'li —  │
+      // │ jadvalni qayta qurish. Bunda `PRAGMA foreign_keys = OFF`      │
+      // │ kerak (aks holda `DROP TABLE` bog'langan qatorlarni CASCADE   │
+      // │ bilan o'chirib yuboradi), lekin PRAGMA tranzaksiya ichida     │
+      // │ JIMGINA E'TIBORSIZ qoldiriladi.                               │
+      // │                                                               │
+      // │ Shuning uchun bunday migratsiya o'z BEGIN/COMMIT ini SQL      │
+      // │ ichida olib yuradi va bu yerda tranzaksiyaga o'ralmaydi.      │
+      // │ Xavfsizlik shundaki, `BEGIN`/`COMMIT` baribir bor — atomiklik │
+      // │ saqlanadi, faqat PRAGMA'lar undan tashqarida turadi.          │
+      // └──────────────────────────────────────────────────────────────┘
+      db.exec(m.sql)
+      yozish.run(m.raqam, m.nom, new Date().toISOString())
+      continue
+    }
+
     const bajar = db.transaction(() => {
       db.exec(m.sql)
       yozish.run(m.raqam, m.nom, new Date().toISOString())

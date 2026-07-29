@@ -20,6 +20,7 @@ import type {
   ToolCard,
   ToolChaqiruv,
 } from '@platforma/shared'
+import { manifestniTekshir } from '@platforma/shared'
 import { db as globalDb } from './db.ts'
 
 // ---------------------------------------------------------------------------
@@ -360,10 +361,36 @@ interface AppQator {
   updated_at: string
 }
 
-function appQatordan(q: AppQator): AppRecord {
+/**
+ * DB qatorini `AppRecord` ga aylantiradi. Manifest YAROQSIZ bo'lsa `null`.
+ *
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ NEGA BU YERDA TEKSHIRUV BOR. Avval `JSON.parse(...) as AppManifest` │
+ * │ yozilgan edi — ya'ni tip KAFOLATI yo'q, faqat va'da. Manifestni AI  │
+ * │ yozadi, ustiga u bazada yotadi va sxema keyinchalik o'zgarishi      │
+ * │ mumkin. Buzuq qiymat o'sha kastdan jimgina o'tib, keyin UI'da       │
+ * │ render paytida yiqilardi — foydalanuvchi uchun bu "platforma        │
+ * │ ishlamayapti" bo'lib ko'rinadi.                                     │
+ * │                                                                     │
+ * │ Endi buzuq yozuv SHU YERDA to'xtaydi: ilova ro'yxatdan tushadi,     │
+ * │ qolgan hammasi ishlayveradi.                                        │
+ * └────────────────────────────────────────────────────────────────────┘
+ */
+function appQatordan(q: AppQator): AppRecord | null {
+  let xom: unknown
+  try {
+    xom = JSON.parse(q.manifest)
+  } catch {
+    // Buzuq JSON — yozuv o'qib bo'lmaydi. Tashlaymiz, yiqilmaymiz.
+    return null
+  }
+
+  const natija = manifestniTekshir(xom)
+  if (!natija.ok || !natija.qiymat) return null
+
   return {
     id: q.id,
-    manifest: JSON.parse(q.manifest) as AppManifest,
+    manifest: natija.qiymat,
     status: q.status,
     createdAt: q.created_at,
     updatedAt: q.updated_at,
@@ -372,7 +399,11 @@ function appQatordan(q: AppQator): AppRecord {
 
 export function ilovalarOqi(baza?: Database): AppRecord[] {
   const d = baza ?? globalDb()
-  return d.query<AppQator, []>('SELECT * FROM apps ORDER BY created_at').all().map(appQatordan)
+  return d
+    .query<AppQator, []>('SELECT * FROM apps ORDER BY created_at')
+    .all()
+    .map(appQatordan)
+    .filter((a): a is AppRecord => a !== null)
 }
 
 export function ilovaOqi(id: string, baza?: Database): AppRecord | null {

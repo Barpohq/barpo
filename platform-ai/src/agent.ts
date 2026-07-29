@@ -50,6 +50,11 @@ import { ChegaralanganMuhit } from './muhit.ts'
 import type { RejimBoshqaruvchi } from './rejim.ts'
 import { qidiruvToollariXom } from './qidiruv-toollari.ts'
 import { SERVER_PROMPT_QISMI, serverToollariXom, type ServerManbasi } from './server-toollari.ts'
+import {
+  DASHBOARD_PROMPT_QISMI,
+  dashboardToollariXom,
+  type DashboardManbasi,
+} from './dashboard-toollari.ts'
 import type { RuxsatBoshqaruvchi } from './ruxsat.ts'
 import type { Sarflov, SuhbatXabari } from './suhbat.ts'
 
@@ -116,6 +121,15 @@ export interface AgentSozlamalari {
    * bazasi `platform-server` da, bu paket unga bog'liq emas.
    */
   serverManbasi?: ServerManbasi
+  /**
+   * Ilova manifestini saqlaydigan manba (dinamik dashboard).
+   *
+   * Berilmasa `appPublish` tool'i UMUMAN e'lon qilinmaydi va prompt ham
+   * uni tilga olmaydi (`dashboard-toollari.ts` ga q.). `serverManbasi`
+   * bilan bir xil inversiya sababi: manifestlar bazasi `platform-server`
+   * da, bu paket unga bog'liq emas.
+   */
+  dashboardManbasi?: DashboardManbasi
   /** Har tool chaqiruvidan oldin — audit uchun. Bloklamaydi. */
   toolKuzatuvchi?: (nom: string, args: unknown) => void
   /** Qo'shimcha hook'lar — config'dagilarga qo'shiladi */
@@ -240,6 +254,7 @@ export const AGENT_SISTEM_PROMPT = (
   skilllar?: string,
   xotira?: string,
   serverlarBor = false,
+  dashboardBor = false,
 ) =>
   [
     'You are the AI assistant of this platform. You work on the user\'s project:',
@@ -318,8 +333,10 @@ export const AGENT_SISTEM_PROMPT = (
     '- ls: list a directory',
     '- bash: run a command',
     ...(serverlarBor ? SERVER_PROMPT_QISMI.royxat : []),
+    ...(dashboardBor ? DASHBOARD_PROMPT_QISMI.royxat : []),
     '',
     ...(serverlarBor ? [...SERVER_PROMPT_QISMI.qoida, ''] : []),
+    ...(dashboardBor ? [...DASHBOARD_PROMPT_QISMI.qoida, ''] : []),
     'To find files use `grep`/`find`/`ls`, NOT `bash` — they are faster and ask',
     'for no permission. Reach for `bash` only when nothing else will do. Those',
     'three tools work only inside the working directory and by default skip',
@@ -521,8 +538,10 @@ export async function* agentOqimi(
         toolKonteksti,
         sozlamalar.agent.toollar.yoqilgan,
         sozlama.serverManbasi,
+        sozlama.dashboardManbasi,
       )
       const serverlarBor = toollar.some((t) => t.name === 'serverList')
+      const dashboardBor = toollar.some((t) => t.name === 'appPublish')
 
       const agent = new Agent({
         initialState: {
@@ -532,6 +551,7 @@ export async function* agentOqimi(
             skilllar ?? undefined,
             xotira,
             serverlarBor,
+            dashboardBor,
           ),
           model,
           tools: toollar,
@@ -693,6 +713,7 @@ function toollarniTayyorla(
   kontekst: { env: ChegaralanganMuhit },
   yoqilgan: readonly string[],
   serverManbasi?: ServerManbasi,
+  dashboardManbasi?: DashboardManbasi,
 ): AgentTool<never>[] {
   // pi'ning tayyor tool'lari + o'zimizning qidiruv va server tool'lari.
   // Hammasi kontekstni oxirgi argument sifatida oladi, shuning uchun
@@ -705,6 +726,7 @@ function toollarniTayyorla(
     createBashTool(),
     ...qidiruvToollariXom(),
     ...serverToollariXom(serverManbasi),
+    ...dashboardToollariXom(dashboardManbasi),
   ]
 
   // Configda o'chirilgan tool UMUMAN E'LON QILINMAYDI — agent uning

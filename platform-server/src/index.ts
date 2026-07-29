@@ -6,6 +6,8 @@
 import { app } from './app.ts'
 import { auditYoz } from './audit.ts'
 import { db } from './db.ts'
+import { manbaYarat, skilllarniSinxronla } from './repo.ts'
+import { standartManbaniTaminla } from './standart-skilllar.ts'
 import { chatSendHandleri } from './ws/chat-handler.ts'
 import { seedQol } from './seed.ts'
 import { hub, yangiUlanishHolati, type UlanishHolati } from './ws/hub.ts'
@@ -19,6 +21,19 @@ if (seed.audit || seed.apps) {
   console.log(
     `[seed] boshlang'ich ma'lumot yozildi: ${seed.audit} audit · ${seed.apps} ilova`,
   )
+}
+
+// 1b) Platforma bilan birga kelgan standart skilllar — katalogga.
+//
+// Seed'dan FARQLI o'laroq har ishga tushishda bajariladi: platforma
+// yangilanganda skilllar ham yangilanishi kerak (yangisi qo'shilishi,
+// tavsifi o'zgarishi). Amal idempotent — mavjud o'rnatishlar saqlanadi.
+const standart = standartManbaniTaminla(
+  (m) => manbaYarat(m, baza),
+  (manbaId, topilgan, sha) => skilllarniSinxronla(manbaId, topilgan, sha, baza),
+)
+if (standart) {
+  console.log(`[skill] standart skilllar katalogda: ${standart.soni} ta`)
 }
 
 // 2) WS orqali kelgan chat.send eventlarini orchestratorga ulaymiz.

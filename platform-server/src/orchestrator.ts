@@ -38,6 +38,7 @@ import type {
   ToolChaqiruv,
 } from '@platforma/shared'
 import { auditYoz } from './audit.ts'
+import { dashboardniSaqla } from './dashboard-saqlash.ts'
 import { sessiyaIshPapkasi } from './ish-papkasi.ts'
 import {
   faolSkilllar,
@@ -314,6 +315,11 @@ export async function javobOqizi(
               port: s.port,
               username: s.username,
             })),
+          // `appPublish` tool'ining manbai — dinamik dashboard shu yo'l
+          // bilan bazaga tushadi. Agent bazani bilmaydi (inversiya):
+          // u faqat manifest beradi, tekshiruv va kompilyatsiya bu
+          // tomonda bo'ladi (`dashboard-saqlash.ts`).
+          dashboardManbasi: (manifest) => dashboardniSaqla(manifest),
           toolKuzatuvchi: (nom, args) => {
             auditYoz('agent', `tool: ${nom}`, toolNishoni(nom, args), toolDarajasi(nom), 'OK')
           },

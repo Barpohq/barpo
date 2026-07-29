@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import SuhbatlarRoyxati from './components/SuhbatlarRoyxati'
-import { installedApps, type AppManifest } from './data/mock'
+import { type AppManifest } from './data/mock'
 import { loyihalarOl } from './lib/api'
 import { hashQur, hashTahlil } from './lib/hash-yol'
+import { useIlovalar } from './lib/ilovalar'
 import { useIshlayotganlar } from './lib/ishlayotganlar'
 import { suhbatlarHolatiniSaqla, suhbatlarOchiqmi } from './lib/sidebar-saqlash'
 import { useSuhbatlar } from './lib/suhbatlar'
@@ -101,7 +102,23 @@ export default function App() {
   const [init] = useState(initFromHash)
   const [pro, setPro] = useState(init.pro)
   const [page, setPageRaw] = useState<Page>(init.page)
-  const [apps, setApps] = useState<AppManifest[]>(installedApps)
+  // Ilovalar SERVERDAN keladi (`/api/apps` + `app.installed`/`app.updated`
+  // eventlari). Avval bu ro'yxat mock ma'lumotdan qurilardi va serverdan
+  // umuman o'qimasdi — natijada `appPublish` chiqargan dashboard hech
+  // qachon ko'rinmasdi, refresh ham yordam bermasdi.
+  const { ilovalar: serverIlovalari } = useIlovalar()
+  /**
+   * Mock build oqimi qo'shgan ilovalar (demo rejim).
+   *
+   * Serverdagilardan ALOHIDA saqlanadi: aks holda WS'dan kelgan yangi
+   * ro'yxat mock ilovani o'chirib yuborardi.
+   */
+  const [mockApps, setMockApps] = useState<AppManifest[]>([])
+  // Server ro'yxati ustun: bir xil id bo'lsa haqiqiy manifest qoladi.
+  const apps = [
+    ...serverIlovalari,
+    ...mockApps.filter((m) => !serverIlovalari.some((s) => s.id === m.id)),
+  ]
   /** Sidebar'dagi "Yangi suhbat" — har bosishda oshadi, Chat kuzatadi */
   const [yangiSuhbatSignali, setYangiSuhbatSignali] = useState(0)
   /**
@@ -213,7 +230,7 @@ export default function App() {
   // Yangi ilova manifesti keladi — sidebar va routing'ga darhol qo'shiladi.
   // Real platformada bu orchestrator'dan WebSocket orqali keladi.
   function installApp(m: AppManifest) {
-    setApps((a) => (a.some((x) => x.id === m.id) ? a : [...a, m]))
+    setMockApps((a) => (a.some((x) => x.id === m.id) ? a : [...a, m]))
   }
 
   function openApp(id: string) {

@@ -9,6 +9,7 @@
 
 import type {
   AniqlashOgohlantirish,
+  AppManifest,
   ChatMessage,
   ChatSession,
   ModelInfo,
@@ -242,6 +243,22 @@ export function oqimniToxtat(sessionId: string): Promise<{ toxtatildi: boolean }
     headers: jsonSarlavha,
     body: JSON.stringify({ sessionId }),
   })
+}
+
+// ---------------------------------------------------------------------------
+// Ilovalar (dinamik dashboardlar)
+// ---------------------------------------------------------------------------
+
+/**
+ * Agent `appPublish` bilan chiqargan dashboardlar.
+ *
+ * Sidebar shu ro'yxatdan quriladi — mock ma'lumotdan emas. Manifest
+ * server tomonida allaqachon tekshirilgan (`manifestniTekshir`), shuning
+ * uchun bu yerda qayta tekshiruv kerak emas.
+ */
+export async function ilovalarOl(): Promise<AppManifest[]> {
+  const javob = await sorov<{ apps: AppManifest[] }>('/api/apps')
+  return javob.apps
 }
 
 // ---------------------------------------------------------------------------

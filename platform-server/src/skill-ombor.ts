@@ -40,6 +40,7 @@ import {
   tarballniOl,
   type GithubManzil,
 } from './github.ts'
+import { standartniOmborga } from './standart-skilllar.ts'
 import { tarOqi } from './tar.ts'
 
 /** Ombor ildizi — `PLATFORMA_SKILLS` bilan ko'chiriladi (testlar shuni beradi) */

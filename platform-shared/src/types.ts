@@ -111,8 +111,24 @@ export interface AuditEntry {
 // boshida esa loyiha papkasiga nusxalanadi. Batafsil: platform-server/
 // src/skill-ombor.ts.
 
-/** Hozircha faqat GitHub. `tur` kelajakda kengayadi (gitlab, mahalliy papka). */
-export type SkillManbaTuri = 'github'
+/**
+ * Skill manbasi qayerdan keladi.
+ *
+ * `github`   — foydalanuvchi ulagan repo (`owner/repo`).
+ * `platforma` — platforma bilan BIRGA kelgan standart skilllar.
+ *
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ NEGA `platforma` ALOHIDA TUR. Standart skilllar (dashboard yozish  │
+ * │ kabi) platformaning bir qismi va u bilan birga versiyalanadi.      │
+ * │                                                                    │
+ * │ Hozir ular repo ichidagi `skills/` papkasidan o'qiladi, chunki     │
+ * │ repo yopiq. Repo ochilganda manba GitHub'ga ko'chadi — o'shanda    │
+ * │ FAQAT skanerlash manbai o'zgaradi, katalog, o'rnatish va UI        │
+ * │ oqimlari o'z holicha qoladi. Shu sabab ular boshidanoq oddiy       │
+ * │ manba kabi katalogdan o'tadi.                                      │
+ * └────────────────────────────────────────────────────────────────────┘
+ */
+export type SkillManbaTuri = 'github' | 'platforma'
 
 export interface SkillManba {
   id: string
@@ -317,6 +333,92 @@ export type Widget =
   | { type: 'deploy'; url: string; kind: 'domen' | 'port'; server: string; ssl?: string; extra?: string }
   | { type: 'git'; repo: string; branch: string; commits: { hash: string; msg: string; time: string }[] }
 
+/**
+ * AI yozgan ko'rinish kodi — IXTIYORIY qatlam.
+ *
+ * NEGA KOD KERAK. `Widget` lug'ati ataylab tor: u bashoratli va xavfsiz,
+ * lekin har dashboard unga sig'avermaydi. Kod qatlami o'sha shiftni ochadi —
+ * AI o'zi xohlagan tartibni JSX bilan yozadi.
+ *
+ * NEGA BU XAVFSIZ. Kod HOST SAHIFADA EMAS, `sandbox="allow-scripts"` li
+ * iframe'da bajariladi (`allow-same-origin` ATAYLAB berilmaydi). Natijada
+ * unda `fetch`, `localStorage`, cookie va parent DOM YO'Q. Ya'ni kod
+ * platformaning huquqlarini MEROS QILIB OLMAYDI — u faqat o'ziga
+ * `postMessage` bilan berilgan `data` ni ko'radi.
+ *
+ * Bu chegara muhim, chunki kod zanjiri ishonchsiz manbadan boshlanadi:
+ * begona GitHub repo'sidagi skill → AI → shu kod (`skill-yuklash.ts`
+ * boshidagi izohga q.). Iframe bo'lmasa, o'sha zanjir platforma
+ * sessiyasini egallardi.
+ */
+export interface AppView {
+  /**
+   * Kompilyatsiya QILINGAN JS (JSX emas).
+   *
+   * AI JSX yozadi, server `Bun.build` bilan aylantiradi — brauzerga
+   * transform yuki tushmasin va xato UI'da emas, serverda ushlansin.
+   */
+  kod: string
+  /** Manba kodining xashi — keshni yangilash va audit uchun */
+  xash: string
+}
+
+/**
+ * Vaqt o'tishi bilan YANGILANADIGAN ma'lumot bo'lagi.
+ *
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ QOIDA O'ZGARMAYDI: AI YANGI API YOZMAYDI.                          │
+ * │                                                                    │
+ * │ Endpoint bitta va OLDINDAN tayyor:                                 │
+ * │     GET /api/apps/:id/state/:nom                                   │
+ * │ AI faqat o'sha endpoint NIMA QAYTARISHINI belgilaydi — ya'ni       │
+ * │ state kodini yozadi, marshrutni emas.                              │
+ * └────────────────────────────────────────────────────────────────────┘
+ *
+ * NEGA HAR STATE ALOHIDA. Dashboarddagi ma'lumotlar bir xil tezlikda
+ * eskirmaydi: CPU 5 soniyada o'zgaradi, disk hajmi esa 30 soniyada ham
+ * deyarli o'zgarmaydi. Hammasini bitta obyektga qo'shsak, eng tez
+ * yangilanadigani butun to'plamni har safar qayta hisoblatardi — ya'ni
+ * disk uchun `df` har 5 soniyada bejiz ishga tushardi.
+ *
+ * Shuning uchun har state — mustaqil birlik: o'z kodi, o'z intervali,
+ * o'z keshi.
+ */
+export interface AppState {
+  /**
+   * State nomi — `data` ichida shu kalit ostida turadi va URL'ga tushadi.
+   *
+   * Faqat `[a-z0-9_]` (`manifest-tekshir.ts` majburlaydi): u yo'l
+   * bo'lagiga aylanadi.
+   */
+  nom: string
+  /**
+   * Serverda bajariladigan JS kod.
+   *
+   * `module.exports = async function () { ... }` shaklida — natija
+   * `data[nom]` ga tushadi. Kod SERVER JARAYONIDA ishlaydi, ya'ni
+   * `child_process`, `fs` va tarmoq unga ochiq.
+   *
+   * ┌──────────────────────────────────────────────────────────────────┐
+   * │ ⚠️ ISHONCH DARAJASI. Bu kod platformaning to'liq huquqi bilan    │
+   * │ ishlaydi va interval bo'yicha AVTOMATIK takrorlanadi.            │
+   * │                                                                  │
+   * │ Hozircha u ruxsat qatlamidan O'TMAYDI — bu ONGLI vaqtinchalik    │
+   * │ qaror. Keyingi bosqichda kodni tekshiradigan klassifikator       │
+   * │ qo'shiladi (prompt injection himoyasi), ulanish nuqtasi:         │
+   * │ `platform-server/src/state-bajar.ts` → `kodniTekshir()`.         │
+   * └──────────────────────────────────────────────────────────────────┘
+   */
+  kod: string
+  /**
+   * Qayta hisoblash oralig'i (soniya).
+   *
+   * `0` yoki berilmagan — avtomatik yangilanmaydi, faqat sahifa
+   * ochilganda bir marta hisoblanadi.
+   */
+  interval?: number
+}
+
 export interface AppManifest {
   id: string
   icon: string
@@ -326,6 +428,25 @@ export interface AppManifest {
   service: string
   status: 'running' | 'idle'
   widgets: Widget[]
+  /**
+   * Ko'rinishga beriladigan BOSHLANG'ICH ma'lumot.
+   *
+   * `states` bo'lsa, ularning hisoblangan natijalari shu obyekt ustiga
+   * yoziladi (`data[state.nom]`). Ya'ni bu — birinchi renderdagi qiymat,
+   * keyin jonli ma'lumot bilan almashadi.
+   *
+   * `unknown` ataylab: shakl har ilovada boshqacha va uni AI belgilaydi.
+   * Chegara mazmunga emas, HAJMGA qo'yiladi (`manifest-tekshir.ts`).
+   */
+  data?: Record<string, unknown>
+  /**
+   * Jonli ma'lumot manbalari — har biri o'z intervali bilan.
+   *
+   * Bo'lmasa dashboard statik qoladi (`data` dagi qiymatlar o'zgarmaydi).
+   */
+  states?: AppState[]
+  /** Bo'lmasa — `widgets` render qilinadi. Ikkalasi ham bo'lishi mumkin. */
+  view?: AppView
 }
 
 // ---------------------------------------------------------------------------

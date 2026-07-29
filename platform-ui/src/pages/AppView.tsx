@@ -1,5 +1,81 @@
 import type { AppManifest, Widget } from '../data/mock'
+import AiKorinish from '../components/AiKorinish'
+import { useIlovaStatelari } from '../lib/ilova-statelari'
 import { Card, StatTile, StatusDot } from '../ui'
+
+/**
+ * Vidjet matnidagi `{{state.yol}}` shablonlarini jonli qiymat bilan
+ * almashtiradi.
+ *
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ NEGA KERAK. Vidjetlar manifestda MATN sifatida saqlanadi, ya'ni     │
+ * │ ular qotib qolgan. Jonli statelar esa alohida keladi. Shablonsiz    │
+ * │ AI faqat `view` (JSX) orqali jonli ma'lumot ko'rsata olardi —       │
+ * │ oddiy stat kartasi uchun bu ortiqcha murakkablik.                   │
+ * │                                                                    │
+ * │ Endi: `value: "{{cpu.foiz}}%"` → `"3.2%"`.                          │
+ * └────────────────────────────────────────────────────────────────────┘
+ *
+ * Qiymat topilmasa shablon O'Z HOLICHA qoladi — bu ataylab: bo'sh satr
+ * ko'rsatish "ma'lumot yo'q" ni yashirardi, foydalanuvchi esa nima
+ * kutilayotganini ko'rmasdi.
+ */
+function shablonniQoy(matn: string, data: Record<string, unknown>): string {
+  if (!matn.includes('{{')) return matn
+  return matn.replace(/\{\{\s*([a-zA-Z0-9_.[\]]+)\s*\}\}/g, (toliq, yol: string) => {
+    const qiymat = yolBoyichaOl(data, yol)
+    if (qiymat === undefined || qiymat === null) return toliq
+    return typeof qiymat === 'object' ? JSON.stringify(qiymat) : String(qiymat)
+  })
+}
+
+/** `a.b[0].c` shaklidagi yo'l bo'yicha qiymat oladi */
+function yolBoyichaOl(manba: unknown, yol: string): unknown {
+  let joriy: unknown = manba
+  for (const bolak of yol.split(/[.[\]]/).filter(Boolean)) {
+    if (joriy === null || typeof joriy !== 'object') return undefined
+    joriy = (joriy as Record<string, unknown>)[bolak]
+  }
+  return joriy
+}
+
+/** Vidjetdagi hamma matnga shablonni qo'llaydi */
+function vidjetgaShablon(w: Widget, data: Record<string, unknown>): Widget {
+  const s = (m: string) => shablonniQoy(m, data)
+
+  switch (w.type) {
+    case 'stats':
+      return {
+        ...w,
+        items: w.items.map((i) => ({
+          ...i,
+          value: s(i.value),
+          ...(i.hint ? { hint: s(i.hint) } : {}),
+        })),
+      }
+    case 'bars':
+      return {
+        ...w,
+        items: w.items.map((i) => {
+          // `value` raqam bo'lishi shart (chiziq kengligi shundan
+          // hisoblanadi), shuning uchun shablon natijasi qayta raqamga
+          // aylantiriladi. Aylanmasa eski qiymat qoladi.
+          const xom = typeof i.value === 'number' ? i.value : Number(s(String(i.value)))
+          return { ...i, value: Number.isFinite(xom) ? xom : 0, label: s(i.label) }
+        }),
+      }
+    case 'table':
+      return { ...w, rows: w.rows.map((r) => r.map(s)) }
+    case 'logs':
+      return { ...w, lines: w.lines.map(s) }
+    case 'note':
+      return { ...w, text: s(w.text) }
+    case 'deploy':
+      return { ...w, ...(w.extra ? { extra: s(w.extra) } : {}) }
+    default:
+      return w
+  }
+}
 
 // Manifest'dagi vidjet sxemasini UI'ga aylantiradi — ilovalar o'z dashboardini
 // data sifatida olib keladi, host esa render qiladi (server-driven UI).
@@ -137,6 +213,24 @@ function WidgetView({ w }: { w: Widget }) {
 }
 
 export default function AppView({ app }: { app: AppManifest }) {
+  // AI ko'rinishi endi HOST daraxtida ishlaydi — alohida React runtime
+  // yuklash kerak emas (avval iframe uchun ~190 KB yuklanardi).
+
+  // Jonli statelar — har biri o'z intervali bilan polling qilinadi.
+  const { qiymatlar, holatlar } = useIlovaStatelari(app.id, app.states)
+
+  // Manifestdagi `data` — BOSHLANG'ICH qiymat, jonli statelar uning
+  // ustiga yoziladi. Shu tartib muhim: birinchi renderda sahifa bo'sh
+  // turmaydi, keyin qiymatlar jonli ma'lumot bilan almashadi.
+  const data = { ...(app.data ?? {}), ...qiymatlar }
+
+  // Hech qachon muvaffaqiyat bermagan statelar — ular uchun ogohlantirish
+  // ko'rsatamiz. Bir marta ishlagan, keyin yiqilgani ko'rsatilmaydi:
+  // ekranda eskirgan bo'lsa ham haqiqiy qiymat turibdi.
+  const yiqilganlar = Object.entries(holatlar).filter(
+    ([, h]) => h.xato && h.qiymat === undefined,
+  )
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -159,8 +253,35 @@ export default function AppView({ app }: { app: AppManifest }) {
       </header>
 
       <div className="space-y-4">
+        {/*
+          AI yozgan maxsus ko'rinish — VIDJETLARDAN OLDIN.
+          U izolyatsiyada (sandbox iframe) ishlaydi: yiqilsa faqat o'zi
+          o'chadi, quyidagi vidjetlar va butun platforma butun qoladi.
+        */}
+        {app.view && <AiKorinish kod={app.view.kod} data={data} />}
+
+        {/*
+          Ishlamayotgan statelar. Faqat HECH QACHON qiymat bermaganlari
+          ko'rsatiladi — bir marta ishlagani uchun ekranda haqiqiy (garchi
+          eskirgan) qiymat turibdi va ogohlantirish chalg'itardi.
+        */}
+        {yiqilganlar.length > 0 && (
+          <Card className="p-4">
+            <div className="text-xs font-medium uppercase tracking-wider text-gold">
+              Ma'lumot olinmadi
+            </div>
+            <ul className="mt-2 space-y-1">
+              {yiqilganlar.map(([nom, h]) => (
+                <li key={nom} className="font-mono text-[11px] text-faint">
+                  {nom}: {h.xato}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+
         {app.widgets.map((w, i) => (
-          <WidgetView key={i} w={w} />
+          <WidgetView key={i} w={vidjetgaShablon(w, data)} />
         ))}
       </div>
 

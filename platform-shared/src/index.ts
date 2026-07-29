@@ -4,3 +4,4 @@
 
 export * from './types.ts'
 export * from './protocol.ts'
+export * from './manifest-tekshir.ts'

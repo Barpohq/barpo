@@ -253,6 +253,18 @@ export {
 } from './qidiruv-toollari.ts'
 
 export {
+  DASHBOARD_PROMPT_QISMI,
+  appPublishToolYarat,
+  dashboardToollari,
+  dashboardToollariXom,
+  natijaniMatnga,
+  type AppPublishKirishi,
+  type DashboardManbasi,
+  type DashboardNatijasi,
+  type DashboardTafsiloti,
+} from './dashboard-toollari.ts'
+
+export {
   SERVER_PROMPT_QISMI,
   serverListToolYarat,
   serverlarniMatnga,

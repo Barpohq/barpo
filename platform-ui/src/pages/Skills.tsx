@@ -410,35 +410,45 @@ function Manbalar({
 
       {manbalar.length > 0 && (
         <div className="mt-4 space-y-2 border-t border-line pt-4">
-          {manbalar.map((m) => (
-            <div key={m.id} className="flex items-center justify-between gap-3 text-sm">
-              <div className="min-w-0">
-                <span className="font-mono text-[13px] text-ink">
-                  {m.owner}/{m.repo}
-                </span>
-                <span className="ml-2 text-xs text-faint">
-                  {m.ref}
-                  {m.oxirgiSinxron && ` · ${new Date(m.oxirgiSinxron).toLocaleDateString('uz-UZ')}`}
-                </span>
+          {manbalar.map((m) => {
+            // Standart manba platforma bilan birga keladi va har ishga
+            // tushishda qayta yaratiladi — uni o'chirish yoki sinxronlash
+            // ma'nosiz bo'lardi (tugma bosilardi, natija o'zgarmasdi).
+            const platformaniki = m.tur === 'platforma'
+            return (
+              <div key={m.id} className="flex items-center justify-between gap-3 text-sm">
+                <div className="min-w-0">
+                  <span className="font-mono text-[13px] text-ink">
+                    {platformaniki ? 'platforma' : `${m.owner}/${m.repo}`}
+                  </span>
+                  <span className="ml-2 text-xs text-faint">
+                    {platformaniki ? 'standart skilllar' : m.ref}
+                    {!platformaniki &&
+                      m.oxirgiSinxron &&
+                      ` · ${new Date(m.oxirgiSinxron).toLocaleDateString('uz-UZ')}`}
+                  </span>
+                </div>
+                {!platformaniki && (
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => sinxronla(m.id)}
+                      disabled={bandId === m.id}
+                      className="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:text-ink disabled:opacity-50"
+                    >
+                      {bandId === m.id ? '…' : 'Sinxron'}
+                    </button>
+                    <button
+                      onClick={() => ochir(m)}
+                      disabled={bandId === m.id}
+                      className="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:text-coral disabled:opacity-50"
+                    >
+                      O'chirish
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  onClick={() => sinxronla(m.id)}
-                  disabled={bandId === m.id}
-                  className="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:text-ink disabled:opacity-50"
-                >
-                  {bandId === m.id ? '…' : 'Sinxron'}
-                </button>
-                <button
-                  onClick={() => ochir(m)}
-                  disabled={bandId === m.id}
-                  className="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:text-coral disabled:opacity-50"
-                >
-                  O'chirish
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </Card>
@@ -626,7 +636,7 @@ export default function Skills() {
               <option value="hammasi">Barcha manbalar</option>
               {manbalar.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.owner}/{m.repo}
+                  {m.tur === 'platforma' ? 'platforma (standart)' : `${m.owner}/${m.repo}`}
                 </option>
               ))}
             </select>
@@ -653,7 +663,7 @@ export default function Skills() {
       ) : skilllar.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-sm text-muted">
-            Hali skill yo'q. Yuqorida GitHub repo ulang — masalan{' '}
+            Katalog bo'sh. Yuqorida GitHub repo ulang — masalan{' '}
             <code className="font-mono text-xs text-ink">anthropics/skills</code>.
           </p>
         </Card>

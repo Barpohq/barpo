@@ -12,6 +12,15 @@ export interface Migratsiya {
   nom: string
   /** Bitta tranzaksiyada bajariladigan SQL (bir nechta statement bo'lishi mumkin) */
   sql: string
+  /**
+   * SQL o'z `BEGIN`/`COMMIT` ini olib yuradi va tranzaksiyaga
+   * O'RALMAYDI.
+   *
+   * Faqat jadval qayta quradigan migratsiyalar uchun: ular
+   * `PRAGMA foreign_keys = OFF` talab qiladi, PRAGMA esa tranzaksiya
+   * ichida jimgina e'tiborsiz qoldiriladi (`db.ts` ga q.).
+   */
+  pragmaTashqarida?: boolean
 }
 
 import { migratsiya as m001 } from './001-boshlangich.ts'
@@ -23,5 +32,6 @@ import { migratsiya as m006 } from './006-skilllar.ts'
 import { migratsiya as m007 } from './007-serverlar-haqiqiy.ts'
 // 8-raqam ATAYLAB tashlab ketilgan — sababi `009-tool-chaqiruvlar.ts` da.
 import { migratsiya as m009 } from './009-tool-chaqiruvlar.ts'
+import { migratsiya as m010 } from './010-standart-manba.ts'
 
-export const migratsiyalar: Migratsiya[] = [m001, m002, m003, m004, m005, m006, m007, m009]
+export const migratsiyalar: Migratsiya[] = [m001, m002, m003, m004, m005, m006, m007, m009, m010]
