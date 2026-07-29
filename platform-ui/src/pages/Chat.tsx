@@ -25,7 +25,6 @@ import type {
 import LoyihaTanlagich from '../components/LoyihaTanlagich'
 import Markdown from '../components/Markdown'
 import ModelTanlagich from '../components/ModelTanlagich'
-import OqimIndikatori from '../components/OqimIndikatori'
 import RejimAlmashtirgich from '../components/RejimAlmashtirgich'
 import RejimKartasi from '../components/RejimKartasi'
 import RuxsatKartasi from '../components/RuxsatKartasi'
@@ -44,7 +43,6 @@ import {
   xabarlarOl,
   xabarYubor,
 } from '../lib/api'
-import { useIshlayotganlar } from '../lib/ishlayotganlar'
 import { saqlangandanOqi } from '../lib/model-saqlash'
 import { useToast } from '../lib/toast'
 import { ws } from '../lib/ws'
@@ -151,9 +149,6 @@ export default function Chat({
   const [ruxsatlar, setRuxsatlar] = useState<RuxsatSorovi[]>([])
   const [ruxsatJavoblari, setRuxsatJavoblari] = useState<Record<string, RuxsatJavobi>>({})
   const [rejim, setRejim] = useState<RejimHolati>({ rejim: 'tasdiq' })
-  // Fonda ishlayotgan BOSHQA suhbatlar — `chat.status` sessiya bo'yicha
-  // filtrlanmagani uchun bu yerda ham ko'rinadi (protocol.ts ga q.).
-  const { ishlayotganlar, sarlavhalar } = useIshlayotganlar()
   const endRef = useRef<HTMLDivElement>(null)
   const kiritishRef = useRef<HTMLTextAreaElement>(null)
   // Hozir javob kutilayotgan xabar id'si — WS eventlari shu bo'yicha topiladi
@@ -453,6 +448,23 @@ export default function Chat({
           const sessiya = await sessiyaYarat(text.slice(0, 60), loyiha?.id)
           sid = sessiya.id
           setSessionId(sid)
+          // Ref DARHOL yangilanadi — pastdagi effektni kutmasdan.
+          //
+          // Nega shart: `sessiyaXabarchi` App'dagi `ochiqSessiya` ni o'zgartiradi,
+          // ya'ni tiklash effekti (yuqorida) ishga tushadi. Uning "biz yaratgan
+          // sessiya" qorovuli aynan shu ref'ga qaraydi, ref'ni yangilaydigan
+          // effekt esa e'lon tartibi bo'yicha KEYIN ishlaydi. Natijada qorovul
+          // eski `null` ni ko'rib o'tkazib yuborardi va endigina qo'shilgan bo'sh
+          // javob xabari `setMsgs([])` bilan o'chib ketardi — keyin kelgan
+          // `chat.delta` yopishadigan xabarni topolmay, javob faqat sahifa
+          // yangilangach (bazadan) ko'rinardi.
+          sessionIdRef.current = sid
+          // Filtr ham darhol o'rnatiladi — `xabarYubor` dan OLDIN. Aks holda
+          // server javob oqizishni boshlagach, filtrsiz ulanish uchun kelgan
+          // birinchi deltalar effekt ishlagunga qadar yo'lda qolardi.
+          // `sessiyaniKuzat` takrorlanishdan o'zi himoyalangan (bir xil id —
+          // darhol qaytadi), shuning uchun pastdagi effekt ortiqcha ish qilmaydi.
+          ws.sessiyaniKuzat(sid)
           // URL'ga yozamiz — endi sahifa yangilansa suhbat tiklanadi
           sessiyaXabarchi.current?.(sid)
           // Sessiyagacha tanlangan rejimni serverga yetkazamiz
@@ -562,15 +574,13 @@ export default function Chat({
   // suhbat yuklanguncha bo'sh ekran miltillab o'tadi
   const empty = msgs.length === 0 && !tiklanmoqda
   const qulflangan = sessionId !== null
-  /** Shu oyna kuzatmayotgan, lekin fonda ishlayotgan sessiyalar */
-  const fondagilar = Object.entries(ishlayotganlar).filter(([id]) => id !== sessionId)
 
   /**
    * Oynani yangi suhbatga tayyorlaydi.
    *
-   * Fondagi sessiya TO'XTATILMAYDI — u ishlashda davom etadi va "Jonli
-   * oqimlar" ro'yxatidan qaytib ochish mumkin. Bu yerda faqat shu oyna
-   * tozalanadi.
+   * Fondagi sessiya TO'XTATILMAYDI — u ishlashda davom etadi va Suhbatlar
+   * ro'yxatidan (yoki Agentlar sahifasidan) qaytib ochish mumkin. Bu yerda
+   * faqat shu oyna tozalanadi.
    */
   function yangiSuhbat() {
     setSessionId(null)
@@ -605,24 +615,6 @@ export default function Chat({
           turadi. "Yangi suhbat" sidebar'da (pro) va pastdagi boshqaruv
           panelida (ikkala rejimda). Loyiha nomi ham pastdagi panelda,
           to'liq papka yo'li esa uning hover popup'ida. */}
-
-      {/* Fondagi boshqa suhbatlar — bu oynada ularning javobi ko'rinmaydi,
-          lekin ishlayotgani (ayniqsa ruxsat kutayotgani) bilinib tursin */}
-      {fondagilar.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 border-b border-line bg-panel px-4 py-1.5">
-          <span className="font-mono text-[10px] tracking-widest text-faint uppercase">
-            Fonda
-          </span>
-          {fondagilar.map(([id, holat]) => (
-            <span key={id} className="flex min-w-0 items-center gap-1.5">
-              <OqimIndikatori holat={holat} />
-              <span className="truncate font-mono text-[11px] text-muted">
-                {sarlavhalar[id] ?? 'Nomsiz suhbat'}
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
 
       <div className="thin-scroll flex-1 overflow-y-auto px-4 pt-6 pb-4">
         {empty && (
