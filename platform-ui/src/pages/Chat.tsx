@@ -44,6 +44,7 @@ import {
   xabarlarOl,
   xabarYubor,
 } from '../lib/api'
+import type { IshlayotganlarXaritasi } from '../lib/ishlayotganlar'
 import { saqlangandanOqi } from '../lib/model-saqlash'
 import { useToast } from '../lib/toast'
 import { ws } from '../lib/ws'
@@ -104,6 +105,15 @@ interface ChatProps {
   ochiqSessiya?: string | null
   /** Sessiya yaratilganda yoki tozalanganda — App hash'ni yangilaydi */
   onSessiyaOzgardi?: (sessionId: string | null) => void
+  /**
+   * Serverda hozir oqim ketayotgan sessiyalar (App'dagi `useIshlayotganlar`).
+   *
+   * Nega Chat'ga ham kerak: mahalliy `busy` faqat SHU oyna xabar yuborganda
+   * yoqiladi va sahifa yangilangach yo'qoladi. O'shanda agent fonda ishlashda
+   * davom etardi, lekin "To'xtatish" tugmasi ko'rinmasdi — foydalanuvchi uni
+   * boshqa hech qachon to'xtata olmasdi. Server holati bu bo'shliqni yopadi.
+   */
+  ishlayotganlar?: IshlayotganlarXaritasi
 }
 
 export default function Chat({
@@ -111,10 +121,19 @@ export default function Chat({
   yangiSuhbatSignali,
   ochiqSessiya,
   onSessiyaOzgardi,
+  ishlayotganlar,
 }: ChatProps) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  /**
+   * "To'xtatish" bosildi, lekin server hali oqim tugaganini tasdiqlamadi.
+   *
+   * Faqat ko'rinish uchun: shu payt tugma o'chadi. Server `chat.status`
+   * ni tarqatgach `serverdaIshlamoqda` o'zi `false` bo'ladi va bu belgi
+   * quyidagi effektda tozalanadi.
+   */
+  const [toxtatilmoqda, setToxtatilmoqda] = useState(false)
   const toast = useToast()
 
   const [modellar, setModellar] = useState<ModelInfo[]>([])
@@ -217,6 +236,7 @@ export default function Chat({
     setRuxsatlar([])
     kutilayotgan.current = null
     setBusy(false)
+    setToxtatilmoqda(false)
 
     void (async () => {
       const sessiya = await sessiyaOl(ochiqSessiya)
@@ -497,10 +517,31 @@ export default function Chat({
     el.style.height = `${Math.min(el.scrollHeight, KIRITISH_MAX_BALANDLIK)}px`
   }, [input])
 
+  /**
+   * Shu suhbatda serverda oqim ketayaptimi.
+   *
+   * `busy` dan MUSTAQIL manba: `busy` faqat shu oyna `send()` chaqirganda
+   * yoqiladi, sahifa yangilanganda esa yo'qoladi. Server holati (GET
+   * /chat/running + `chat.status` eventlari) refresh'dan keyin ham to'g'ri
+   * bo'ladi va boshqa oynadan boshlangan oqimni ham ko'rsatadi.
+   */
+  const serverdaIshlamoqda = sessionId !== null && ishlayotganlar?.[sessionId] !== undefined
+
+  // "To'xtatilmoqda" belgisi server tasdig'idan keyin tozalanadi — shundan
+  // keyin (masalan foydalanuvchi yangi xabar yuborsa) tugma yana ishlaydi.
+  // Sessiya almashganda ham tozalanadi: belgi oldingi suhbatga tegishli edi.
+  useEffect(() => {
+    if (!serverdaIshlamoqda) setToxtatilmoqda(false)
+  }, [serverdaIshlamoqda, sessionId])
+
   const send = useCallback(
     async (xom?: string) => {
       const text = (xom ?? input).trim()
-      if (!text || busy || !tanlangan) return
+      // `serverdaIshlamoqda` ham to'sadi: refresh'dan keyin `busy` false
+      // bo'ladi, oqim esa fonda davom etadi. Usiz yuborilgan yangi xabar
+      // serverda eski oqimni jimgina abort qilardi (`javobOqizi` boshida) —
+      // foydalanuvchi nima uchun javob yarim qolganini tushunmasdi.
+      if (!text || busy || serverdaIshlamoqda || !tanlangan) return
 
       setInput('')
       setBusy(true)
@@ -576,7 +617,7 @@ export default function Chat({
         setBusy(false)
       }
     },
-    [busy, input, loyiha?.id, rejim.rejim, sessionId, tanlangan],
+    [busy, input, loyiha?.id, rejim.rejim, serverdaIshlamoqda, sessionId, tanlangan],
   )
 
   /**
@@ -632,6 +673,10 @@ export default function Chat({
 
   async function toxtat() {
     if (!sessionId) return
+    // Tugma darhol o'chadi — server `chat.status: tugadi` ni tarqatguncha
+    // (va App'dagi xarita yangilanguncha) qisqa oyna bor, usiz tugma
+    // bosilgandan keyin ham osilib turgandek ko'rinardi.
+    setToxtatilmoqda(true)
     try {
       await oqimniToxtat(sessionId)
     } catch {
@@ -646,6 +691,18 @@ export default function Chat({
   // suhbat yuklanguncha bo'sh ekran miltillab o'tadi
   const empty = msgs.length === 0 && !tiklanmoqda
   const qulflangan = sessionId !== null
+
+  /**
+   * "To'xtatish" tugmasi ko'rinsinmi.
+   *
+   * Ikkala manba ham kerak, birortasi yetarli emas:
+   *   - `busy` — xabar yuborilgan, lekin server hali `chat.status` ni
+   *     tarqatmagan qisqa oyna; usiz tugma bir lahza "Yuborish" bo'lib
+   *     miltillardi;
+   *   - `serverdaIshlamoqda` — refresh'dan keyingi holat, `busy` allaqachon
+   *     `false`.
+   */
+  const toxtatilishiMumkin = (busy || serverdaIshlamoqda) && !toxtatilmoqda
 
   /**
    * Oynani yangi suhbatga tayyorlaydi.
@@ -671,6 +728,7 @@ export default function Chat({
     tiklanganLoyiha.current = null
     kutilayotgan.current = null
     setBusy(false)
+    setToxtatilmoqda(false)
   }
 
   // Sidebar'dagi "Yangi suhbat" tugmasi. Boshlang'ich qiymatda (0) ishlamasin
@@ -806,7 +864,7 @@ export default function Chat({
               // `fokus-tashqarida`: halqani form o'rami chizadi (focus-within)
               className="thin-scroll fokus-tashqarida flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-relaxed outline-none placeholder:text-faint disabled:cursor-not-allowed"
             />
-            {busy ? (
+            {toxtatilishiMumkin ? (
               <button
                 type="button"
                 onClick={() => void toxtat()}
@@ -841,7 +899,7 @@ export default function Chat({
               <RejimAlmashtirgich
                 holat={rejim}
                 onOzgart={(r) => void rejimniOzgart(r)}
-                bandmi={busy}
+                bandmi={toxtatilishiMumkin}
               />
               <span className="h-4 w-px shrink-0 bg-line/60" aria-hidden />
               <LoyihaTanlagich

@@ -367,6 +367,7 @@ export default function App() {
               yangiSuhbatSignali={yangiSuhbatSignali}
               ochiqSessiya={sessionId}
               onSessiyaOzgardi={sessiyaOzgardi}
+              ishlayotganlar={ishlayotganlar}
             />
           )}
           {pro && page === 'suhbatlar' && (
