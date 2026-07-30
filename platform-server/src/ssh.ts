@@ -178,7 +178,7 @@ export async function kalitTaminla(): Promise<string> {
       '-q',
     ])
     if (n.kod !== 0) {
-      throw new Error(`ssh-keygen xatosi: ${n.stderr.trim() || n.stdout.trim()}`)
+      throw new Error(`ssh-keygen error: ${n.stderr.trim() || n.stdout.trim()}`)
     }
   }
 
@@ -202,8 +202,8 @@ export function boshqarilganConfigYoz(serverlar: Server[]): void {
   mkdirSync(sshIldizi(), { recursive: true, mode: 0o700 })
 
   const bosh =
-    '# Platforma boshqaradigan fayl — QO\'LDA TAHRIRLAMANG.\n' +
-    '# Har saqlashda bazadagi serverlar ro\'yxatidan to\'liq qayta yoziladi.\n'
+    '# Managed by the platform — DO NOT EDIT BY HAND.\n' +
+    '# Rewritten in full from the server list in the database on every save.\n'
 
   const bloklar = serverlar.map((s) =>
     [
@@ -236,7 +236,7 @@ export function includeTaminla(): void {
   if (mavjud.split('\n').some((q) => q.trim() === qator)) return
 
   mkdirSync(dirname(yol), { recursive: true, mode: 0o700 })
-  const izoh = '# Platforma serverlari (avtomatik qo\'shilgan qator)\n'
+  const izoh = '# Platform servers (line added automatically)\n'
   writeFileSync(yol, `${izoh}${qator}\n\n${mavjud}`)
   chmodSync(yol, 0o600)
 }
@@ -303,17 +303,17 @@ export async function kalitJoyla(manzil: JoylashManzil, parol?: string): Promise
 
   if (!parol) {
     throw new Error(
-      `Mavjud SSH kalitlaringiz bilan ${nishon} ga kirib bo'lmadi. ` +
-        `Parol kiriting yoki kalitingizni serverga oldindan joylang. ` +
-        `(ssh: ${kalitBilan.stderr.trim().split('\n').pop() ?? 'nomalum xato'})`,
+      `Could not log in to ${nishon} with your existing SSH keys. ` +
+        `Enter a password or install your key on the server first. ` +
+        `(ssh: ${kalitBilan.stderr.trim().split('\n').pop() ?? 'unknown error'})`,
     )
   }
 
   // 2) Parol bilan — sshpass talab qilinadi.
   if (!Bun.which('sshpass')) {
     throw new Error(
-      "Parol bilan ulanish uchun 'sshpass' o'rnatilgan bo'lishi kerak " +
-        '(brew install sshpass yoki apt install sshpass).',
+      "Connecting with a password requires 'sshpass' to be installed " +
+        '(brew install sshpass or apt install sshpass).',
     )
   }
 
@@ -334,9 +334,9 @@ export async function kalitJoyla(manzil: JoylashManzil, parol?: string): Promise
   if (parolBilan.kod !== 0) {
     const sabab = parolBilan.stderr.trim().split('\n').pop() ?? ''
     if (parolBilan.kod === 5 || /denied/i.test(sabab)) {
-      throw new Error(`Parol noto'g'ri yoki ${nishon} parol bilan kirishga ruxsat bermaydi.`)
+      throw new Error(`Wrong password, or ${nishon} does not allow password logins.`)
     }
-    throw new Error(`${nishon} ga ulanib bo'lmadi: ${sabab || `chiqish kodi ${parolBilan.kod}`}`)
+    throw new Error(`Could not connect to ${nishon}: ${sabab || `exit code ${parolBilan.kod}`}`)
   }
 }
 
@@ -359,7 +359,7 @@ export async function ulanishniTekshir(nom: string): Promise<void> {
     'true',
   ])
   if (n.kod !== 0) {
-    throw new Error(n.stderr.trim().split('\n').pop() ?? `ssh chiqish kodi ${n.kod}`)
+    throw new Error(n.stderr.trim().split('\n').pop() ?? `ssh exit code ${n.kod}`)
   }
 }
 
@@ -440,7 +440,7 @@ export async function metrikaOl(nom: string): Promise<ServerMetrika> {
   if (n.kod !== 0) {
     return {
       holat: 'xato',
-      xato: n.stderr.trim().split('\n').pop() ?? `ssh chiqish kodi ${n.kod}`,
+      xato: n.stderr.trim().split('\n').pop() ?? `ssh exit code ${n.kod}`,
     }
   }
 

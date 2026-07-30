@@ -56,7 +56,7 @@ describe('stateniBajar', () => {
   test('sintaksis xatosi ushlanadi', async () => {
     const n = await stateniBajar('bu ( sintaksis xato', 'x')
     expect(n.ok).toBe(false)
-    expect(n.xato).toContain('Sintaksis')
+    expect(n.xato).toContain('Syntax error')
   })
 
   test('funksiya bermagan kod rad etiladi', async () => {
@@ -235,6 +235,6 @@ describe('manifest bilan integratsiya', () => {
       db,
     )
     expect(n.ok).toBe(false)
-    expect(n.xatolar?.join(' ')).toContain('takrorlangan')
+    expect(n.xatolar?.join(' ')).toContain('Duplicate')
   })
 })

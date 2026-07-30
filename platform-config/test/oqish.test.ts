@@ -56,13 +56,13 @@ describe('fayl o\'qish', () => {
     writeFileSync(join(globalPapka, CONFIG_FAYLI), '{ buzuq json,,, ')
     const n = configniOqi({ globalPapka })
     expect(n.config).toEqual(standartConfig())
-    expect(n.ogohlantirishlar.some((o) => o.sabab.includes('JSON buzuq'))).toBe(true)
+    expect(n.ogohlantirishlar.some((o) => o.sabab.includes('malformed JSON'))).toBe(true)
   })
 
   test('JSON obyekt emas (massiv) — ogohlantirish', () => {
     writeFileSync(join(globalPapka, CONFIG_FAYLI), '[1, 2, 3]')
     const n = configniOqi({ globalPapka })
-    expect(n.ogohlantirishlar.some((o) => o.sabab.includes('JSON obyekt'))).toBe(true)
+    expect(n.ogohlantirishlar.some((o) => o.sabab.includes('a JSON object'))).toBe(true)
   })
 
   test('global config qiymatlari qo\'llanadi', () => {

@@ -67,7 +67,7 @@ export function faylniOqi(
     // Qolgan xatolar (ruxsat yo'q, papka o'rniga fayl) esa aytilishi kerak.
     const kod = (xato as NodeJS.ErrnoException)?.code
     if (kod !== 'ENOENT') {
-      ogohlantirishlar.push({ yol, sabab: `o'qib bo'lmadi: ${xatoMatni(xato)}` })
+      ogohlantirishlar.push({ yol, sabab: `could not be read: ${xatoMatni(xato)}` })
     }
     return undefined
   }
@@ -75,12 +75,12 @@ export function faylniOqi(
   try {
     const tahlil = JSON.parse(xom) as unknown
     if (typeof tahlil !== 'object' || tahlil === null || Array.isArray(tahlil)) {
-      ogohlantirishlar.push({ yol, sabab: 'fayl ichida JSON obyekt kutilgan edi' })
+      ogohlantirishlar.push({ yol, sabab: 'a JSON object was expected in the file' })
       return undefined
     }
     return tahlil as QismanConfig
   } catch (xato) {
-    ogohlantirishlar.push({ yol, sabab: `JSON buzuq: ${xatoMatni(xato)}` })
+    ogohlantirishlar.push({ yol, sabab: `malformed JSON: ${xatoMatni(xato)}` })
     return undefined
   }
 }

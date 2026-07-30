@@ -110,7 +110,7 @@ describe('tool natijalarini qisqartirish', () => {
     const matn = (natija[0] as unknown as { content: { text: string }[] }).content[0]!.text
     expect(matn.length).toBeLessThan(2000)
     // Agent natija to'liq emasligini bilishi shart
-    expect(matn).toContain('qisqartirildi')
+    expect(matn).toContain('truncated')
   })
 
   test('chegaradan qisqa natija tegilmaydi', () => {

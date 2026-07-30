@@ -107,14 +107,14 @@ describe('codexGaYoz', () => {
     const natija = codexGaYoz(yangiToken, uy)
 
     expect(natija.yozildi).toBe(false)
-    expect(natija.sabab).toContain("o'zgarish yo'q")
+    expect(natija.sabab).toContain('no change')
   })
 
   test('fayl yo\'q bo\'lsa YARATILMAYDI — codex o\'rnatilmagan', () => {
     const natija = codexGaYoz(yangiToken, uy)
 
     expect(natija.yozildi).toBe(false)
-    expect(natija.sabab).toContain('topilmadi')
+    expect(natija.sabab).toContain('not found')
     expect(() => statSync(yoli())).toThrow()
   })
 
@@ -136,7 +136,7 @@ describe('codexGaYoz', () => {
     const natija = codexGaYoz(yangiToken, uy)
 
     expect(natija.yozildi).toBe(false)
-    expect(natija.sabab).toContain('kutilmagan shakl')
+    expect(natija.sabab).toContain('unexpected shape')
   })
 
   test('tokens maydoni yo\'q bo\'lsa yaratiladi', () => {

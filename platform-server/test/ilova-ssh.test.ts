@@ -190,7 +190,7 @@ describe('ssh.buyruq — shell satri QABUL QILINMAYDI', () => {
     const ssh = ilovaSshYarat('helsinki-1')
 
     // @ts-expect-error — ataylab noto'g'ri tip
-    await expect(ssh.buyruq('docker restart bot')).rejects.toThrow(/massiv/i)
+    await expect(ssh.buyruq('docker restart bot')).rejects.toThrow(/array/i)
     expect(chaqiruvlar).toHaveLength(0)
   })
 
@@ -202,7 +202,7 @@ describe('ssh.buyruq — shell satri QABUL QILINMAYDI', () => {
   test('obyekt argument XATO tashlaydi', async () => {
     soxta(() => OK)
     // @ts-expect-error — ataylab noto'g'ri tip
-    await expect(ilovaSshYarat('h').buyruq(['echo', { a: 1 }])).rejects.toThrow(/satr/i)
+    await expect(ilovaSshYarat('h').buyruq(['echo', { a: 1 }])).rejects.toThrow(/string/i)
   })
 
   // Foydalanuvchi kiritgan konteyner nomi buyruqqa tushadi — u alohida
@@ -310,7 +310,7 @@ describe('ssh.envYoz — token `ps` da KO\'RINMASIN', () => {
     })
 
     await expect(ilovaSshYarat('h').envYoz('/opt/bot/.env', { TOKEN: 'x' })).rejects.toThrow(
-      /katta/i,
+      /too large/i,
     )
   })
 })

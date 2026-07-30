@@ -142,7 +142,7 @@ describe('xato izolyatsiyasi — AI kodi platformani yiqitmasin', () => {
       kontekst,
     )
     expect(n.ok).toBe(false)
-    expect(n.xato).toMatch(/server nomi/i)
+    expect(n.xato).toMatch(/server name/i)
   })
 
   test('timeout chegarasi belgilangan', () => {

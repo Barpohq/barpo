@@ -97,7 +97,7 @@ describe('XATO IZOLYATSIYASI — asosiy talab', () => {
     // Ilova saqlanishi SHART: bitta buzuq kod uchun butun dashboardni
     // yo'qotish foydalanuvchiga zarar qiladi.
     expect(n.ok).toBe(true)
-    expect(n.ogohlantirishlar?.join(' ')).toContain('kompilyatsiya')
+    expect(n.ogohlantirishlar?.join(' ')).toContain('did not compile')
 
     const manifest = ilovaOqi('sinov-ilova', db)?.manifest
     expect(manifest?.widgets).toHaveLength(1)

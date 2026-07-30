@@ -123,24 +123,24 @@ export function taqiqlanganlarniTop(manba: string): string[] {
       // brauzerda JIM yiqilardi va AI sababni bilmasdi.
       naqsh: /^\s*import\s|^\s*export\s+.*\bfrom\s|[^\w.]require\s*\(|[^\w.]import\s*\(/m,
       xabar:
-        'Kodda `import`/`require` bor — ko\'rinish kodida ular ISHLAMAYDI ' +
-        '(kod bundle qilinmaydi, paket yuklovchi yo\'q). React, hooklar va ' +
-        'platforma komponentlari GLOBAL sifatida beriladi: useState, useEffect, ' +
-        'Card, StatTile va h.k.',
+        'The code contains `import`/`require` — those DO NOT WORK in view code ' +
+        '(the code is not bundled and there is no module loader). React, hooks and ' +
+        'the platform components are provided as GLOBALS: useState, useEffect, ' +
+        'Card, StatTile and so on.',
     },
     {
       naqsh: /\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b/,
       xabar:
-        'Ko\'rinish kodi TARMOQQA CHIQMAYDI — u faqat chizadi. ' +
-        'O\'zgarib turadigan qiymat kerak bo\'lsa `states` qo\'shing ' +
-        '(serverda bajariladi, o\'z intervali bilan yangilanadi), natija ' +
-        '`data` ichiga o\'zi tushadi.',
+        'View code MUST NOT reach the network — it only renders. ' +
+        'If you need a changing value, add a `states` entry ' +
+        '(it runs on the server on its own interval), and the result ' +
+        'lands in `data` automatically.',
     },
     {
       naqsh: /\b(localStorage|sessionStorage|indexedDB)\b|\bdocument\s*\.\s*cookie\b/,
       xabar:
-        'Brauzer xotirasiga (localStorage, cookie) yozmang — ko\'rinish holatsiz ' +
-        'bo\'lishi kerak. Vaqtinchalik holat uchun `useState` ishlating.',
+        'Do not write to browser storage (localStorage, cookie) — the view must be ' +
+        'stateless. Use `useState` for transient state.',
     },
   ]
 
@@ -274,7 +274,7 @@ export async function viewniQur(manba: string): Promise<QurishNatijasi> {
         ],
       }),
       new Promise<never>((_, rad) =>
-        setTimeout(() => rad(new Error('Kompilyatsiya juda uzoq davom etdi')), QURISH_TIMEOUT_MS),
+        setTimeout(() => rad(new Error('Compilation took too long')), QURISH_TIMEOUT_MS),
       ),
     ])
 

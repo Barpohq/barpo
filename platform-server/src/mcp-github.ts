@@ -54,13 +54,13 @@ export async function mcpManbaniSkanerla(m: GithubManzil): Promise<McpSkanerNati
   const { fayllar, kesilgan } = await fayllarniTop(m, ref, SERVER_JSON_NAQSHI)
 
   if (kesilgan) {
-    ogohlantirishlar.push("Repo juda katta — fayllar ro'yxati to'liq emas")
+    ogohlantirishlar.push('Repository too large — the file list is incomplete')
   }
 
   let royxat = fayllar
   if (royxat.length > MAKS_MCP_SKANER_FAYL) {
     ogohlantirishlar.push(
-      `${royxat.length} ta server.json topildi, birinchi ${MAKS_MCP_SKANER_FAYL} tasi o'qildi`,
+      `Found ${royxat.length} server.json files, read the first ${MAKS_MCP_SKANER_FAYL}`,
     )
     royxat = royxat.slice(0, MAKS_MCP_SKANER_FAYL)
   }
@@ -74,7 +74,7 @@ export async function mcpManbaniSkanerla(m: GithubManzil): Promise<McpSkanerNati
       xom = await blobniOqi(m, fayl.sha)
     } catch {
       // Bitta fayl o'qilmasa qolganini yo'qotmaymiz
-      ogohlantirishlar.push(`${fayl.yol}: o'qib bo'lmadi`)
+      ogohlantirishlar.push(`${fayl.yol}: could not be read`)
       continue
     }
 
@@ -82,7 +82,7 @@ export async function mcpManbaniSkanerla(m: GithubManzil): Promise<McpSkanerNati
     try {
       malumot = JSON.parse(xom) as RegistryServerYozuvi
     } catch {
-      ogohlantirishlar.push(`${fayl.yol}: JSON emas — o'tkazib yuborildi`)
+      ogohlantirishlar.push(`${fayl.yol}: not JSON — skipped`)
       continue
     }
 
@@ -91,14 +91,14 @@ export async function mcpManbaniSkanerla(m: GithubManzil): Promise<McpSkanerNati
     // MCP publish formati `name` va (`packages` yoki `remotes`) talab qiladi —
     // ular bo'lmasa bu bizning faylimiz emas.
     if (!malumot.name) {
-      ogohlantirishlar.push(`${fayl.yol}: "name" yo'q — MCP server tavsifi emas`)
+      ogohlantirishlar.push(`${fayl.yol}: no "name" — not an MCP server descriptor`)
       continue
     }
 
     const yozuv = registryYozuvniAylantir(malumot)
     if (!yozuv) {
       ogohlantirishlar.push(
-        `${fayl.yol}: ishga tushirish usuli aniqlanmadi (packages/remotes yo'q yoki noma'lum tur)`,
+        `${fayl.yol}: no launch method could be determined (missing packages/remotes or unknown type)`,
       )
       continue
     }
@@ -107,7 +107,7 @@ export async function mcpManbaniSkanerla(m: GithubManzil): Promise<McpSkanerNati
     // takrorlangan) birinchisi qoladi — baza UNIQUE indeksi baribir
     // ikkinchisini rad etardi, lekin bu yerda ogohlantirish beramiz.
     if (korilganNomlar.has(yozuv.nom)) {
-      ogohlantirishlar.push(`${fayl.yol}: "${yozuv.nom}" nomi takrorlandi — o'tkazib yuborildi`)
+      ogohlantirishlar.push(`${fayl.yol}: duplicate name "${yozuv.nom}" — skipped`)
       continue
     }
     korilganNomlar.add(yozuv.nom)
@@ -115,7 +115,7 @@ export async function mcpManbaniSkanerla(m: GithubManzil): Promise<McpSkanerNati
   }
 
   if (serverlar.length === 0 && ogohlantirishlar.length === 0) {
-    ogohlantirishlar.push("Repo'da `server.json` topilmadi")
+    ogohlantirishlar.push('No `server.json` found in the repository')
   }
 
   return { ref, sha, serverlar, ogohlantirishlar }

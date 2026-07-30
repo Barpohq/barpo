@@ -44,7 +44,7 @@ function PapkaPopup({ loyiha }: { loyiha: Project | null }) {
       {loyiha ? (
         <>
           <span className="block font-mono text-[10px] tracking-widest text-faint uppercase">
-            Ish papkasi
+            Working folder
           </span>
           {/* break-all: uzun yo'l kesilmasin, o'ralsin */}
           <span className="mt-0.5 block font-mono text-[11px] break-all text-lazur">
@@ -53,7 +53,7 @@ function PapkaPopup({ loyiha }: { loyiha: Project | null }) {
         </>
       ) : (
         <span className="block text-[11px] text-muted">
-          Loyihaga ulanmagan — suhbat o'z vaqtinchalik papkasida ishlaydi
+          Not linked to a project — the chat runs in its own temporary folder
         </span>
       )}
     </span>
@@ -72,7 +72,7 @@ export default function LoyihaTanlagich({
   const [yaratilmoqda, setYaratilmoqda] = useState(false)
   const [xato, setXato] = useState<string | null>(null)
 
-  const yorliq = tanlangan ? `▣ ${tanlangan.name}` : '▢ loyihasiz'
+  const yorliq = tanlangan ? `▣ ${tanlangan.name}` : '▢ no project'
 
   async function yarat() {
     const nom = yangiNom.trim()
@@ -85,7 +85,7 @@ export default function LoyihaTanlagich({
       setYangiNom('')
       setOchiq(false)
     } catch (e) {
-      setXato(e instanceof Error ? e.message : "Loyiha yaratilmadi")
+      setXato(e instanceof Error ? e.message : 'Could not create the project')
     } finally {
       setYaratilmoqda(false)
     }
@@ -113,7 +113,7 @@ export default function LoyihaTanlagich({
         type="button"
         onClick={() => setOchiq((o) => !o)}
         aria-expanded={ochiq}
-        aria-label={`Loyiha: ${tanlangan?.name ?? 'tanlanmagan'}`}
+        aria-label={`Project: ${tanlangan?.name ?? 'none selected'}`}
         className={`rounded-lg border px-2.5 py-1 font-mono text-[11px] transition ${
           tanlangan
             ? 'border-lazur-dim text-lazur hover:brightness-110'
@@ -128,7 +128,7 @@ export default function LoyihaTanlagich({
       {ochiq && (
         <div className="absolute bottom-full left-0 z-40 mb-2 w-72 rounded-xl border border-line bg-panel p-2 shadow-xl">
           <div className="px-2 pb-1.5 text-[10px] font-semibold tracking-widest text-faint uppercase">
-            Loyiha
+            Project
           </div>
 
           <button
@@ -160,7 +160,7 @@ export default function LoyihaTanlagich({
               >
                 <span className="truncate">▣ {l.name}</span>
                 <span className="shrink-0 font-mono text-[10px] text-faint">
-                  {l.chatlarSoni ?? 0} chat
+                  {l.chatlarSoni ?? 0} chats
                 </span>
               </button>
             ))}
@@ -177,8 +177,8 @@ export default function LoyihaTanlagich({
                     void yarat()
                   }
                 }}
-                placeholder="yangi loyiha nomi…"
-                aria-label="Yangi loyiha nomi"
+                placeholder="new project name…"
+                aria-label="New project name"
                 // `fokus-tashqarida`: fokusni maydonning o'z chegarasi
                 // ko'rsatadi — global halqa ustiga tushsa ikki qavat bo'lardi
                 className="fokus-tashqarida min-w-0 flex-1 rounded-lg border border-line bg-panel2 px-2 py-1 text-[13px] outline-none placeholder:text-faint focus:border-lazur-dim"
@@ -189,7 +189,7 @@ export default function LoyihaTanlagich({
                 disabled={!yangiNom.trim() || yaratilmoqda}
                 className="shrink-0 rounded-lg bg-lazur-dim px-2.5 py-1 text-[12px] font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
               >
-                {yaratilmoqda ? '…' : 'Yarat'}
+                {yaratilmoqda ? '…' : 'Create'}
               </button>
             </div>
             {xato && <div className="mt-1.5 px-1 text-[11px] text-coral">{xato}</div>}

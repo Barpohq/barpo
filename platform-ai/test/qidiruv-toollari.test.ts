@@ -160,7 +160,7 @@ describe('grep tool', () => {
 
   test('topilmasa tushunarli xabar', async () => {
     const matn = await toolniChaqir(grepToolYarat(), { pattern: 'yoq-bunday-soz' })
-    expect(matn).toBe('Mos kelish topilmadi.')
+    expect(matn).toBe('No matches found.')
   })
 
   test('glob filtri ishlaydi', async () => {
@@ -176,7 +176,7 @@ describe('grep tool', () => {
 
   test('tashqi yo\'l uchun xato tashlaydi (ruxsat SO\'RALMAYDI)', async () => {
     const urinish = toolniChaqir(grepToolYarat(), { pattern: 'x', path: '../..' })
-    expect(urinish).rejects.toThrow(/Ruxsat berilmadi/)
+    expect(urinish).rejects.toThrow(/Permission denied/)
   })
 
   test('tafsilotda backend va soni bor', async () => {
@@ -194,7 +194,7 @@ describe('grep tool', () => {
     expect(n.kesildi).toBe(true)
     expect(n.elementlar).toHaveLength(10)
     const matn = grepNatijasiniMatnga(n)
-    expect(matn).toContain('cheklandi')
+    expect(matn).toContain('capped')
     expect(matn).toContain('Naqshni toraytiring')
   })
 
@@ -265,7 +265,7 @@ describe('find tool', () => {
 
   test('topilmasa tushunarli xabar', async () => {
     const matn = await toolniChaqir(findToolYarat(), { pattern: '*.yoq' })
-    expect(matn).toBe('Fayl topilmadi.')
+    expect(matn).toBe('No files found.')
   })
 
   test('`path` bilan cheklanadi', async () => {
@@ -278,12 +278,12 @@ describe('find tool', () => {
     const n = await findNode({ ishPapkasi: ish, pattern: '*.txt', chegara: 5 })
     expect(n.kesildi).toBe(true)
     expect(n.elementlar).toHaveLength(5)
-    expect(findNatijasiniMatnga(n)).toContain('cheklandi')
+    expect(findNatijasiniMatnga(n)).toContain('capped')
   })
 
   test('tashqi yo\'l rad etiladi', async () => {
     const urinish = toolniChaqir(findToolYarat(), { pattern: '*', path: '/etc' })
-    expect(urinish).rejects.toThrow(/Ruxsat berilmadi/)
+    expect(urinish).rejects.toThrow(/Permission denied/)
   })
 
   test('tashlanadigan papkalar standart holda chiqmaydi', async () => {
@@ -332,7 +332,7 @@ describe('ls tool', () => {
 
   test('bo\'sh papka uchun xabar', async () => {
     const matn = await toolniChaqir(lsToolYarat(), { path: 'papka' })
-    expect(matn).toBe("Papka bo'sh.")
+    expect(matn).toBe('The directory is empty.')
   })
 
   test('tashlanadigan papkalar standart holda yashiriladi', async () => {
@@ -349,24 +349,24 @@ describe('ls tool', () => {
 
   test('mavjud bo\'lmagan papka uchun tushunarli xato', async () => {
     const urinish = lsRoyxat({ ishPapkasi: ish, path: 'yoq-bunday-papka' })
-    expect(urinish).rejects.toThrow(/Topilmadi/)
+    expect(urinish).rejects.toThrow(/Not found/)
   })
 
   test('fayl berilsa "papka emas" xatosi', async () => {
     const urinish = lsRoyxat({ ishPapkasi: ish, path: 'kichik.txt' })
-    expect(urinish).rejects.toThrow(/Papka emas/)
+    expect(urinish).rejects.toThrow(/Not a directory/)
   })
 
   test('tashqi yo\'l rad etiladi', async () => {
     const urinish = toolniChaqir(lsToolYarat(), { path: '/etc' })
-    expect(urinish).rejects.toThrow(/Ruxsat berilmadi/)
+    expect(urinish).rejects.toThrow(/Permission denied/)
   })
 
   test('chegaradan oshsa kesilgani aytiladi', async () => {
     for (let i = 0; i < 20; i += 1) writeFileSync(join(ish, `f${i}.txt`), '')
     const n = await lsRoyxat({ ishPapkasi: ish, chegara: 5 })
     expect(n.kesildi).toBe(true)
-    expect(lsNatijasiniMatnga(n)).toContain('cheklandi')
+    expect(lsNatijasiniMatnga(n)).toContain('capped')
   })
 })
 

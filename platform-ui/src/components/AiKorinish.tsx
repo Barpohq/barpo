@@ -95,7 +95,7 @@ function komponentYasa(kod: string): { komponent?: Komponent; xato?: string } {
     const natija = fabrika(...qiymatlar)
 
     if (typeof natija !== 'function') {
-      return { xato: "Kod `export default function View({ data }) {...}` bermadi" }
+      return { xato: 'The code did not return `export default function View({ data }) {...}`' }
     }
     return { komponent: natija as Komponent }
   } catch (xato) {
@@ -207,11 +207,11 @@ function XatoBloki({ xabar }: { xabar: string }) {
   return (
     <Card className="p-5">
       <div className="text-xs font-medium uppercase tracking-wider text-gold">
-        Dashboard ko'rinishi ishlamadi
+        Dashboard view failed
       </div>
       <p className="mt-2 text-sm text-muted">
-        Ilovaning maxsus ko'rinishi xato berdi. Platformaning qolgan qismi normal ishlayapti —
-        quyidagi vidjetlar (agar bo'lsa) o'z holicha ko'rsatilgan.
+        This app's custom view threw an error. The rest of the platform is working normally —
+        the widgets below (if any) are shown as usual.
       </p>
       <pre className="thin-scroll mt-3 max-h-32 overflow-auto rounded-lg bg-bg px-3 py-2 font-mono text-[11px] text-faint">
         {xabar}

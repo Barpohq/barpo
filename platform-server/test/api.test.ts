@@ -198,7 +198,7 @@ describe('chat endpointlari', () => {
     })
     expect(javob.status).toBe(404)
     const tana = (await javob.json()) as { error: string }
-    expect(tana.error).toContain('Sessiya')
+    expect(tana.error).toContain('Session')
   })
 })
 
@@ -207,6 +207,6 @@ describe('umumiy xatti-harakat', () => {
     const javob = await app.request('/api/bunday-yol-yoq')
     expect(javob.status).toBe(404)
     const tana = (await javob.json()) as { error: string }
-    expect(tana.error).toBe('Topilmadi')
+    expect(tana.error).toBe('Not found')
   })
 })

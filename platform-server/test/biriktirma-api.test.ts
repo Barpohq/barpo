@@ -140,7 +140,7 @@ describe('POST /chat/biriktirma', () => {
     const { body } = await yukla(sessiya.id, [{ nom: '', bayt: PNG }])
 
     const biriktirmalar = body.biriktirmalar as ChatBiriktirma[]
-    expect(biriktirmalar[0]!.yol.endsWith('rasm.png')).toBe(true)
+    expect(biriktirmalar[0]!.yol.endsWith('image.png')).toBe(true)
   })
 
   test('yo\'ldan chiqishga urinish papkada qolmaydi', async () => {
@@ -170,7 +170,7 @@ describe('POST /chat/biriktirma', () => {
     const { status, body } = await yukla(sessiya.id, [])
 
     expect(status).toBe(400)
-    expect(body.error).toContain('Fayl')
+    expect(body.error).toContain('file')
   })
 
   test('bo\'sh fayl — 400', async () => {
@@ -197,7 +197,7 @@ describe('POST /chat/biriktirma', () => {
     const { status, body } = await yukla(sessiya.id, fayllar)
 
     expect(status).toBe(400)
-    expect(body.error).toContain('soni')
+    expect(body.error).toContain('limit')
   })
 })
 

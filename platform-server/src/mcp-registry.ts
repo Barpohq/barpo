@@ -135,18 +135,18 @@ export async function registryQidir(
     } catch (xato) {
       // Tarmoq xatosi yoki timeout — sabab aniq bo'lsin
       const sabab = xato instanceof Error ? xato.message : String(xato)
-      throw new Error(`MCP registry'ga ulanib bo'lmadi: ${sabab}`)
+      throw new Error(`Could not reach the MCP registry: ${sabab}`)
     }
 
     if (!javob.ok) {
-      throw new Error(`MCP registry xatosi: ${javob.status} ${javob.statusText}`)
+      throw new Error(`MCP registry error: ${javob.status} ${javob.statusText}`)
     }
 
     let malumot: RegistryJavobi
     try {
       malumot = (await javob.json()) as RegistryJavobi
     } catch {
-      throw new Error("MCP registry javobi JSON emas")
+      throw new Error('The MCP registry response is not JSON')
     }
 
     for (const yozuv of malumot.servers ?? []) {

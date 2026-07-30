@@ -129,7 +129,7 @@ describe('sozlama kaliti — u konfiguratsiya kaliti bo\'ladi', () => {
       [],
     )
     // Qaysi qiymat yozilishi tasodifga bog'liq bo'lardi — shuning uchun xato.
-    expect(xatolar.some((x) => x.includes('takrorlangan'))).toBe(true)
+    expect(xatolar.some((x) => x.includes('Duplicate'))).toBe(true)
   })
 })
 
@@ -142,7 +142,7 @@ describe('sozlama maydoni turlari', () => {
       ogoh,
     )
     expect(n?.maydonlar[0]?.turi).toBe('matn')
-    expect(ogoh.some((o) => o.includes('tanilmadi'))).toBe(true)
+    expect(ogoh.some((o) => o.includes('not recognised'))).toBe(true)
   })
 
   test('`tanlov` variantsiz `matn` ga tushadi', () => {
@@ -207,7 +207,7 @@ describe('sozlama maydoni turlari', () => {
     const n = sozlamalarniTekshir({ ...sozlamaAsosi, maydonlar: kop }, [], ogoh)
 
     expect(n?.maydonlar).toHaveLength(SOZLAMA_SONI_CHEGARASI)
-    expect(ogoh.some((o) => o.includes('olindi'))).toBe(true)
+    expect(ogoh.some((o) => o.includes('were kept'))).toBe(true)
   })
 })
 
@@ -251,7 +251,7 @@ describe('naqsh — injection himoyasining uchinchi qatlami', () => {
       ogoh,
     )
     expect(n?.maydonlar[0]?.naqsh).toBeUndefined()
-    expect(ogoh.some((o) => o.includes('uzun'))).toBe(true)
+    expect(ogoh.some((o) => o.includes('too long'))).toBe(true)
   })
 
   test('naqsh yo\'q bo\'lsa `naqshIzohi` ham saqlanmaydi', () => {
@@ -307,7 +307,7 @@ describe('amallarniTekshir', () => {
   test('nom TAKRORLANSA manifest rad etiladi', () => {
     const xatolar: string[] = []
     amallarniTekshir([amalAsosi, { ...amalAsosi, yorliq: 'Boshqa' }], xatolar, [])
-    expect(xatolar.some((x) => x.includes('takrorlangan'))).toBe(true)
+    expect(xatolar.some((x) => x.includes('Duplicate'))).toBe(true)
   })
 
   test('kodsiz amal TASHLANADI, qolgani ishlaydi', () => {
@@ -320,7 +320,7 @@ describe('amallarniTekshir', () => {
     // Bitta buzuq amal uchun boshqasini yo'qotish foydalanuvchiga zarar.
     expect(n).toHaveLength(1)
     expect(n?.[0]?.nom).toBe('restart')
-    expect(ogoh.some((o) => o.includes('kod'))).toBe(true)
+    expect(ogoh.some((o) => o.includes('code'))).toBe(true)
   })
 
   test('tanilmagan xavf darajasi `o\'zgartirish` ga tushadi', () => {
@@ -346,7 +346,7 @@ describe('amallarniTekshir', () => {
     }))
     const ogoh: string[] = []
     expect(amallarniTekshir(kop, [], ogoh)).toHaveLength(AMAL_SONI_CHEGARASI)
-    expect(ogoh.some((o) => o.includes('olindi'))).toBe(true)
+    expect(ogoh.some((o) => o.includes('were kept'))).toBe(true)
   })
 })
 
@@ -369,7 +369,7 @@ describe('manifest bilan birga', () => {
   test('hammasi bo\'sh bo\'lsa RAD etiladi', () => {
     const n = manifestniTekshir(asos)
     expect(n.ok).toBe(false)
-    expect(n.xatolar.some((x) => x.includes('ko\'rsatadigan narsa yo\'q'))).toBe(true)
+    expect(n.xatolar.some((x) => x.includes('nothing to display'))).toBe(true)
   })
 
   test('`yangila` mavjud bo\'lmagan state\'ga ishora qilsa TOZALANADI', () => {

@@ -145,7 +145,7 @@ describe('jarayon lifecycle', () => {
     // Jim server — javob bermaydi, timeout bo'ladi
     const klient = klientYarat({ SOXTA_JIM: '1' }, 500)
 
-    await expect(klient.ulan()).rejects.toThrow(/javob bermadi/)
+    await expect(klient.ulan()).rejects.toThrow(/did not respond/)
     expect(klient.tayyormi).toBe(false)
 
     // `ulan()` ichida `uz()` chaqirilgan — takroriy chaqiruv xato bermasligi kerak

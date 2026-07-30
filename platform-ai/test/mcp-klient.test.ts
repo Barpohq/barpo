@@ -193,7 +193,7 @@ describe('handshake', () => {
     const holat = soxtaOrnat(() => undefined)
     const klient = klientYarat()
 
-    await expect(klient.ulan()).rejects.toThrow(/javob bermadi/)
+    await expect(klient.ulan()).rejects.toThrow(/did not respond/)
     // Handshake muvaffaqiyatsiz — jarayon ORTDA QOLMASLIGI kerak
     expect(holat.toxtatildi).toBe(1)
     expect(klient.tayyormi).toBe(false)
@@ -219,7 +219,7 @@ describe('handshake', () => {
 
   test('buyruqsiz stdio ulanmaydi', async () => {
     const klient = new McpKlient({ transport: 'stdio' })
-    await expect(klient.ulan()).rejects.toThrow(/buyruq/)
+    await expect(klient.ulan()).rejects.toThrow(/command/)
   })
 
   test('url\'siz http ulanmaydi', async () => {
@@ -231,7 +231,7 @@ describe('handshake', () => {
 
   test('noma\'lum transport xato beradi', async () => {
     const klient = new McpKlient({ transport: 'grpc' as 'stdio' })
-    await expect(klient.ulan()).rejects.toThrow(/Noma'lum transport/)
+    await expect(klient.ulan()).rejects.toThrow(/Unknown transport/)
   })
 })
 
@@ -263,7 +263,7 @@ describe('tools/list', () => {
   test('ulanmasdan chaqirilsa xato', async () => {
     soxtaOrnat(normalJavob)
     const klient = klientYarat()
-    await expect(klient.toollarniOl()).rejects.toThrow(/ulanmagan/)
+    await expect(klient.toollarniOl()).rejects.toThrow(/not connected/)
   })
 })
 
@@ -319,7 +319,7 @@ describe('tools/call', () => {
     const klient = klientYarat()
     await klient.ulan()
 
-    await expect(klient.chaqir('echo', {})).rejects.toThrow(/javob bermadi/)
+    await expect(klient.chaqir('echo', {})).rejects.toThrow(/did not respond/)
     await klient.uz()
   })
 
@@ -335,7 +335,7 @@ describe('tools/call', () => {
     const kutish = klient.chaqir('echo', {}, boshqaruv.signal)
     boshqaruv.abort()
 
-    await expect(kutish).rejects.toThrow(/bekor qilindi/)
+    await expect(kutish).rejects.toThrow(/cancelled/)
     await klient.uz()
   })
 
@@ -346,7 +346,7 @@ describe('tools/call', () => {
 
     const boshqaruv = new AbortController()
     boshqaruv.abort()
-    await expect(klient.chaqir('echo', {}, boshqaruv.signal)).rejects.toThrow(/bekor qilindi/)
+    await expect(klient.chaqir('echo', {}, boshqaruv.signal)).rejects.toThrow(/cancelled/)
     await klient.uz()
   })
 
@@ -445,7 +445,7 @@ describe('uz()', () => {
     const kutish = klient.chaqir('echo', {})
     await klient.uz()
 
-    await expect(kutish).rejects.toThrow(/yopildi/)
+    await expect(kutish).rejects.toThrow(/was closed/)
   })
 
   test('yopilgandan keyin ulanish mumkin emas', async () => {
@@ -454,7 +454,7 @@ describe('uz()', () => {
     await klient.ulan()
     await klient.uz()
 
-    await expect(klient.ulan()).rejects.toThrow(/yopilgan/)
+    await expect(klient.ulan()).rejects.toThrow(/closed/)
   })
 })
 
@@ -524,7 +524,7 @@ describe('transport chidamliligi', () => {
     const transport = stdioTransportYarat('a', [])
     await transport.yop()
 
-    await expect(transport.yubor({ jsonrpc: '2.0', method: 'x' })).rejects.toThrow(/yopilgan/)
+    await expect(transport.yubor({ jsonrpc: '2.0', method: 'x' })).rejects.toThrow(/closed/)
   })
 
   test('SIGTERM ga javob bermasa SIGKILL yuboriladi', async () => {

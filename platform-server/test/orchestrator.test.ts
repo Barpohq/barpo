@@ -269,7 +269,7 @@ describe("javobOqizi — foydalanuvchi to'xtatgani", () => {
 
     const xabarlar = xabarlarOqi(s.id, db)
     expect(xabarlar[0]?.text).toBe('Yarim javob')
-    expect(xabarlar[0]?.text).not.toContain("to'liq kelmadi")
+    expect(xabarlar[0]?.text).not.toContain('did not arrive in full')
   })
 
   test("to'xtatilganda chat.error emas, chat.done keladi", async () => {
@@ -306,7 +306,7 @@ describe("javobOqizi — foydalanuvchi to'xtatgani", () => {
 
     await javobOqizi(s.id, 'stop-4', tanlov)
 
-    expect(xabarlarOqi(s.id, db)[0]?.text).toContain("to'liq kelmadi")
+    expect(xabarlarOqi(s.id, db)[0]?.text).toContain('did not arrive in full')
     expect(chatEventlari().map((e) => e.type)).toContain('chat.error')
   })
 })
@@ -366,7 +366,7 @@ describe('tool oqimi', () => {
   test('ruxsat berilmagani alohida holat sifatida belgilanadi', async () => {
     soxtaHodisalar = [
       { tur: 'tool_boshlandi', id: 't1', nom: 'bash', args: 'rm -rf x' },
-      { tur: 'tool_tugadi', id: 't1', natija: 'Ruxsat berilmadi: `rm`', xatomi: true },
+      { tur: 'tool_tugadi', id: 't1', natija: 'Permission denied: `rm`', xatomi: true },
       { tur: 'tugadi', matn: '', sarflov: { input: 0, output: 0, cost: 0 } },
     ]
 

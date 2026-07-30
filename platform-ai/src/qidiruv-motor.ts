@@ -53,7 +53,7 @@ import { join } from 'node:path'
 /** Chegaradan tashqaridagi yo'l uchun tashlanadigan xato */
 export class ChegaraXatosi extends Error {
   constructor(yol: string, sabab: string) {
-    super(`Ruxsat berilmadi: ${yol} — ${sabab}`)
+    super(`Permission denied: ${yol} — ${sabab}`)
     this.name = 'ChegaraXatosi'
   }
 }
@@ -61,7 +61,7 @@ export class ChegaraXatosi extends Error {
 /** Naqsh noto'g'ri bo'lsa tashlanadigan xato */
 export class NaqshXatosi extends Error {
   constructor(naqsh: string, sabab: string) {
-    super(`Noto'g'ri naqsh \`${naqsh}\`: ${sabab}`)
+    super(`Invalid pattern \`${naqsh}\`: ${sabab}`)
     this.name = 'NaqshXatosi'
   }
 }
@@ -112,7 +112,7 @@ export interface LsSozlamalari {
  */
 function naqshniTekshir(pattern: string, caseInsensitive: boolean): RegExp {
   if (pattern.length === 0) {
-    throw new NaqshXatosi(pattern, "bo'sh naqsh")
+    throw new NaqshXatosi(pattern, 'the pattern is empty')
   }
   try {
     return new RegExp(pattern, caseInsensitive ? 'i' : '')
@@ -127,7 +127,7 @@ async function chegaraYokiXato(ishPapkasi: string, yol: string | undefined): Pro
   if (!natija.ok) {
     // Xato xabarida NISBIY yo'l ishlatiladi — absolut yo'l chiqib qolsa
     // fayl tizimi tuzilishi oshkor bo'lardi
-    throw new ChegaraXatosi(yol ?? '.', natija.sabab ?? 'chegaradan tashqarida')
+    throw new ChegaraXatosi(yol ?? '.', natija.sabab ?? 'outside the allowed boundary')
   }
   return natija.absolut
 }
@@ -204,7 +204,7 @@ export async function grepRg(sozlama: GrepSozlamalari): Promise<QidiruvNatijasi<
     return { elementlar: [], kesildi: false, backend: 'rg' }
   }
   if (natija.kod !== 0 && natija.kod !== 1 && !natija.toxtatildi) {
-    throw new Error(`rg xatosi (${natija.kod}): ${natija.stderr.trim().slice(0, 300)}`)
+    throw new Error(`rg error (${natija.kod}): ${natija.stderr.trim().slice(0, 300)}`)
   }
 
   const mosliklar: GrepMosligi[] = []
@@ -362,7 +362,7 @@ export async function findRg(sozlama: FindSozlamalari): Promise<QidiruvNatijasi<
   })
 
   if (natija.kod !== 0 && natija.kod !== 1 && !natija.toxtatildi) {
-    throw new Error(`rg xatosi (${natija.kod}): ${natija.stderr.trim().slice(0, 300)}`)
+    throw new Error(`rg error (${natija.kod}): ${natija.stderr.trim().slice(0, 300)}`)
   }
 
   const yollar: string[] = []
@@ -436,9 +436,9 @@ export async function lsRoyxat(sozlama: LsSozlamalari): Promise<QidiruvNatijasi<
     xom = await readdir(absolut, { withFileTypes: true })
   } catch (xato) {
     const kod = (xato as NodeJS.ErrnoException).code
-    if (kod === 'ENOTDIR') throw new Error(`Papka emas: ${nisbiyYol(sozlama.ishPapkasi, absolut)}`)
-    if (kod === 'ENOENT') throw new Error(`Topilmadi: ${nisbiyYol(sozlama.ishPapkasi, absolut)}`)
-    throw new Error(`O'qib bo'lmadi: ${nisbiyYol(sozlama.ishPapkasi, absolut)}`)
+    if (kod === 'ENOTDIR') throw new Error(`Not a directory: ${nisbiyYol(sozlama.ishPapkasi, absolut)}`)
+    if (kod === 'ENOENT') throw new Error(`Not found: ${nisbiyYol(sozlama.ishPapkasi, absolut)}`)
+    throw new Error(`Could not read: ${nisbiyYol(sozlama.ishPapkasi, absolut)}`)
   }
 
   const elementlar: PapkaElementi[] = []

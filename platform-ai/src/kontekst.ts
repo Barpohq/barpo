@@ -161,7 +161,7 @@ export function toolNatijalariniQisqart(
       const qolgan = b.text.length - chegara
       return {
         ...b,
-        text: `${b.text.slice(0, chegara)}\n… (${qolgan} belgi tarixdan qisqartirildi — kerak bo'lsa qayta o'qing)`,
+        text: `${b.text.slice(0, chegara)}\n… (${qolgan} characters truncated from history — read it again if you need it)`,
       }
     })
 

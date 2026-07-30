@@ -102,7 +102,7 @@ function kiritishgaOra(fayllar: File[]): KiritishBiriktirmasi[] {
   return fayllar.map((f) => ({
     mahalliyId: crypto.randomUUID(),
     // Clipboard'dan kelgan rasm nomsiz bo'lishi mumkin (Windows'da odatiy)
-    nom: f.name || 'rasm',
+    nom: f.name || 'image',
   }))
 }
 
@@ -110,10 +110,10 @@ function kiritishgaOra(fayllar: File[]): KiritishBiriktirmasi[] {
 const KIRITISH_MAX_BALANDLIK = 200
 
 const takliflar = [
-  'Salom! O\'zingni tanishtir',
-  'TypeScript va JavaScript farqi nima?',
-  'Menga qisqa she\'r yozib ber',
-  'Bugungi rejamni tuzishga yordam ber',
+  'Hi! Introduce yourself',
+  "What's the difference between TypeScript and JavaScript?",
+  'Write me a short poem',
+  'Help me plan my day',
 ]
 
 interface ChatProps {
@@ -388,13 +388,13 @@ export default function Chat({
 
         if (javob.models.length === 0) {
           setModelXato(
-            "Hech qanday AI provider topilmadi. API kalitini muhit o'zgaruvchisiga qo'ying yoki Ollama'ni ishga tushiring.",
+            'No AI provider found. Set an API key as an environment variable or start Ollama.',
           )
         }
       })
       .catch((xato: unknown) => {
         if (bekor) return
-        setModelXato(xato instanceof Error ? xato.message : 'Modellarni yuklab bo\'lmadi')
+        setModelXato(xato instanceof Error ? xato.message : 'Could not load the models')
       })
       .finally(() => {
         if (!bekor) setModelYuklanmoqda(false)
@@ -704,7 +704,7 @@ export default function Chat({
         // Sessiya hali yo'q bo'lsa — birinchi xabarda yaratamiz. Fayl
         // biriktirilgan bo'lsa u allaqachon yaratilgan (biriktirish uchun
         // sessiya shart) va bu chaqiruv darhol qaytadi.
-        const sid = await sessiyaniTaminla(text || (tayyorlar[0]?.nom ?? 'yangi suhbat'))
+        const sid = await sessiyaniTaminla(text || (tayyorlar[0]?.nom ?? 'new chat'))
 
         const javob = await xabarYubor(
           sid,
@@ -732,7 +732,7 @@ export default function Chat({
               : xato.message
             : xato instanceof Error
               ? xato.message
-              : "Noma'lum xato"
+              : 'Unknown error'
         // Optimistik user xabarini olib tashlaymiz: xabar serverga
         // YETMAGAN, ya'ni chatda turishi yolg'on bo'lardi (sahifa
         // yangilangach u baribir yo'qolardi). Matn maydonga qaytadi.
@@ -768,7 +768,7 @@ export default function Chat({
       // 400 olishdan ko'ra darhol bilsin.
       if (tanlangan && !tanlangan.vision && fayllar.some((f) => f.type.startsWith('image/'))) {
         toast(
-          `${tanlangan.name} rasmni ko'rmaydi — vision qo'llaydigan model tanlang`,
+          `${tanlangan.name} cannot see images — pick a model that supports vision`,
           'error',
         )
         return
@@ -779,12 +779,12 @@ export default function Chat({
 
       let sid: string
       try {
-        sid = await sessiyaniTaminla(fayllar[0]!.name || 'biriktirma')
+        sid = await sessiyaniTaminla(fayllar[0]!.name || 'attachment')
       } catch {
         setBiriktirmalar((b) =>
           b.map((x) =>
             yangilar.some((y) => y.mahalliyId === x.mahalliyId)
-              ? { ...x, xato: "sessiya yaratilmadi" }
+              ? { ...x, xato: 'could not create the session' }
               : x,
           ),
         )
@@ -810,7 +810,7 @@ export default function Chat({
             ? xato.detail
               ? `${xato.message} — ${xato.detail}`
               : xato.message
-            : 'yuklanmadi'
+            : 'upload failed'
         setBiriktirmalar((b) =>
           b.map((x) =>
             yangilar.some((y) => y.mahalliyId === x.mahalliyId) ? { ...x, xato: xabar } : x,
@@ -882,8 +882,8 @@ export default function Chat({
       // Kartani qaytaramiz, foydalanuvchi qayta urina olsin.
       toast(
         xato instanceof ApiXatosi
-          ? `Javob yuborilmadi: ${xato.message}`
-          : "Ruxsat javobi yuborilmadi",
+          ? `Could not send the answer: ${xato.message}`
+          : 'Could not send the permission answer',
         'error',
       )
       setRuxsatlar((r) => (r.some((s) => s.id === sorov.id) ? r : [...r, sorov]))
@@ -903,7 +903,9 @@ export default function Chat({
     } catch (xato) {
       setRejim(oldingi)
       toast(
-        xato instanceof ApiXatosi ? `Rejim o'zgarmadi: ${xato.message}` : "Rejim o'zgarmadi",
+        xato instanceof ApiXatosi
+          ? `Could not change the mode: ${xato.message}`
+          : 'Could not change the mode',
         'error',
       )
     }
@@ -1010,11 +1012,11 @@ export default function Chat({
         {empty && (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="font-display text-3xl font-semibold tracking-tight">
-              Nima quramiz<span className="text-lazur">?</span>
+              What are we building<span className="text-lazur">?</span>
             </div>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-muted">
-              Suhbatni boshlashdan oldin model tanlang. Model kompyuteringizdagi sozlangan
-              providerlardan olinadi — mahalliy Ollama ham, obuna orqali ishlaydiganlari ham.
+              Pick a model before starting the chat. Models come from the providers configured
+              on your machine — local Ollama as well as subscription-based ones.
             </p>
           </div>
         )}
@@ -1149,8 +1151,8 @@ export default function Chat({
               type="button"
               onClick={() => faylTanlagichRef.current?.click()}
               disabled={!tanlangan}
-              title="Fayl yoki rasm biriktirish (rasmni Ctrl+V bilan ham qo'yish mumkin)"
-              aria-label="Fayl biriktirish"
+              title="Attach a file or image (you can also paste an image with Ctrl+V)"
+              aria-label="Attach file"
               className="mb-1 shrink-0 text-base text-faint transition enabled:hover:text-lazur disabled:cursor-not-allowed disabled:opacity-40"
             >
               📎
@@ -1169,8 +1171,8 @@ export default function Chat({
                 }
               }}
               rows={1}
-              placeholder={tanlangan ? 'Xabaringizni yozing…' : 'Avval model tanlang…'}
-              aria-label="Xabar"
+              placeholder={tanlangan ? 'Type your message…' : 'Pick a model first…'}
+              aria-label="Message"
               disabled={!tanlangan}
               // `fokus-tashqarida`: halqani form o'rami chizadi (focus-within)
               className="thin-scroll fokus-tashqarida flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-relaxed outline-none placeholder:text-faint disabled:cursor-not-allowed"
@@ -1181,7 +1183,7 @@ export default function Chat({
                 onClick={() => void toxtat()}
                 className="mb-0.5 shrink-0 rounded-xl border border-line px-4 py-1.5 text-sm text-muted transition hover:border-coral hover:text-coral"
               >
-                To'xtatish
+                Stop
               </button>
             ) : (
               <button
@@ -1190,10 +1192,10 @@ export default function Chat({
                 // fayl bo'lsa esa to'siladi: aks holda foydalanuvchi "fayl
                 // biriktirdim" deb o'ylab, u yuborilmay qolardi.
                 disabled={!tanlangan || !yuborishMumkin}
-                title={yuklanmoqda ? 'Fayl yuklanmoqda…' : undefined}
+                title={yuklanmoqda ? 'File is uploading…' : undefined}
                 className="mb-0.5 shrink-0 rounded-xl bg-lazur-dim px-4 py-1.5 text-sm font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
               >
-                Yuborish
+                Send
               </button>
             )}
           </form>
@@ -1231,10 +1233,10 @@ export default function Chat({
             {qulflangan && (
               <button
                 onClick={yangiSuhbat}
-                title="Joriy suhbat fonda ishlashda davom etadi"
+                title="The current chat keeps running in the background"
                 className="shrink-0 font-mono text-[11px] text-faint transition hover:text-lazur"
               >
-                + yangi suhbat
+                + new chat
               </button>
             )}
           </div>

@@ -121,25 +121,25 @@ function statniTozala(q: unknown): StatItem | null {
  */
 export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget | null {
   if (!obyektmi(xom)) {
-    ogohlantirishlar.push('Vidjet obyekt emas — tashlandi')
+    ogohlantirishlar.push('Widget is not an object — dropped')
     return null
   }
 
   const tur = xom.type
   if (!satrmi(tur) || !(VIDJET_TURLARI as readonly string[]).includes(tur)) {
-    ogohlantirishlar.push(`Notanish vidjet turi: ${JSON.stringify(tur)} — tashlandi`)
+    ogohlantirishlar.push(`Unknown widget type: ${JSON.stringify(tur)} — dropped`)
     return null
   }
 
   switch (tur) {
     case 'stats': {
       if (!Array.isArray(xom.items)) {
-        ogohlantirishlar.push("'stats' vidjetida `items` massiv emas — tashlandi")
+        ogohlantirishlar.push("`items` in the 'stats' widget is not an array — dropped")
         return null
       }
       const items = xom.items.slice(0, QATOR_CHEGARASI).map(statniTozala).filter((s): s is StatItem => s !== null)
       if (items.length === 0) {
-        ogohlantirishlar.push("'stats' vidjetida yaroqli element yo'q — tashlandi")
+        ogohlantirishlar.push("the 'stats' widget has no valid items — dropped")
         return null
       }
       return { type: 'stats', items }
@@ -147,7 +147,7 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
 
     case 'bars': {
       if (!Array.isArray(xom.items)) {
-        ogohlantirishlar.push("'bars' vidjetida `items` massiv emas — tashlandi")
+        ogohlantirishlar.push("`items` in the 'bars' widget is not an array — dropped")
         return null
       }
       const items = xom.items
@@ -164,7 +164,7 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
         })
         .filter((i): i is { label: string; value: number; note?: string } => i !== null)
       if (items.length === 0) {
-        ogohlantirishlar.push("'bars' vidjetida yaroqli element yo'q — tashlandi")
+        ogohlantirishlar.push("the 'bars' widget has no valid items — dropped")
         return null
       }
       return {
@@ -177,12 +177,12 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
 
     case 'table': {
       if (!Array.isArray(xom.columns) || !Array.isArray(xom.rows)) {
-        ogohlantirishlar.push("'table' vidjetida `columns`/`rows` massiv emas — tashlandi")
+        ogohlantirishlar.push("`columns`/`rows` in the 'table' widget is not an array — dropped")
         return null
       }
       const columns = xom.columns.map(matnga)
       if (columns.length === 0) {
-        ogohlantirishlar.push("'table' vidjetida ustun yo'q — tashlandi")
+        ogohlantirishlar.push("the 'table' widget has no columns — dropped")
         return null
       }
       // Qatorlar ustunlar soniga MAJBURAN moslashtiriladi: kam bo'lsa bo'sh
@@ -197,7 +197,7 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
 
     case 'logs': {
       if (!Array.isArray(xom.lines)) {
-        ogohlantirishlar.push("'logs' vidjetida `lines` massiv emas — tashlandi")
+        ogohlantirishlar.push("`lines` in the 'logs' widget is not an array — dropped")
         return null
       }
       return {
@@ -210,7 +210,7 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
     case 'note': {
       const text = matnga(xom.text)
       if (!text) {
-        ogohlantirishlar.push("'note' vidjetida matn yo'q — tashlandi")
+        ogohlantirishlar.push("the 'note' widget has no text — dropped")
         return null
       }
       return { type: 'note', text }
@@ -219,13 +219,13 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
     case 'deploy': {
       const url = matnga(xom.url)
       if (!url) {
-        ogohlantirishlar.push("'deploy' vidjetida `url` yo'q — tashlandi")
+        ogohlantirishlar.push("the 'deploy' widget has no `url` — dropped")
         return null
       }
       // `AppView` buni `<a href>` ga qo'yadi. `javascript:` sxemasi shu
       // yerda kesiladi — aks holda manifest orqali XSS bo'lardi.
       if (!/^https?:\/\//i.test(url)) {
-        ogohlantirishlar.push("'deploy' vidjetida `url` http(s) emas — tashlandi")
+        ogohlantirishlar.push("`url` in the 'deploy' widget is not http(s) — dropped")
         return null
       }
       return {
@@ -240,7 +240,7 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
 
     case 'git': {
       if (!Array.isArray(xom.commits)) {
-        ogohlantirishlar.push("'git' vidjetida `commits` massiv emas — tashlandi")
+        ogohlantirishlar.push("`commits` in the 'git' widget is not an array — dropped")
         return null
       }
       const commits = xom.commits
@@ -274,7 +274,7 @@ export function vidjetniTozala(xom: unknown, ogohlantirishlar: string[]): Widget
 export function dataniTekshir(xom: unknown, xatolar: string[]): Record<string, unknown> | null {
   if (xom === undefined || xom === null) return null
   if (!obyektmi(xom)) {
-    xatolar.push('`data` obyekt bo\'lishi kerak (massiv yoki skalar emas)')
+    xatolar.push('`data` must be an object (not an array or a scalar)')
     return null
   }
 
@@ -282,14 +282,14 @@ export function dataniTekshir(xom: unknown, xatolar: string[]): Record<string, u
   try {
     json = JSON.stringify(xom)
   } catch {
-    xatolar.push('`data` JSON\'ga aylanmaydi — siklik havola yoki BigInt bormi?')
+    xatolar.push('`data` is not JSON-serialisable — is there a circular reference or a BigInt?')
     return null
   }
 
   if (json.length > DATA_CHEGARASI) {
     xatolar.push(
-      `\`data\` juda katta: ${json.length} belgi, chegara ${DATA_CHEGARASI}. ` +
-        'Dashboard xulosa ko\'rsatishi kerak, to\'liq arxivni emas.',
+      `\`data\` is too large: ${json.length} characters, limit ${DATA_CHEGARASI}. ` +
+        'A dashboard should show a summary, not a full archive.',
     )
     return null
   }
@@ -326,13 +326,13 @@ export function statelarniTekshir(
 ): AppState[] | null {
   if (xom === undefined || xom === null) return null
   if (!Array.isArray(xom)) {
-    ogohlantirishlar.push('`states` massiv emas — e\'tiborsiz qoldirildi')
+    ogohlantirishlar.push('`states` is not an array — ignored')
     return null
   }
 
   if (xom.length > STATE_SONI_CHEGARASI) {
     ogohlantirishlar.push(
-      `${xom.length} ta state berildi, birinchi ${STATE_SONI_CHEGARASI} tasi olindi`,
+      `${xom.length} states were given, the first ${STATE_SONI_CHEGARASI} were kept`,
     )
   }
 
@@ -341,15 +341,15 @@ export function statelarniTekshir(
 
   for (const el of xom.slice(0, STATE_SONI_CHEGARASI)) {
     if (!obyektmi(el)) {
-      ogohlantirishlar.push('State obyekt emas — tashlandi')
+      ogohlantirishlar.push('State is not an object — dropped')
       continue
     }
 
     const nom = matnga(el.nom).trim()
     if (!STATE_NOMI_NAQSHI.test(nom)) {
       ogohlantirishlar.push(
-        `State nomi yaroqsiz: ${JSON.stringify(el.nom)} — kichik harf bilan boshlanib, ` +
-          '`a-z0-9_` dan iborat bo\'lishi kerak (u URL yo\'liga tushadi)',
+        `Invalid state name: ${JSON.stringify(el.nom)} — it must start with a lowercase ` +
+          'letter and contain only `a-z0-9_` (it becomes part of a URL path)',
       )
       continue
     }
@@ -357,19 +357,19 @@ export function statelarniTekshir(
     // Nom TAKRORLANSA manifest rad etiladi: `data[nom]` bitta joy, ya'ni
     // qaysi kod natijasi qolishi tasodifga bog'liq bo'lardi.
     if (korilganNomlar.has(nom)) {
-      xatolar.push(`State nomi takrorlangan: "${nom}"`)
+      xatolar.push(`Duplicate state name: "${nom}"`)
       continue
     }
     korilganNomlar.add(nom)
 
     const kod = el.kod
     if (!satrmi(kod) || kod.trim().length === 0) {
-      ogohlantirishlar.push(`State "${nom}": kod bo'sh — tashlandi`)
+      ogohlantirishlar.push(`State "${nom}": the code is empty — dropped`)
       continue
     }
     if (kod.length > STATE_KOD_CHEGARASI) {
       ogohlantirishlar.push(
-        `State "${nom}": kod juda uzun (${kod.length} belgi) — tashlandi`,
+        `State "${nom}": the code is too long (${kod.length} characters) — dropped`,
       )
       continue
     }
@@ -389,17 +389,17 @@ export function statelarniTekshir(
 export function viewniTekshir(xom: unknown, xatolar: string[]): AppView | null {
   if (xom === undefined || xom === null) return null
   if (!obyektmi(xom)) {
-    xatolar.push('`view` obyekt bo\'lishi kerak')
+    xatolar.push('`view` must be an object')
     return null
   }
 
   const kod = xom.kod
   if (!satrmi(kod) || kod.trim().length === 0) {
-    xatolar.push('`view.kod` bo\'sh bo\'lmagan satr bo\'lishi kerak')
+    xatolar.push('`view.kod` must be a non-empty string')
     return null
   }
   if (kod.length > KOD_CHEGARASI) {
-    xatolar.push(`\`view.kod\` juda uzun: ${kod.length} belgi, chegara ${KOD_CHEGARASI}`)
+    xatolar.push(`\`view.kod\` is too long: ${kod.length} characters, limit ${KOD_CHEGARASI}`)
     return null
   }
 
@@ -450,14 +450,14 @@ function naqshniTekshir(xom: unknown, ogohlantirishlar: string[], kalit: string)
   if (!satrmi(xom) || xom.trim().length === 0) return null
 
   if (xom.length > 500) {
-    ogohlantirishlar.push(`Sozlama "${kalit}": \`naqsh\` juda uzun — tashlandi`)
+    ogohlantirishlar.push(`Setting "${kalit}": \`naqsh\` is too long — dropped`)
     return null
   }
 
   try {
     new RegExp(xom)
   } catch {
-    ogohlantirishlar.push(`Sozlama "${kalit}": \`naqsh\` yaroqsiz regex — tashlandi`)
+    ogohlantirishlar.push(`Setting "${kalit}": \`naqsh\` is not a valid regex — dropped`)
     return null
   }
 
@@ -477,13 +477,13 @@ export function sozlamaMaydonlariniTekshir(
   ogohlantirishlar: string[],
 ): SozlamaMaydoni[] | null {
   if (!Array.isArray(xom)) {
-    xatolar.push('`sozlamalar.maydonlar` massiv bo\'lishi kerak')
+    xatolar.push('`sozlamalar.maydonlar` must be an array')
     return null
   }
 
   if (xom.length > SOZLAMA_SONI_CHEGARASI) {
     ogohlantirishlar.push(
-      `${xom.length} ta sozlama berildi, birinchi ${SOZLAMA_SONI_CHEGARASI} tasi olindi`,
+      `${xom.length} settings were given, the first ${SOZLAMA_SONI_CHEGARASI} were kept`,
     )
   }
 
@@ -492,21 +492,21 @@ export function sozlamaMaydonlariniTekshir(
 
   for (const el of xom.slice(0, SOZLAMA_SONI_CHEGARASI)) {
     if (!obyektmi(el)) {
-      ogohlantirishlar.push('Sozlama maydoni obyekt emas — tashlandi')
+      ogohlantirishlar.push('Setting field is not an object — dropped')
       continue
     }
 
     const kalit = matnga(el.kalit).trim()
     if (!SOZLAMA_KALITI_NAQSHI.test(kalit)) {
       ogohlantirishlar.push(
-        `Sozlama kaliti yaroqsiz: ${JSON.stringify(el.kalit)} — kichik harf bilan ` +
-          'boshlanib, `a-z0-9_` dan iborat bo\'lishi kerak (u konfiguratsiya kaliti bo\'ladi)',
+        `Invalid setting key: ${JSON.stringify(el.kalit)} — it must start with a ` +
+          'lowercase letter and contain only `a-z0-9_` (it becomes a configuration key)',
       )
       continue
     }
 
     if (korilganKalitlar.has(kalit)) {
-      xatolar.push(`Sozlama kaliti takrorlangan: "${kalit}"`)
+      xatolar.push(`Duplicate setting key: "${kalit}"`)
       continue
     }
     korilganKalitlar.add(kalit)
@@ -516,7 +516,7 @@ export function sozlamaMaydonlariniTekshir(
       : 'matn'
     if (el.turi !== undefined && turi !== el.turi) {
       ogohlantirishlar.push(
-        `Sozlama "${kalit}": turi ${JSON.stringify(el.turi)} tanilmadi — \`matn\` deb olindi`,
+        `Setting "${kalit}": type ${JSON.stringify(el.turi)} was not recognised — treated as \`matn\``,
       )
     }
 
@@ -533,7 +533,7 @@ export function sozlamaMaydonlariniTekshir(
         : []
       if (xomVariantlar.length === 0) {
         ogohlantirishlar.push(
-          `Sozlama "${kalit}": \`tanlov\` uchun variant berilmagan — \`matn\` deb olindi`,
+          `Setting "${kalit}": no options given for \`tanlov\` — treated as \`matn\``,
         )
       } else {
         variantlar = xomVariantlar.slice(0, VARIANT_CHEGARASI)
@@ -547,7 +547,7 @@ export function sozlamaMaydonlariniTekshir(
     const standart = satrmi(el.standart) && turi !== 'sir' ? el.standart : undefined
     if (satrmi(el.standart) && turi === 'sir') {
       ogohlantirishlar.push(
-        `Sozlama "${kalit}": \`sir\` maydonda \`standart\` bo'lmaydi — tashlandi`,
+        `Setting "${kalit}": a \`sir\` field cannot have a \`standart\` — dropped`,
       )
     }
 
@@ -583,7 +583,7 @@ export function sozlamalarniTekshir(
 ): AppSozlamalari | null {
   if (xom === undefined || xom === null) return null
   if (!obyektmi(xom)) {
-    xatolar.push('`sozlamalar` obyekt bo\'lishi kerak')
+    xatolar.push('`sozlamalar` must be an object')
     return null
   }
 
@@ -591,7 +591,7 @@ export function sozlamalarniTekshir(
   if (!maydonlar) {
     // Xato allaqachon yozilgan (massiv emas) yoki hammasi tashlangan.
     if (Array.isArray(xom.maydonlar)) {
-      xatolar.push('`sozlamalar.maydonlar` ichida yaroqli maydon qolmadi')
+      xatolar.push('no valid field is left in `sozlamalar.maydonlar`')
     }
     return null
   }
@@ -599,14 +599,14 @@ export function sozlamalarniTekshir(
   const yoz = xom.yoz
   if (!satrmi(yoz) || yoz.trim().length === 0) {
     xatolar.push(
-      '`sozlamalar.yoz` majburiy: qiymatlarni serverga yozadigan kod bo\'lmasa ' +
-        'forma foydalanuvchini aldaydi (kiritadi, lekin hech narsa bo\'lmaydi)',
+      '`sozlamalar.yoz` is required: without code that writes the values to the server ' +
+        'the form misleads the user (they type something, but nothing happens)',
     )
     return null
   }
   if (yoz.length > STATE_KOD_CHEGARASI) {
     xatolar.push(
-      `\`sozlamalar.yoz\` juda uzun: ${yoz.length} belgi, chegara ${STATE_KOD_CHEGARASI}`,
+      `\`sozlamalar.yoz\` is too long: ${yoz.length} characters, limit ${STATE_KOD_CHEGARASI}`,
     )
     return null
   }
@@ -616,9 +616,9 @@ export function sozlamalarniTekshir(
   let oqi: string | undefined
   if (xom.oqi !== undefined && xom.oqi !== null) {
     if (!satrmi(xom.oqi) || xom.oqi.trim().length === 0) {
-      ogohlantirishlar.push('`sozlamalar.oqi` satr emas — tashlandi')
+      ogohlantirishlar.push('`sozlamalar.oqi` is not a string — dropped')
     } else if (xom.oqi.length > STATE_KOD_CHEGARASI) {
-      ogohlantirishlar.push('`sozlamalar.oqi` juda uzun — tashlandi')
+      ogohlantirishlar.push('`sozlamalar.oqi` is too long — dropped')
     } else {
       oqi = xom.oqi
     }
@@ -640,13 +640,13 @@ export function amallarniTekshir(
 ): AppAmali[] | null {
   if (xom === undefined || xom === null) return null
   if (!Array.isArray(xom)) {
-    ogohlantirishlar.push('`amallar` massiv emas — e\'tiborsiz qoldirildi')
+    ogohlantirishlar.push('`amallar` is not an array — ignored')
     return null
   }
 
   if (xom.length > AMAL_SONI_CHEGARASI) {
     ogohlantirishlar.push(
-      `${xom.length} ta amal berildi, birinchi ${AMAL_SONI_CHEGARASI} tasi olindi`,
+      `${xom.length} actions were given, the first ${AMAL_SONI_CHEGARASI} were kept`,
     )
   }
 
@@ -655,32 +655,32 @@ export function amallarniTekshir(
 
   for (const el of xom.slice(0, AMAL_SONI_CHEGARASI)) {
     if (!obyektmi(el)) {
-      ogohlantirishlar.push('Amal obyekt emas — tashlandi')
+      ogohlantirishlar.push('Action is not an object — dropped')
       continue
     }
 
     const nom = matnga(el.nom).trim()
     if (!AMAL_NOMI_NAQSHI.test(nom)) {
       ogohlantirishlar.push(
-        `Amal nomi yaroqsiz: ${JSON.stringify(el.nom)} — kichik harf bilan boshlanib, ` +
-          '`a-z0-9_` dan iborat bo\'lishi kerak (u URL yo\'liga tushadi)',
+        `Invalid action name: ${JSON.stringify(el.nom)} — it must start with a lowercase ` +
+          'letter and contain only `a-z0-9_` (it becomes part of a URL path)',
       )
       continue
     }
 
     if (korilganNomlar.has(nom)) {
-      xatolar.push(`Amal nomi takrorlangan: "${nom}"`)
+      xatolar.push(`Duplicate action name: "${nom}"`)
       continue
     }
     korilganNomlar.add(nom)
 
     const kod = el.kod
     if (!satrmi(kod) || kod.trim().length === 0) {
-      ogohlantirishlar.push(`Amal "${nom}": kod bo'sh — tashlandi`)
+      ogohlantirishlar.push(`Action "${nom}": the code is empty — dropped`)
       continue
     }
     if (kod.length > STATE_KOD_CHEGARASI) {
-      ogohlantirishlar.push(`Amal "${nom}": kod juda uzun (${kod.length} belgi) — tashlandi`)
+      ogohlantirishlar.push(`Action "${nom}": the code is too long (${kod.length} characters) — dropped`)
       continue
     }
 
@@ -733,21 +733,21 @@ export function manifestniTekshir(xom: unknown): TekshiruvNatijasi<AppManifest> 
   const ogohlantirishlar: string[] = []
 
   if (!obyektmi(xom)) {
-    return { ok: false, qiymat: null, xatolar: ['Manifest obyekt emas'], ogohlantirishlar }
+    return { ok: false, qiymat: null, xatolar: ['The manifest is not an object'], ogohlantirishlar }
   }
 
   const id = matnga(xom.id).trim()
   if (!id) {
-    xatolar.push('`id` majburiy')
+    xatolar.push('`id` is required')
   } else if (!ID_NAQSHI.test(id)) {
     xatolar.push(
-      '`id` faqat kichik harf, raqam va `-` dan iborat bo\'lishi kerak ' +
-        '(harf yoki raqam bilan boshlanadi, eng ko\'pi 64 belgi)',
+      '`id` may contain only lowercase letters, digits and `-` ' +
+        '(starting with a letter or digit, at most 64 characters)',
     )
   }
 
   const name = matnga(xom.name).trim()
-  if (!name) xatolar.push('`name` majburiy')
+  if (!name) xatolar.push('`name` is required')
 
   // Vidjetlar: massiv bo'lmasa BO'SH deb qaraladi, rad etilmaydi —
   // `view` bo'lsa dashboard vidjetsiz ham to'liq ishlaydi.
@@ -756,7 +756,7 @@ export function manifestniTekshir(xom: unknown): TekshiruvNatijasi<AppManifest> 
     const xomlar = xom.widgets
     if (xomlar.length > VIDJET_CHEGARASI) {
       ogohlantirishlar.push(
-        `Vidjetlar soni ${xomlar.length} — birinchi ${VIDJET_CHEGARASI} tasi olindi`,
+        `${xomlar.length} widgets — the first ${VIDJET_CHEGARASI} were kept`,
       )
     }
     widgets = xomlar
@@ -764,7 +764,7 @@ export function manifestniTekshir(xom: unknown): TekshiruvNatijasi<AppManifest> 
       .map((w) => vidjetniTozala(w, ogohlantirishlar))
       .filter((w): w is Widget => w !== null)
   } else if (xom.widgets !== undefined) {
-    ogohlantirishlar.push('`widgets` massiv emas — bo\'sh deb qabul qilindi')
+    ogohlantirishlar.push('`widgets` is not an array — treated as empty')
   }
 
   const data = dataniTekshir(xom.data, xatolar)
@@ -782,8 +782,8 @@ export function manifestniTekshir(xom: unknown): TekshiruvNatijasi<AppManifest> 
   // majburlash ortiqcha qattiqlik bo'lardi.
   if (widgets.length === 0 && !view && !sozlamalar && !amallar) {
     xatolar.push(
-      'Manifestda ko\'rsatadigan narsa yo\'q: `widgets`, `view`, `sozlamalar` va ' +
-        '`amallar` — hammasi bo\'sh',
+      'The manifest has nothing to display: `widgets`, `view`, `sozlamalar` and ' +
+        '`amallar` are all empty',
     )
   }
 
@@ -795,7 +795,7 @@ export function manifestniTekshir(xom: unknown): TekshiruvNatijasi<AppManifest> 
       const yoq = (amal.yangila ?? []).filter((n) => !stateNomlari.has(n))
       if (yoq.length > 0) {
         ogohlantirishlar.push(
-          `Amal "${amal.nom}": \`yangila\` da mavjud bo'lmagan state bor: ${yoq.join(', ')}`,
+          `Action "${amal.nom}": \`yangila\` refers to states that do not exist: ${yoq.join(', ')}`,
         )
         amal.yangila = (amal.yangila ?? []).filter((n) => stateNomlari.has(n))
         if (amal.yangila.length === 0) delete amal.yangila

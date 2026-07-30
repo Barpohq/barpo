@@ -172,14 +172,14 @@ export type SshFabrikasi = (serverNomi: string) => IlovaSshApi
 function sshFabrikasiniYarat(): SshFabrikasi {
   return (serverNomi: string) => {
     if (typeof serverNomi !== 'string' || serverNomi.trim().length === 0) {
-      throw new TypeError("ssh() server nomini kutadi — masalan ssh('helsinki-1')")
+      throw new TypeError("ssh() expects a server name — for example ssh('helsinki-1')")
     }
 
     const server = serverNomBoyicha(serverNomi.trim())
     if (!server) {
       throw new Error(
-        `Server topilmadi: "${serverNomi}". Platformaga ulangan serverlar ` +
-          'ro\'yxatidan nom ishlatilishi kerak.',
+        `Server not found: "${serverNomi}". Use a name from the list of servers ` +
+          'connected to the platform.',
       )
     }
 
@@ -225,7 +225,7 @@ async function kodniBajar(
           : null
 
     if (typeof funksiya !== 'function') {
-      return { ok: false, xato: 'Kod `module.exports = async function () { ... }` bermadi' }
+      return { ok: false, xato: 'The code did not return `module.exports = async function () { ... }`' }
     }
 
     const arg = {
@@ -239,7 +239,7 @@ async function kodniBajar(
       Promise.resolve((funksiya as (a: unknown) => unknown)(arg)),
       new Promise<never>((_, rad) =>
         setTimeout(
-          () => rad(new Error(`Vaqt tugadi (${AMAL_TIMEOUT_MS / 1000}s)`)),
+          () => rad(new Error(`Timed out (${AMAL_TIMEOUT_MS / 1000}s)`)),
           AMAL_TIMEOUT_MS,
         ),
       ),
@@ -299,7 +299,7 @@ export function amalniBajar(
     const natija = await kodniBajar(amal.kod, kontekst, sirlar)
 
     if (!natija.ok) {
-      return { ok: false, xato: natija.xato ?? 'Nomalum xato', vaqt }
+      return { ok: false, xato: natija.xato ?? 'Unknown error', vaqt }
     }
 
     return {
@@ -359,7 +359,7 @@ export async function sozlamalarniYoz(
   const natija = await kodniBajar(sozlamalar.yoz, kontekst, sirlar, { qiymatlar })
 
   if (!natija.ok) {
-    return { ok: false, xato: natija.xato ?? 'Nomalum xato', vaqt }
+    return { ok: false, xato: natija.xato ?? 'Unknown error', vaqt }
   }
 
   return {
@@ -414,11 +414,11 @@ export async function sozlamalarniOqi(
 
   const natija = await kodniBajar(sozlamalar.oqi, kontekst, [])
   if (!natija.ok) {
-    return { ok: false, qiymatlar: {}, xato: natija.xato ?? 'Nomalum xato' }
+    return { ok: false, qiymatlar: {}, xato: natija.xato ?? 'Unknown error' }
   }
 
   if (!natija.qiymat || typeof natija.qiymat !== 'object' || Array.isArray(natija.qiymat)) {
-    return { ok: false, qiymatlar: {}, xato: '`oqi` kodi obyekt qaytarmadi' }
+    return { ok: false, qiymatlar: {}, xato: 'The `oqi` code did not return an object' }
   }
 
   const sirKalitlari = new Set(

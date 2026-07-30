@@ -164,7 +164,7 @@ function ToastQatlami({
           <button
             key={t.id}
             onClick={() => onOchir(t.id)}
-            title="Yopish uchun bosing"
+            title="Click to dismiss"
             // `origin-bottom`: scale pastdan o'sadi — toast qatordagi
             // o'z joyidan ko'tarilayotgandek ko'rinadi
             className={`${t.chiqmoqda ? 'toast-chiqish' : 'toast-kirish'} pointer-events-auto flex w-full origin-bottom items-start gap-2.5 rounded-xl border ${u.chegara} bg-panel2/95 px-4 py-2.5 text-left text-sm ${u.matn} shadow-2xl backdrop-blur-sm transition-[filter,border-color] duration-200 hover:brightness-115`}

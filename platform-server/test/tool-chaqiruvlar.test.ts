@@ -173,7 +173,7 @@ describe('tool chaqiruvlari bazaga yoziladi', () => {
         tur: 'ruxsat_qarori',
         qaror: { manba: 'taqiqlangan', berildi: false, naqsh: 'rm', vaqt: new Date().toISOString() },
       },
-      { tur: 'tool_tugadi', id: 't1', natija: 'Ruxsat berilmadi: taqiq', xatomi: true },
+      { tur: 'tool_tugadi', id: 't1', natija: 'Permission denied: taqiq', xatomi: true },
       { tur: 'tugadi', matn: 'bajarmadim', sarflov: { input: 1, output: 1, cost: 0 } },
     ]
 
@@ -314,7 +314,7 @@ describe('tool chaqiruvlari bazaga yoziladi', () => {
     const tiklangan = xabarlar.find((x) => x.id === 'yozilmagan-xabar')
     expect(tiklangan).toBeDefined()
     expect(tiklangan?.role).toBe('assistant')
-    expect(tiklangan?.text).toContain('uzilgan')
+    expect(tiklangan?.text).toContain('interrupted')
     expect(tiklangan?.toolCards?.[0]?.args).toBe('ssh server-107 systemctl restart nginx')
     expect(tiklangan?.toolCards?.[0]?.ruxsat?.manba).toBe('foydalanuvchi')
     // Yarim qolgan kontekst keyingi turn'ni yiqitmasligi kerak

@@ -114,7 +114,7 @@ export async function ollamaProvider(): Promise<Provider<'openai-completions'> |
     // serverlar (vLLM, LM Studio) uchun ham standart amaliyot.
     auth: {
       apiKey: {
-        name: 'Ollama (mahalliy, kalit kerak emas)',
+        name: 'Ollama (local, no key needed)',
         resolve: async () => ({ auth: { apiKey: 'ollama' }, source: OLLAMA_MANBA }),
       },
     },

@@ -100,14 +100,14 @@ async function soraw(url: string): Promise<Response> {
       const vaqt = tiklanish
         ? new Date(Number(tiklanish) * 1000).toLocaleTimeString('uz-UZ')
         : "bir ozdan so'ng"
-      throw new Error(`GitHub so'rov chegarasi tugadi. ${vaqt} da qayta urinib ko'ring.`)
+      throw new Error(`GitHub rate limit reached. Try again at ${vaqt}.`)
     }
   }
   if (javob.status === 404) {
-    throw new Error('Repo topilmadi. Manzilni tekshiring (private repo qo\'llab-quvvatlanmaydi).')
+    throw new Error('Repository not found. Check the URL (private repositories are not supported).')
   }
 
-  throw new Error(`GitHub xatosi: ${javob.status} ${javob.statusText}`)
+  throw new Error(`GitHub error: ${javob.status} ${javob.statusText}`)
 }
 
 /** Repo'ning standart branch'i va oxirgi commit SHA'si */
@@ -204,17 +204,17 @@ export async function tarballniOl(m: GithubManzil, ref: string): Promise<Uint8Ar
   )
 
   if (!javob.ok) {
-    throw new Error(`Arxivni yuklab bo'lmadi: ${javob.status} ${javob.statusText}`)
+    throw new Error(`Could not download the archive: ${javob.status} ${javob.statusText}`)
   }
 
   const uzunlik = javob.headers.get('content-length')
   if (uzunlik && Number(uzunlik) > MAKS_TARBALL_BAYT) {
-    throw new Error(`Repo juda katta (${Math.round(Number(uzunlik) / 1024 / 1024)}MB)`)
+    throw new Error(`Repository too large (${Math.round(Number(uzunlik) / 1024 / 1024)}MB)`)
   }
 
   const siqilgan = new Uint8Array(await javob.arrayBuffer())
   if (siqilgan.length > MAKS_TARBALL_BAYT) {
-    throw new Error('Repo juda katta')
+    throw new Error('Repository too large')
   }
 
   return Bun.gunzipSync(siqilgan)

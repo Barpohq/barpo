@@ -20,10 +20,10 @@ export default function OqimIndikatori({ holat, matnBilan = false }: Props) {
           background: 'color-mix(in oklab, var(--color-gold) 18%, transparent)',
           color: 'var(--color-gold)',
         }}
-        title="Agent ruxsat kutmoqda"
+        title="Agent is waiting for permission"
       >
         <span className="pulse-dot inline-block size-1.5 rounded-full bg-gold" aria-hidden />
-        {matnBilan ? 'ruxsat kutmoqda' : 'ruxsat'}
+        {matnBilan ? 'awaiting permission' : 'permission'}
       </span>
     )
   }
@@ -31,14 +31,14 @@ export default function OqimIndikatori({ holat, matnBilan = false }: Props) {
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-muted"
-      title="Agent ishlamoqda"
+      title="Agent is running"
     >
       <span
         className="pulse-dot inline-block size-1.5 rounded-full"
         style={{ background: 'var(--color-mint)' }}
         aria-hidden
       />
-      {matnBilan && 'ishlayapti'}
+      {matnBilan && 'running'}
     </span>
   )
 }

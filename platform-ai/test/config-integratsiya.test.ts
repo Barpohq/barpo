@@ -45,7 +45,7 @@ describe('rejim chegaralari configdan keladi', () => {
     // Birinchi blokda o'chadi
     expect(b.blokBoldi()).toBe(true)
     expect(b.rejim).toBe('tasdiq')
-    expect(b.sabab).toContain('ketma-ket 1 marta')
+    expect(b.sabab).toContain('1 actions in a row')
   })
 
   test('jami chegara ham configdan', () => {
@@ -56,7 +56,7 @@ describe('rejim chegaralari configdan keladi', () => {
     // Ketma-ket hisoblagichni nolga qaytaramiz, jami qoladi
     b.ruxsatBerildi()
     expect(b.blokBoldi()).toBe(true)
-    expect(b.sabab).toContain('jami 2 marta')
+    expect(b.sabab).toContain('2 actions were blocked')
   })
 
   test('noto\'g\'ri chegara e\'tiborsiz qoldiriladi', () => {

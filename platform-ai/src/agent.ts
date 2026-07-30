@@ -214,7 +214,7 @@ export function oqimXatosi(xabarlar: readonly unknown[]): string | undefined {
       | undefined
     if (x?.role !== 'assistant') continue
     if (x.stopReason !== 'error') return undefined
-    return x.errorMessage?.trim() || 'provider javobni qaytara olmadi'
+    return x.errorMessage?.trim() || 'the provider could not return a response'
   }
   return undefined
 }
@@ -479,7 +479,7 @@ export async function* agentOqimi(
       if (!model) {
         qoy({
           tur: 'xato',
-          xabar: `Model topilmadi: ${tanlov.provider}/${tanlov.model}. Provider sozlanganini tekshiring.`,
+          xabar: `Model not found: ${tanlov.provider}/${tanlov.model}. Check that the provider is configured.`,
         })
         return
       }
@@ -525,7 +525,7 @@ export async function* agentOqimi(
       // --- Kontekstni tayyorlash: tool natijalari bilan, siqilgan holda ---
       const oxirgiUser = oxirgiUserIndeksi(xabarlar)
       if (oxirgiUser < 0) {
-        qoy({ tur: 'xato', xabar: "Yuboriladigan foydalanuvchi xabari topilmadi" })
+        qoy({ tur: 'xato', xabar: 'No user message found to send' })
         return
       }
       const prompt = biriktirmaEslatmasi(
@@ -735,7 +735,7 @@ export async function* agentOqimi(
       //      ("⚠︎ Javob to'liq kelmadi: So'rov bekor qilindi") endi saqlaydi —
       //      ya'ni yangi user xabaridan KEYIN.
       // Natijada tarix `... user, assistant` bo'lib qoladi va oldingi kod
-      // "Yuboriladigan foydalanuvchi xabari topilmadi" xatosi bilan
+      // 'No user message found to send' xatosi bilan
       // foydalanuvchining xabarini JIMGINA yo'qotardi. Shuning uchun oxirgi
       // USER xabari qidiriladi va undan keyingilari tarixda qoldiriladi.
 
@@ -999,7 +999,7 @@ function tafsilotniOl(natija: unknown): { diff?: string; qisqartirilgan?: boolea
 
 function qisqart(matn: string): string {
   if (matn.length <= NATIJA_CHEGARASI) return matn
-  return `${matn.slice(0, NATIJA_CHEGARASI)}\n… (${matn.length - NATIJA_CHEGARASI} belgi qisqartirildi)`
+  return `${matn.slice(0, NATIJA_CHEGARASI)}\n… (${matn.length - NATIJA_CHEGARASI} characters truncated)`
 }
 
 /** Agent tugagach oxirgi assistant matnini yig'adi */

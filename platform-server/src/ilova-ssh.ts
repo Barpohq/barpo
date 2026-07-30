@@ -215,16 +215,16 @@ export function ilovaSshYarat(serverNomi: string): IlovaSshApi {
   async function xomBajar(argv: string[], nom: string): Promise<BuyruqNatija> {
     if (!Array.isArray(argv)) {
       throw new TypeError(
-        `ssh.${nom}() argv MASSIVI kutadi, satr emas — masalan ` +
-          "['docker', 'restart', 'bot']. Shell satri ataylab qabul qilinmaydi.",
+        `ssh.${nom}() expects an ARRAY of argv, not a string — for example ` +
+          "['docker', 'restart', 'bot']. A shell string is deliberately not accepted.",
       )
     }
-    if (argv.length === 0) throw new TypeError(`ssh.${nom}(): argv bo'sh`)
+    if (argv.length === 0) throw new TypeError(`ssh.${nom}(): argv is empty`)
 
     const tozalangan = argv.map((a) => {
       if (typeof a === 'string') return a
       if (typeof a === 'number' || typeof a === 'boolean') return String(a)
-      throw new TypeError(`ssh.${nom}(): argument satr bo'lishi kerak, ${typeof a} keldi`)
+      throw new TypeError(`ssh.${nom}(): argument must be a string, got ${typeof a}`)
     })
 
     // Argumentlar SSH orqali uzoq shellga boradi, ya'ni bir marta
@@ -270,8 +270,8 @@ export function ilovaSshYarat(serverNomi: string): IlovaSshApi {
         // tekshiriladi.
         if (!ENV_KALITI_NAQSHI.test(kalit)) {
           throw new TypeError(
-            `ssh.envYoz(): "${kalit}" yaroqli env kaliti emas ` +
-              '(faqat harf, raqam va `_`, harf yoki `_` bilan boshlanadi)',
+            `ssh.envYoz(): "${kalit}" is not a valid env key ` +
+              '(letters, digits and `_` only, starting with a letter or `_`)',
           )
         }
       }
@@ -281,8 +281,8 @@ export function ilovaSshYarat(serverNomi: string): IlovaSshApi {
 
       if (yangi.length > ENV_HAJM_CHEGARASI) {
         throw new Error(
-          `Konfiguratsiya fayli juda katta bo'lib qoldi: ${yangi.length} belgi, ` +
-            `chegara ${ENV_HAJM_CHEGARASI}`,
+          `The configuration file has grown too large: ${yangi.length} characters, ` +
+            `limit ${ENV_HAJM_CHEGARASI}`,
         )
       }
 
@@ -315,7 +315,7 @@ export function ilovaSshYarat(serverNomi: string): IlovaSshApi {
         // Vaqtinchalik fayl qolib ketmasin
         await ssh([`rm -f ${vaqtinchalik}`]).catch(() => undefined)
         throw new Error(
-          n.stderr.trim().split('\n').pop() ?? `Faylni yozib bo'lmadi (chiqish kodi ${n.kod})`,
+          n.stderr.trim().split('\n').pop() ?? `Could not write the file (exit code ${n.kod})`,
         )
       }
     },

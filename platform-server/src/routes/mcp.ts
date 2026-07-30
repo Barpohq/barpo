@@ -90,14 +90,14 @@ mcpRoutes.get('/mcp/faol', (c) => {
 mcpRoutes.get('/mcp/registry/qidir', async (c) => {
   const soz = c.req.query('q')?.trim() ?? ''
   if (soz.length > MAKS_MATN) {
-    return c.json({ error: "Qidiruv so'zi juda uzun" }, 400)
+    return c.json({ error: 'Search term too long' }, 400)
   }
 
   let xomNatija: RegistryServerYozuvi[]
   try {
     xomNatija = await registryQidir(soz)
   } catch (xato) {
-    return c.json({ error: xato instanceof Error ? xato.message : 'Qidiruv muvaffaqiyatsiz' }, 502)
+    return c.json({ error: xato instanceof Error ? xato.message : 'Search failed' }, 502)
   }
 
   // Ishlatib bo'lmaydigan yozuvlarni ro'yxatga chiqarmaymiz — foydalanuvchi
@@ -132,11 +132,11 @@ mcpRoutes.post('/mcp/manba/registry', async (c) => {
     const tana = (await c.req.json()) as { nom?: unknown }
     nom = tana?.nom
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   if (typeof nom !== 'string' || !nom.trim() || nom.length > MAKS_MATN) {
-    return c.json({ error: 'Server nomi majburiy' }, 400)
+    return c.json({ error: 'Server name is required' }, 400)
   }
   const tozaNom = nom.trim()
 
@@ -144,17 +144,17 @@ mcpRoutes.post('/mcp/manba/registry', async (c) => {
   try {
     topilgan = await registryQidir(tozaNom, 20)
   } catch (xato) {
-    return c.json({ error: xato instanceof Error ? xato.message : 'Registry xatosi' }, 502)
+    return c.json({ error: xato instanceof Error ? xato.message : 'Registry error' }, 502)
   }
 
   const server = topilgan.find((s) => s.name === tozaNom)
   if (!server) {
-    return c.json({ error: `Registry'da topilmadi: ${tozaNom}` }, 404)
+    return c.json({ error: `Not found in the registry: ${tozaNom}` }, 404)
   }
 
   const yozuv = registryYozuvniAylantir(server)
   if (!yozuv) {
-    return c.json({ error: "Bu server uchun ishga tushirish usuli aniqlanmadi" }, 422)
+    return c.json({ error: 'No launch method could be determined for this server' }, 422)
   }
 
   const manba = mcpManbaYarat({
@@ -167,8 +167,8 @@ mcpRoutes.post('/mcp/manba/registry', async (c) => {
   const natija = mcpServerlarniSinxronla(manba.id, [yozuv])
 
   auditYoz(
-    'foydalanuvchi',
-    'MCP server katalogga qo\'shildi',
+    'user',
+    'MCP server added to the catalog',
     `${tozaNom} (registry)`,
     "o'zgartirish",
   )
@@ -186,19 +186,19 @@ mcpRoutes.post('/mcp/manba/github', async (c) => {
     const tana = (await c.req.json()) as { url?: unknown }
     url = tana?.url
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   if (typeof url !== 'string' || !url.trim() || url.length > MAKS_MATN) {
-    return c.json({ error: 'Repo manzili majburiy' }, 400)
+    return c.json({ error: 'Repository URL is required' }, 400)
   }
 
   const manzil = manzilniAjrat(url)
   if (!manzil) {
     return c.json(
       {
-        error: "Manzilni tanib bo'lmadi",
-        detail: 'Masalan: https://github.com/github/github-mcp-server',
+        error: 'Could not parse the URL',
+        detail: 'For example: https://github.com/github/github-mcp-server',
       },
       400,
     )
@@ -209,7 +209,7 @@ mcpRoutes.post('/mcp/manba/github', async (c) => {
     skaner = await mcpManbaniSkanerla(manzil)
   } catch (xato) {
     return c.json(
-      { error: xato instanceof Error ? xato.message : 'Skanerlash muvaffaqiyatsiz' },
+      { error: xato instanceof Error ? xato.message : 'Scan failed' },
       502,
     )
   }
@@ -224,8 +224,8 @@ mcpRoutes.post('/mcp/manba/github', async (c) => {
   const natija = mcpServerlarniSinxronla(manba.id, skaner.serverlar)
 
   auditYoz(
-    'foydalanuvchi',
-    'MCP manbasi ulandi',
+    'user',
+    'MCP source connected',
     `${manzil.owner}/${manzil.repo} — ${natija.qoshildi} server`,
     "o'zgartirish",
   )
@@ -255,17 +255,17 @@ interface QoldaTana {
  */
 function sozlamalarniOqi(xom: unknown): { maydonlar: McpSozlamaMaydoni[] } | { xato: string } {
   if (xom === undefined || xom === null) return { maydonlar: [] }
-  if (!Array.isArray(xom)) return { xato: "sozlamalar massiv bo'lishi kerak" }
-  if (xom.length > MAKS_ARGUMENT) return { xato: 'Sozlama maydonlari juda ko\'p' }
+  if (!Array.isArray(xom)) return { xato: 'sozlamalar must be an array' }
+  if (xom.length > MAKS_ARGUMENT) return { xato: 'Too many setting fields' }
 
   const maydonlar: McpSozlamaMaydoni[] = []
   for (const element of xom) {
     if (!element || typeof element !== 'object') {
-      return { xato: "Har sozlama obyekt bo'lishi kerak" }
+      return { xato: 'Every setting must be an object' }
     }
     const m = element as { nom?: unknown; izoh?: unknown; majburiy?: unknown; maxfiy?: unknown }
     if (typeof m.nom !== 'string' || !m.nom.trim()) {
-      return { xato: 'Sozlama nomi majburiy' }
+      return { xato: 'Setting name is required' }
     }
     // Registry yo'li bilan BIR XIL qoida (`mcp-registry.ts`): jarayon
     // xulqini o'zgartiradigan nomlar (`NODE_OPTIONS`, `LD_PRELOAD`…) va
@@ -274,7 +274,7 @@ function sozlamalarniOqi(xom: unknown): { maydonlar: McpSozlamaMaydoni[] } | { x
     // "nega ishlamaydi" holatidan yaxshiroq.
     if (!sozlamaNomiToqrimi(m.nom.trim())) {
       return {
-        xato: `Sozlama nomi qabul qilinmadi: ${m.nom.trim()} — faqat harf/raqam/_/- va jarayon xulqini o'zgartirmaydigan nom`,
+        xato: `Setting name rejected: ${m.nom.trim()} — only letters, digits, _ and -, and it must not be a name that alters process behaviour`,
       }
     }
 
@@ -294,15 +294,15 @@ mcpRoutes.post('/mcp/manba/qolda', async (c) => {
   try {
     tana = (await c.req.json()) as QoldaTana
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   const { nom, transport } = tana
   if (typeof nom !== 'string' || !nom.trim() || nom.length > MAKS_MATN) {
-    return c.json({ error: 'Server nomi majburiy' }, 400)
+    return c.json({ error: 'Server name is required' }, 400)
   }
   if (transport !== 'stdio' && transport !== 'http') {
-    return c.json({ error: "transport 'stdio' yoki 'http' bo'lishi kerak" }, 400)
+    return c.json({ error: "transport must be 'stdio' or 'http'" }, 400)
   }
 
   const sozlamalar = sozlamalarniOqi(tana.sozlamalar)
@@ -317,20 +317,20 @@ mcpRoutes.post('/mcp/manba/qolda', async (c) => {
 
   if (transport === 'stdio') {
     if (typeof tana.buyruq !== 'string' || !tana.buyruq.trim()) {
-      return c.json({ error: 'stdio uchun buyruq majburiy' }, 400)
+      return c.json({ error: 'A command is required for stdio' }, 400)
     }
-    if (tana.buyruq.length > MAKS_MATN) return c.json({ error: 'Buyruq juda uzun' }, 400)
+    if (tana.buyruq.length > MAKS_MATN) return c.json({ error: 'Command too long' }, 400)
 
     let argumentlar: string[] = []
     if (tana.argumentlar !== undefined) {
       if (!Array.isArray(tana.argumentlar)) {
-        return c.json({ error: "argumentlar massiv bo'lishi kerak" }, 400)
+        return c.json({ error: 'argumentlar must be an array' }, 400)
       }
       if (tana.argumentlar.length > MAKS_ARGUMENT) {
-        return c.json({ error: 'Argumentlar juda ko\'p' }, 400)
+        return c.json({ error: 'Too many arguments' }, 400)
       }
       if (!tana.argumentlar.every((a) => typeof a === 'string' && a.length <= MAKS_MATN)) {
-        return c.json({ error: 'Har argument qisqa matn bo\'lishi kerak' }, 400)
+        return c.json({ error: 'Every argument must be a short string' }, 400)
       }
       argumentlar = tana.argumentlar as string[]
     }
@@ -339,17 +339,17 @@ mcpRoutes.post('/mcp/manba/qolda', async (c) => {
     yozuv.argumentlar = argumentlar
   } else {
     if (typeof tana.url !== 'string' || !tana.url.trim()) {
-      return c.json({ error: 'http uchun url majburiy' }, 400)
+      return c.json({ error: 'A url is required for http' }, 400)
     }
     // Faqat http(s): `file://` yoki boshqa sxema bilan ulanishga urinmaymiz
     let tekshirilgan: URL
     try {
       tekshirilgan = new URL(tana.url.trim())
     } catch {
-      return c.json({ error: "url noto'g'ri" }, 400)
+      return c.json({ error: 'Invalid url' }, 400)
     }
     if (tekshirilgan.protocol !== 'http:' && tekshirilgan.protocol !== 'https:') {
-      return c.json({ error: "url http yoki https bo'lishi kerak" }, 400)
+      return c.json({ error: 'url must be http or https' }, 400)
     }
     yozuv.url = tekshirilgan.toString()
   }
@@ -363,7 +363,7 @@ mcpRoutes.post('/mcp/manba/qolda', async (c) => {
   })
   const natija = mcpServerlarniSinxronla(manba.id, [yozuv])
 
-  auditYoz('foydalanuvchi', "MCP server qo'lda qo'shildi", yozuv.nom, "o'zgartirish")
+  auditYoz('user', 'MCP server added manually', yozuv.nom, "o'zgartirish")
 
   return c.json({ manba, ...natija }, 201)
 })
@@ -380,25 +380,25 @@ mcpRoutes.post('/mcp/manba/qolda', async (c) => {
  */
 mcpRoutes.post('/mcp/manba/:id/sinxron', async (c) => {
   const manba = mcpManbaOqi(c.req.param('id'))
-  if (!manba) return c.json({ error: 'Manba topilmadi' }, 404)
+  if (!manba) return c.json({ error: 'Source not found' }, 404)
 
   if (manba.tur === 'github') {
     if (!manba.owner || !manba.repo) {
-      return c.json({ error: "Manba ma'lumoti to'liq emas" }, 422)
+      return c.json({ error: 'Source information is incomplete' }, 422)
     }
     let skaner: Awaited<ReturnType<typeof mcpManbaniSkanerla>>
     try {
       skaner = await mcpManbaniSkanerla({ owner: manba.owner, repo: manba.repo, ref: manba.ref })
     } catch (xato) {
       return c.json(
-        { error: xato instanceof Error ? xato.message : 'Skanerlash muvaffaqiyatsiz' },
+        { error: xato instanceof Error ? xato.message : 'Scan failed' },
         502,
       )
     }
     const natija = mcpServerlarniSinxronla(manba.id, skaner.serverlar)
     auditYoz(
-      'foydalanuvchi',
-      'MCP manbasi sinxronlandi',
+      'user',
+      'MCP source synced',
       `${manba.manbaNomi} — +${natija.qoshildi} / -${natija.ochirildi}`,
       "o'zgartirish",
     )
@@ -410,19 +410,19 @@ mcpRoutes.post('/mcp/manba/:id/sinxron', async (c) => {
     try {
       topilgan = await registryQidir(manba.manbaNomi, 20)
     } catch (xato) {
-      return c.json({ error: xato instanceof Error ? xato.message : 'Registry xatosi' }, 502)
+      return c.json({ error: xato instanceof Error ? xato.message : 'Registry error' }, 502)
     }
     const server = topilgan.find((s) => s.name === manba.manbaNomi)
     const yozuv = server ? registryYozuvniAylantir(server) : null
     if (!yozuv) {
-      return c.json({ error: `Registry'da topilmadi: ${manba.manbaNomi}` }, 404)
+      return c.json({ error: `Not found in the registry: ${manba.manbaNomi}` }, 404)
     }
     const natija = mcpServerlarniSinxronla(manba.id, [yozuv])
-    auditYoz('foydalanuvchi', 'MCP manbasi sinxronlandi', manba.manbaNomi, "o'zgartirish")
+    auditYoz('user', 'MCP source synced', manba.manbaNomi, "o'zgartirish")
     return c.json({ ...natija, ogohlantirishlar: [] })
   }
 
-  return c.json({ error: `Bu manba turini sinxronlab bo'lmaydi: ${manba.tur}` }, 422)
+  return c.json({ error: `This source type cannot be synced: ${manba.tur}` }, 422)
 })
 
 /**
@@ -435,7 +435,7 @@ mcpRoutes.post('/mcp/manba/:id/sinxron', async (c) => {
 mcpRoutes.delete('/mcp/manba/:id', async (c) => {
   const id = c.req.param('id')
   const manba = mcpManbaOqi(id)
-  if (!manba) return c.json({ error: 'Manba topilmadi' }, 404)
+  if (!manba) return c.json({ error: 'Source not found' }, 404)
 
   // O'chirishdan OLDIN o'rnatish id'larini yig'amiz — keyin ular yo'qoladi
   const ornatishlar = mcpServerlarOqi()
@@ -449,7 +449,7 @@ mcpRoutes.delete('/mcp/manba/:id', async (c) => {
     await ombor.ochir(ornatishId).catch(() => undefined)
   }
 
-  auditYoz('foydalanuvchi', "MCP manbasi o'chirildi", manba.manbaNomi, "o'zgartirish")
+  auditYoz('user', 'MCP source removed', manba.manbaNomi, "o'zgartirish")
 
   return c.json({ ok: true })
 })
@@ -475,7 +475,7 @@ function qiymatlarniAjrat(
 
   if (xom === undefined || xom === null) return { ochiq, maxfiy }
   if (typeof xom !== 'object' || Array.isArray(xom)) {
-    return { ochiq, maxfiy, xato: "sozlamaQiymatlari obyekt bo'lishi kerak" }
+    return { ochiq, maxfiy, xato: 'sozlamaQiymatlari must be an object' }
   }
 
   const kelgan = xom as Record<string, unknown>
@@ -483,10 +483,10 @@ function qiymatlarniAjrat(
     const qiymat = kelgan[maydon.nom]
     if (qiymat === undefined) continue
     if (typeof qiymat !== 'string') {
-      return { ochiq, maxfiy, xato: `"${maydon.nom}" qiymati matn bo'lishi kerak` }
+      return { ochiq, maxfiy, xato: `"${maydon.nom}" value must be text` }
     }
     if (qiymat.length > 4000) {
-      return { ochiq, maxfiy, xato: `"${maydon.nom}" qiymati juda uzun` }
+      return { ochiq, maxfiy, xato: `"${maydon.nom}" value is too long` }
     }
     // SXEMADA E'LON QILINMAGAN kalitlar TASHLANADI (tsikl sxema bo'yicha
     // ketadi): foydalanuvchi ixtiyoriy env o'zgaruvchisini jarayonga
@@ -506,28 +506,28 @@ function qiymatlarniAjrat(
  */
 mcpRoutes.post('/mcp/:id/ornat', async (c) => {
   const server = mcpServerOqi(c.req.param('id'))
-  if (!server) return c.json({ error: 'MCP server topilmadi' }, 404)
+  if (!server) return c.json({ error: 'MCP server not found' }, 404)
 
   let tana: OrnatTana
   try {
     tana = (await c.req.json()) as OrnatTana
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   const qamrov = tana.qamrov
   if (qamrov !== 'global' && qamrov !== 'loyiha') {
-    return c.json({ error: "qamrov 'global' yoki 'loyiha' bo'lishi kerak" }, 400)
+    return c.json({ error: "qamrov must be 'global' or 'loyiha'" }, 400)
   }
 
   let loyihalar: string[] = []
   if (qamrov === 'loyiha') {
     if (!Array.isArray(tana.projectIds) || tana.projectIds.length === 0) {
-      return c.json({ error: 'Loyiha qamrovida kamida bitta loyiha tanlanishi kerak' }, 400)
+      return c.json({ error: 'Project scope needs at least one project selected' }, 400)
     }
     loyihalar = tana.projectIds.filter((x): x is string => typeof x === 'string')
     for (const id of loyihalar) {
-      if (!loyihaOqi(id)) return c.json({ error: `Loyiha topilmadi: ${id}` }, 404)
+      if (!loyihaOqi(id)) return c.json({ error: `Project not found: ${id}` }, 404)
     }
   }
 
@@ -561,7 +561,7 @@ mcpRoutes.post('/mcp/:id/ornat', async (c) => {
   if (yetishmagan.length > 0) {
     return c.json(
       {
-        error: `Majburiy sozlama to'ldirilmadi: ${yetishmagan.join(', ')}`,
+        error: `Required setting not filled in: ${yetishmagan.join(', ')}`,
         yetishmagan,
       },
       400,
@@ -586,8 +586,8 @@ mcpRoutes.post('/mcp/:id/ornat', async (c) => {
   }
 
   auditYoz(
-    'foydalanuvchi',
-    "MCP server o'rnatildi",
+    'user',
+    'MCP server installed',
     `${server.nom} — ${qamrov === 'global' ? 'global' : `${loyihalar.length} loyiha`}`,
     "o'zgartirish",
   )
@@ -599,18 +599,18 @@ mcpRoutes.post('/mcp/:id/ornat', async (c) => {
 /** O'rnatishni bekor qiladi va kredensialini tozalaydi */
 mcpRoutes.delete('/mcp/:id/ornat', async (c) => {
   const server = mcpServerOqi(c.req.param('id'))
-  if (!server) return c.json({ error: 'MCP server topilmadi' }, 404)
+  if (!server) return c.json({ error: 'MCP server not found' }, 404)
 
   let tana: OrnatTana
   try {
     tana = (await c.req.json()) as OrnatTana
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   const qamrov = tana.qamrov
   if (qamrov !== 'global' && qamrov !== 'loyiha') {
-    return c.json({ error: "qamrov 'global' yoki 'loyiha' bo'lishi kerak" }, 400)
+    return c.json({ error: "qamrov must be 'global' or 'loyiha'" }, 400)
   }
 
   const projectIds = Array.isArray(tana.projectIds)
@@ -622,7 +622,7 @@ mcpRoutes.delete('/mcp/:id/ornat', async (c) => {
     const id = mcpServerOrnatishniOchir(server.id, 'global', null)
     if (id) ochirilgan.push(id)
   } else {
-    if (projectIds.length === 0) return c.json({ error: 'Loyiha tanlanmadi' }, 400)
+    if (projectIds.length === 0) return c.json({ error: 'No project selected' }, 400)
     for (const projectId of projectIds) {
       const id = mcpServerOrnatishniOchir(server.id, 'loyiha', projectId)
       if (id) ochirilgan.push(id)
@@ -635,7 +635,7 @@ mcpRoutes.delete('/mcp/:id/ornat', async (c) => {
     await ombor.ochir(id).catch(() => undefined)
   }
 
-  auditYoz('foydalanuvchi', "MCP o'rnatishi bekor qilindi", server.nom, "o'zgartirish")
+  auditYoz('user', 'MCP installation removed', server.nom, "o'zgartirish")
 
   return c.json({ server: mcpServerOqi(server.id) })
 })

@@ -58,7 +58,7 @@ async function sorov<T>(yol: string, sozlama?: RequestInit): Promise<T> {
   try {
     tana = matn ? JSON.parse(matn) : {}
   } catch {
-    throw new ApiXatosi(javob.status, 'Server javobini o\'qib bo\'lmadi', matn.slice(0, 200))
+    throw new ApiXatosi(javob.status, 'Could not read the server response', matn.slice(0, 200))
   }
 
   if (!javob.ok) {

@@ -289,7 +289,7 @@ describe('PUT /api/apps/:id/sozlama', () => {
       { qiymatlar: { admin_id: 'salom' } },
     )
     expect(status).toBe(400)
-    expect(body.xatolar[0]).toContain('raqam')
+    expect(body.xatolar[0]).toContain('number')
   })
 
   test('sxemada yo\'q kalit e\'tiborsiz qoldiriladi', async () => {

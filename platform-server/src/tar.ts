@@ -116,7 +116,7 @@ export function tarOqi(xom: Uint8Array, maksJamiBayt: number): TarFayl[] {
 
     jami += hajm
     if (jami > maksJamiBayt) {
-      throw new Error(`Arxiv juda katta: ${maksJamiBayt} bayt chegarasi oshdi`)
+      throw new Error(`Archive too large: exceeded the ${maksJamiBayt} byte limit`)
     }
 
     natija.push({ yol: tozaYol, mazmun: new Uint8Array(malumot) })

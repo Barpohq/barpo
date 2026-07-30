@@ -40,19 +40,19 @@ export default function Agents() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <PageHead
-        title="Agentlar"
-        sub="Fonda ishlayotgan agent oqimlari — har biri bitta suhbatga tegishli"
+        title="Agents"
+        sub="Agent streams running in the background — each one belongs to a single chat"
       />
 
       {yuklanmoqda && royxat.length === 0 && (
-        <p className="text-sm text-faint">Yuklanmoqda…</p>
+        <p className="text-sm text-faint">Loading…</p>
       )}
 
       {!yuklanmoqda && royxat.length === 0 && (
         <Card className="px-6 py-10 text-center">
-          <p className="text-sm text-muted">Hozir hech qanday agent ishlamayapti.</p>
+          <p className="text-sm text-muted">No agents are running right now.</p>
           <p className="mt-1.5 text-xs text-faint">
-            Chatda xabar yuboring — oqim shu yerda jonli ko'rinadi.
+            Send a message in chat — the stream shows up here live.
           </p>
         </Card>
       )}
@@ -64,7 +64,7 @@ export default function Agents() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2.5">
                   <h2 className="truncate font-mono text-sm font-semibold text-lazur">
-                    {sarlavhalar[sessionId] ?? 'Nomsiz suhbat'}
+                    {sarlavhalar[sessionId] ?? 'Untitled chat'}
                   </h2>
                   <OqimIndikatori holat={holat} matnBilan />
                 </div>
@@ -76,7 +76,7 @@ export default function Agents() {
                 disabled={toxtatilayotgan[sessionId]}
                 className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-xs text-muted transition enabled:hover:border-coral enabled:hover:text-coral disabled:opacity-40"
               >
-                {toxtatilayotgan[sessionId] ? "To'xtatilmoqda…" : "To'xtatish"}
+                {toxtatilayotgan[sessionId] ? 'Stopping…' : 'Stop'}
               </button>
             </Card>
           ))}

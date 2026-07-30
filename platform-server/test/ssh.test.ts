@@ -125,7 +125,7 @@ describe('kalitJoyla', () => {
   test("kalit kirmasa va parol yo'q — tushunarli xato", async () => {
     soxtaBajaruvchi(() => RAD)
     await expect(kalitJoyla({ host: 'ex.uz', port: 22, username: 'root' })).rejects.toThrow(
-      /Parol kiriting/,
+      /Enter a password/,
     )
   })
 
@@ -149,7 +149,7 @@ describe('kalitJoyla', () => {
     )
     await expect(
       kalitJoyla({ host: 'ex.uz', port: 22, username: 'root' }, 'xato-parol'),
-    ).rejects.toThrow(/Parol noto'g'ri/)
+    ).rejects.toThrow(/Wrong password/)
   })
 })
 

@@ -74,19 +74,19 @@ export function maydonniTekshir(
 
   if (xom === null) {
     if (tarif.nullBolishiMumkin) return { qiymat: null }
-    return { qiymat: standartNusxasi(tarif), sabab: "null bo'lishi mumkin emas" }
+    return { qiymat: standartNusxasi(tarif), sabab: 'null is not allowed' }
   }
 
   switch (tarif.tur) {
     case 'mantiq':
       if (typeof xom !== 'boolean') {
-        return { qiymat: tarif.standart, sabab: `mantiqiy qiymat kutildi, ${turNomi(xom)} keldi` }
+        return { qiymat: tarif.standart, sabab: `expected a boolean, got ${turNomi(xom)}` }
       }
       return { qiymat: xom }
 
     case 'son': {
       if (typeof xom !== 'number' || !Number.isFinite(xom)) {
-        return { qiymat: tarif.standart, sabab: `son kutildi, ${turNomi(xom)} keldi` }
+        return { qiymat: tarif.standart, sabab: `expected a number, got ${turNomi(xom)}` }
       }
       // Chegaradan chiqqan qiymat KESILADI, standartga qaytarilmaydi:
       // foydalanuvchi niyati aniq ("juda katta qilmoqchi edim"), shunchaki
@@ -94,29 +94,29 @@ export function maydonniTekshir(
       const kam = tarif.eng?.kam
       const kop = tarif.eng?.kop
       if (kam !== undefined && xom < kam) {
-        return { qiymat: kam, sabab: `${xom} juda kichik, ${kam} gacha ko'tarildi` }
+        return { qiymat: kam, sabab: `${xom} is too small, raised to ${kam}` }
       }
       if (kop !== undefined && xom > kop) {
-        return { qiymat: kop, sabab: `${xom} juda katta, ${kop} gacha tushirildi` }
+        return { qiymat: kop, sabab: `${xom} is too large, lowered to ${kop}` }
       }
       return { qiymat: xom }
     }
 
     case 'matn':
       if (typeof xom !== 'string') {
-        return { qiymat: tarif.standart, sabab: `matn kutildi, ${turNomi(xom)} keldi` }
+        return { qiymat: tarif.standart, sabab: `expected a string, got ${turNomi(xom)}` }
       }
       return { qiymat: xom }
 
     case 'tanlov': {
       if (typeof xom !== 'string') {
-        return { qiymat: tarif.standart, sabab: `matn kutildi, ${turNomi(xom)} keldi` }
+        return { qiymat: tarif.standart, sabab: `expected a string, got ${turNomi(xom)}` }
       }
       const variantlar = tarif.variantlar ?? []
       if (!variantlar.includes(xom)) {
         return {
           qiymat: tarif.standart,
-          sabab: `"${xom}" mumkin emas, variantlar: ${variantlar.join(', ')}`,
+          sabab: `"${xom}" is not allowed, options: ${variantlar.join(', ')}`,
         }
       }
       return { qiymat: xom }
@@ -128,7 +128,7 @@ export function maydonniTekshir(
         // obyekt, uni to'g'ridan-to'g'ri bersak chaqiruvchi `push` qilganda
         // standart qiymatning o'zi buzilardi — keyingi sessiyalarga o'tib
         // ketadigan, topish qiyin xato.
-        return { qiymat: [...(tarif.standart as string[])], sabab: `ro'yxat kutildi, ${turNomi(xom)} keldi` }
+        return { qiymat: [...(tarif.standart as string[])], sabab: `expected a list, got ${turNomi(xom)}` }
       }
       // Ro'yxat ichidagi noto'g'ri elementlar tashlab yuboriladi, butun
       // ro'yxat emas — foydalanuvchining to'g'ri yozgan qismi saqlanadi
@@ -136,7 +136,7 @@ export function maydonniTekshir(
       if (tozalangan.length !== xom.length) {
         return {
           qiymat: tozalangan,
-          sabab: `${xom.length - tozalangan.length} ta matn bo'lmagan element tashlandi`,
+          sabab: `${xom.length - tozalangan.length} non-string item(s) were dropped`,
         }
       }
       return { qiymat: tozalangan }
@@ -186,7 +186,7 @@ export function configniTekshir(xom: unknown): TekshiruvNatijasi {
   }
 
   for (const notanish of notanishYollar(xom)) {
-    ogohlantirishlar.push({ yol: notanish, sabab: "notanish sozlama — e'tiborsiz qoldirildi" })
+    ogohlantirishlar.push({ yol: notanish, sabab: 'unknown setting — ignored' })
   }
 
   return { config: natija as unknown as Config, ogohlantirishlar }

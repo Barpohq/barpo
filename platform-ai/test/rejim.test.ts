@@ -80,7 +80,7 @@ describe('ketma-ket blok chegarasi', () => {
     }
     expect(r.blokBoldi()).toBe(true)
     expect(r.rejim).toBe('tasdiq')
-    expect(r.sabab).toContain('ketma-ket')
+    expect(r.sabab).toContain('in a row')
   })
 
   test('ruxsat ketma-ket hisoblagichni nolga qaytaradi', () => {
@@ -123,7 +123,7 @@ describe('jami blok chegarasi', () => {
 
     r.blokBoldi()
     expect(r.rejim).toBe('tasdiq')
-    expect(r.sabab).toContain('jami')
+    expect(r.sabab).toContain('in total')
   })
 })
 

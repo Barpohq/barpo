@@ -24,11 +24,11 @@ export default function RejimKartasi({ sabab, onQaytaYoq }: Props) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm text-gold">
             <span aria-hidden>⚠︎</span>
-            <span>Auto rejim o'chdi</span>
+            <span>Auto mode turned off</span>
           </div>
           <p className="mt-1 text-sm text-muted">{sabab}</p>
           <p className="mt-1 text-xs text-faint">
-            Agent ishlashda davom etadi — endi har xavfli amal so'raladi.
+            The agent keeps working — every dangerous action is now asked about.
           </p>
         </div>
         <button
@@ -39,7 +39,7 @@ export default function RejimKartasi({ sabab, onQaytaYoq }: Props) {
           disabled={bosildi}
           className="shrink-0 rounded-lg border border-line px-3.5 py-1.5 text-sm text-muted transition enabled:hover:border-lazur-dim enabled:hover:text-ink disabled:opacity-40"
         >
-          {bosildi ? 'Yoqilmoqda…' : 'Qayta yoqish'}
+          {bosildi ? 'Enabling…' : 'Re-enable'}
         </button>
       </div>
     </Card>

@@ -93,11 +93,11 @@ export async function oldinZanjiri(
       // Fail-closed: hook ishlamasa toolni bloklaymiz
       return {
         blokla: true,
-        sabab: `hook "${hook.nom}" xato berdi: ${xatoMatni(xato)}`,
+        sabab: `hook "${hook.nom}" failed: ${xatoMatni(xato)}`,
       }
     }
     if (natija?.blokla) {
-      return { blokla: true, sabab: natija.sabab ?? `hook "${hook.nom}" blokladi` }
+      return { blokla: true, sabab: natija.sabab ?? `hook "${hook.nom}" blocked it` }
     }
   }
   return undefined
@@ -130,7 +130,7 @@ export async function keyinZanjiri(
       }
     } catch (xato) {
       joriy = {
-        natija: `${joriy.natija}\n\n⚠︎ hook "${hook.nom}" xato berdi: ${xatoMatni(xato)}`,
+        natija: `${joriy.natija}\n\n⚠︎ hook "${hook.nom}" failed: ${xatoMatni(xato)}`,
         xatomi: joriy.xatomi,
       }
     }
@@ -220,7 +220,7 @@ export function uzunlikHooki(chegara: number): ToolHooki {
       if (natija.length <= chegara) return undefined
       const qolgan = natija.length - chegara
       return {
-        natija: `${natija.slice(0, chegara)}\n… (${qolgan} belgi qisqartirildi)`,
+        natija: `${natija.slice(0, chegara)}\n… (${qolgan} characters truncated)`,
       }
     },
   }
@@ -250,7 +250,7 @@ export function qoshimchaTaqiqHooki(taqiqlar: readonly string[]): ToolHooki {
       for (const soz of sozlar) {
         const nomi = soz.split('/').pop() ?? soz
         if (toplam.has(nomi)) {
-          return { blokla: true, sabab: `\`${nomi}\` sozlamalarda taqiqlangan` }
+          return { blokla: true, sabab: `\`${nomi}\` is forbidden in the settings` }
         }
       }
       return undefined
