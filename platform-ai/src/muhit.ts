@@ -55,7 +55,7 @@ export const STANDART_BUYRUQ_TIMEOUT_MS = 2 * 60 * 1000
 
 /** Yo'l tekshiruvidan o'tmagan amal uchun xato */
 function radXatosi(yol: string, sabab: string): FileError {
-  return new FileError('permission_denied', `Ruxsat berilmadi: ${sabab}`, yol)
+  return new FileError('permission_denied', `Permission denied: ${sabab}`, yol)
 }
 
 export interface ChegaralanganMuhitSozlamalari {
@@ -138,12 +138,12 @@ export class ChegaralanganMuhit implements ExecutionEnv {
       tur: 'fayl',
       amal,
       nishon: tekshiriladigan,
-      sabab: "ish papkasidan tashqaridagi fayl",
+      sabab: 'a file outside the working directory',
       naqsh: `${amal}:${tekshiriladigan}`,
     })
 
     if (javob === 'rad') {
-      return { ok: false, error: radXatosi(tekshiriladigan, 'ish papkasidan tashqarida') }
+      return { ok: false, error: radXatosi(tekshiriladigan, 'outside the working directory') }
     }
     this.ruxsatEtilgan.add(tekshiriladigan)
     return { ok: true, value: absolut.value }
@@ -260,11 +260,11 @@ export class ChegaralanganMuhit implements ExecutionEnv {
       tur: 'fayl',
       amal: 'remove',
       nishon: absolut.value,
-      sabab: "fayl yoki papkani o'chiradi",
+      sabab: 'deletes a file or directory',
       naqsh: `remove:${absolut.value}`,
     })
     if (javob === 'rad') {
-      return { ok: false, error: radXatosi(absolut.value, "o'chirish rad etildi") }
+      return { ok: false, error: radXatosi(absolut.value, 'the deletion was denied') }
     }
     return this.ichki.remove(absolut.value, options)
   }
@@ -317,7 +317,7 @@ export class ChegaralanganMuhit implements ExecutionEnv {
         tur: 'buyruq',
         amal: 'bash',
         nishon: command,
-        sabab: baho.sabab ?? 'tekshirilmagan buyruq',
+        sabab: baho.sabab ?? 'an unvetted command',
         naqsh: baho.naqsh,
       })
       if (javob === 'rad') {
@@ -325,7 +325,7 @@ export class ChegaralanganMuhit implements ExecutionEnv {
           ok: false,
           error: new ExecutionError(
             'spawn_error',
-            `Ruxsat berilmadi: ${baho.sabab ?? 'buyruq rad etildi'}`,
+            `Permission denied: ${baho.sabab ?? 'the command was denied'}`,
           ),
         }
       }

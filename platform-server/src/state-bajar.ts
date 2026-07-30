@@ -87,7 +87,7 @@ export function kodniTekshir(kod: string): string[] {
 
   if (kod.length > STATE_KOD_CHEGARASI) {
     xatolar.push(
-      `State kodi juda uzun: ${kod.length} belgi, chegara ${STATE_KOD_CHEGARASI}`,
+      `State code too long: ${kod.length} characters, limit ${STATE_KOD_CHEGARASI}`,
     )
   }
 
@@ -96,7 +96,7 @@ export function kodniTekshir(kod: string): string[] {
   try {
     new Function(kod)
   } catch (xato) {
-    xatolar.push(`Sintaksis xatosi: ${xato instanceof Error ? xato.message : String(xato)}`)
+    xatolar.push(`Syntax error: ${xato instanceof Error ? xato.message : String(xato)}`)
   }
 
   return xatolar
@@ -153,7 +153,7 @@ export async function stateniBajar(kod: string, appId: string): Promise<StateNat
       Promise.resolve((funksiya as () => unknown)()),
       new Promise<never>((_, rad) =>
         setTimeout(
-          () => rad(new Error(`Vaqt tugadi (${STATE_TIMEOUT_MS / 1000}s)`)),
+          () => rad(new Error(`Timed out (${STATE_TIMEOUT_MS / 1000}s)`)),
           STATE_TIMEOUT_MS,
         ),
       ),
@@ -166,13 +166,13 @@ export async function stateniBajar(kod: string, appId: string): Promise<StateNat
     try {
       json = JSON.stringify(qiymat ?? null)
     } catch {
-      return { ok: false, xato: 'Natija JSON\'ga aylanmaydi (siklik havola?)', vaqt }
+      return { ok: false, xato: 'The result is not JSON-serialisable (circular reference?)', vaqt }
     }
 
     if (json.length > NATIJA_CHEGARASI) {
       return {
         ok: false,
-        xato: `Natija juda katta: ${json.length} belgi, chegara ${NATIJA_CHEGARASI}`,
+        xato: `Result too large: ${json.length} characters, limit ${NATIJA_CHEGARASI}`,
         vaqt,
       }
     }

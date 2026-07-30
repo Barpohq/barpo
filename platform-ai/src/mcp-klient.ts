@@ -92,7 +92,7 @@ export class McpKlient {
    */
   async ulan(signal?: AbortSignal): Promise<void> {
     if (this.ulangan) return
-    if (this.yopilgan) throw new Error('MCP klient yopilgan')
+    if (this.yopilgan) throw new Error('The MCP client is closed')
 
     this.transport = this.transportYarat()
     this.tinglovchiBekor = this.transport.tingla((xabar) => this.xabarKeldi(xabar))
@@ -200,7 +200,7 @@ export class McpKlient {
     // Kutayotgan so'rovlar abadiy osilib qolmasin
     for (const [, kutayotgan] of this.kutayotganlar) {
       clearTimeout(kutayotgan.taymer)
-      kutayotgan.rad(new Error('MCP ulanishi yopildi'))
+      kutayotgan.rad(new Error('The MCP connection was closed'))
     }
     this.kutayotganlar.clear()
 
@@ -221,7 +221,7 @@ export class McpKlient {
 
   private transportYarat(): McpTransport {
     if (this.sozlama.transport === 'stdio') {
-      if (!this.sozlama.buyruq) throw new Error("stdio uchun buyruq ko'rsatilmagan")
+      if (!this.sozlama.buyruq) throw new Error('no command specified for stdio')
       return stdioTransportYarat(
         this.sozlama.buyruq,
         this.sozlama.argumentlar ?? [],
@@ -230,7 +230,7 @@ export class McpKlient {
     }
 
     if (this.sozlama.transport === 'http') {
-      if (!this.sozlama.url) throw new Error("http uchun url ko'rsatilmagan")
+      if (!this.sozlama.url) throw new Error('no url specified for http')
       return httpTransportYarat(
         this.sozlama.url,
         this.sozlama.sarlavhalar ?? {},
@@ -238,7 +238,7 @@ export class McpKlient {
       )
     }
 
-    throw new Error(`Noma'lum transport: ${String(this.sozlama.transport)}`)
+    throw new Error(`Unknown transport: ${String(this.sozlama.transport)}`)
   }
 
   private xatoIzohi(): string {
@@ -247,7 +247,7 @@ export class McpKlient {
   }
 
   private ulanganiniTekshir(): void {
-    if (!this.ulangan || this.yopilgan) throw new Error('MCP server ulanmagan')
+    if (!this.ulangan || this.yopilgan) throw new Error('The MCP server is not connected')
   }
 
   /**
@@ -265,7 +265,7 @@ export class McpKlient {
   ): Promise<unknown> {
     const transport = this.transport
     if (!transport) throw new Error('MCP transport yo\'q')
-    if (signal?.aborted) throw new Error("So'rov bekor qilindi")
+    if (signal?.aborted) throw new Error('Request cancelled')
 
     const id = this.keyingiId++
 
@@ -279,9 +279,9 @@ export class McpKlient {
         if (xato) rad(xato)
       }
 
-      const bekorQil = () => yakunla(new Error("So'rov bekor qilindi"))
+      const bekorQil = () => yakunla(new Error('Request cancelled'))
       const taymer = setTimeout(
-        () => yakunla(new Error(`MCP javob bermadi (${method}, ${timeoutMs}ms)`)),
+        () => yakunla(new Error(`The MCP server did not respond (${method}, ${timeoutMs}ms)`)),
         timeoutMs,
       )
       taymer.unref?.()
@@ -305,7 +305,7 @@ export class McpKlient {
     })
 
     if (javob.error) {
-      throw new Error(`MCP xatosi (${method}): ${javob.error.message}`)
+      throw new Error(`MCP error (${method}): ${javob.error.message}`)
     }
     return javob.result
   }

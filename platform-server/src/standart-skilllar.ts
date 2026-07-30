@@ -90,7 +90,7 @@ export function standartlarniSkanerla(): StandartSkanerNatija {
 
     const tahlil = skillFayliniTahlil(xom, papka)
     if (!tahlil) {
-      ogohlantirishlar.push(`${papka}: tavsif (description) yo'q — o'tkazib yuborildi`)
+      ogohlantirishlar.push(`${papka}: no description — skipped`)
       continue
     }
 

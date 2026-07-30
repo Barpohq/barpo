@@ -94,13 +94,13 @@ export function standartMcplarniSkanerla(): StandartMcpSkanerNatija {
     try {
       malumot = JSON.parse(xom) as RegistryServerYozuvi
     } catch {
-      ogohlantirishlar.push(`${papka}: server.json JSON emas`)
+      ogohlantirishlar.push(`${papka}: server.json is not JSON`)
       continue
     }
 
     const yozuv = registryYozuvniAylantir(malumot)
     if (!yozuv) {
-      ogohlantirishlar.push(`${papka}: ishga tushirish usuli aniqlanmadi`)
+      ogohlantirishlar.push(`${papka}: no launch method could be determined`)
       continue
     }
 

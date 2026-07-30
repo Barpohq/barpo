@@ -198,7 +198,7 @@ describe('chaqiruv', () => {
     const tool = mcpToollari(b)[0]!
     await expect(
       tool.execute('c1', {} as never, undefined, undefined as never),
-    ).rejects.toThrow(/Ruxsat berilmadi/)
+    ).rejects.toThrow(/Permission denied/)
 
     // Tool o'rami ruxsatni CHETLAB O'TMAYDI
     expect(chaqirilgan).toEqual([])

@@ -56,7 +56,7 @@ serversRoutes.post('/servers', async (c) => {
   try {
     tana = (await c.req.json()) as typeof tana
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   const name = typeof tana.name === 'string' ? tana.name.trim() : ''
@@ -70,24 +70,24 @@ serversRoutes.post('/servers', async (c) => {
   if (!NOM_REGEX.test(name)) {
     return c.json(
       {
-        error: "Server nomi noto'g'ri",
-        detail: "Harf/raqam bilan boshlanib, faqat harf, raqam, '-' va '_' dan iborat bo'lsin (40 tagacha)",
+        error: 'Invalid server name',
+        detail: "Must start with a letter or digit and contain only letters, digits, '-' and '_' (up to 40 characters)",
       },
       400,
     )
   }
   if (!HOST_REGEX.test(host)) {
-    return c.json({ error: "Host noto'g'ri", detail: 'Domen yoki IP manzil kiriting' }, 400)
+    return c.json({ error: 'Invalid host', detail: 'Enter a domain name or IP address' }, 400)
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return c.json({ error: "Port noto'g'ri", detail: '1 dan 65535 gacha butun son' }, 400)
+    return c.json({ error: 'Invalid port', detail: 'An integer between 1 and 65535' }, 400)
   }
   if (!USER_REGEX.test(username)) {
-    return c.json({ error: "Foydalanuvchi nomi noto'g'ri" }, 400)
+    return c.json({ error: 'Invalid username' }, 400)
   }
 
   if (serverNomBoyicha(name)) {
-    return c.json({ error: 'Bunday nomli server allaqachon bor', detail: name }, 409)
+    return c.json({ error: 'A server with this name already exists', detail: name }, 409)
   }
 
   // Avval kalit joylanadi, KEYIN baza: ulanish umuman bo'lmasa bazada
@@ -95,9 +95,9 @@ serversRoutes.post('/servers', async (c) => {
   try {
     await kalitJoyla({ host, port, username }, parol)
   } catch (xato) {
-    auditYoz('foydalanuvchi', 'Server ulash muvaffaqiyatsiz', `${username}@${host}`, "o'zgartirish", 'rad etildi')
+    auditYoz('user', 'Server connection failed', `${username}@${host}`, "o'zgartirish", 'rad etildi')
     return c.json(
-      { error: "Serverga ulanib bo'lmadi", detail: xato instanceof Error ? xato.message : String(xato) },
+      { error: 'Could not connect to the server', detail: xato instanceof Error ? xato.message : String(xato) },
       502,
     )
   }
@@ -119,8 +119,8 @@ serversRoutes.post('/servers', async (c) => {
   }
 
   auditYoz(
-    'foydalanuvchi',
-    'Server ulandi — SSH kalit joylandi',
+    'user',
+    'Server connected — SSH key installed',
     `${name} (${username}@${host})`,
     "o'zgartirish",
     ulanishXatosi ? 'kutmoqda' : 'OK',
@@ -133,25 +133,25 @@ serversRoutes.delete('/servers/:id', (c) => {
   const id = c.req.param('id')
   const server = serverIdBoyicha(id)
   if (!server) {
-    return c.json({ error: 'Server topilmadi', detail: id }, 404)
+    return c.json({ error: 'Server not found', detail: id }, 404)
   }
 
   serverOchir(id)
   boshqarilganConfigYoz(serverlarOqi())
 
-  auditYoz('foydalanuvchi', "Server o'chirildi", server.name, "o'zgartirish")
+  auditYoz('user', 'Server removed', server.name, "o'zgartirish")
 
   // Kalit serverning o'zida QOLADI — uni olib tashlash uchun serverga
   // ulanish kerak, o'chirilayotgan server esa aynan ulanmayotgan bo'lishi
   // mumkin. UI buni foydalanuvchiga aytadi.
-  return c.json({ ok: true, eslatma: `Platforma kaliti ${server.name} dagi authorized_keys'da qoladi` })
+  return c.json({ ok: true, eslatma: `The platform key stays in authorized_keys on ${server.name}` })
 })
 
 serversRoutes.get('/servers/:id/metrika', async (c) => {
   const id = c.req.param('id')
   const server = serverIdBoyicha(id)
   if (!server) {
-    return c.json({ error: 'Server topilmadi', detail: id }, 404)
+    return c.json({ error: 'Server not found', detail: id }, 404)
   }
 
   // metrikaOl hech qachon throw qilmaydi — xato holati ham oddiy javob

@@ -52,18 +52,18 @@ const TAQIQLANGAN: TaqiqQoidasi[] = [
   // `[rR]` bayroqda bo'lishi shart; nishon aynan `/`, `~` yoki `$HOME`.
   {
     naqsh: /\brm\s+(?:-\S+\s+)*-\S*[rR]\S*\s+(?:\/|~\/?|\$HOME\/?)\s*$/,
-    sabab: "ildiz yoki uy papkasidagi hamma narsani o'chiradi",
+    sabab: 'deletes everything in the root or home directory',
   },
   // Disk formatlash — buyruq NOMI sifatida (grep mkfs ... emas)
-  { naqsh: /(?:^|\s)(?:\/\S+\/)?mkfs(?:\.\w+)?\s/, sabab: 'fayl tizimini formatlaydi' },
+  { naqsh: /(?:^|\s)(?:\/\S+\/)?mkfs(?:\.\w+)?\s/, sabab: 'formats a file system' },
   // Diskka xom yozish
-  { naqsh: /\bdd\b[^|;&]*\bof=\/dev\/(?:sd|nvme|hd|disk)/, sabab: 'diskka xom yozadi' },
-  { naqsh: />\s*\/dev\/(?:sd|nvme|hd|disk)\w/, sabab: 'diskka xom yozadi' },
-  { naqsh: /\bdd\s+if=\/dev\/(?:zero|random|urandom)[^|;&]*\bof=\//, sabab: 'diskni tozalaydi' },
+  { naqsh: /\bdd\b[^|;&]*\bof=\/dev\/(?:sd|nvme|hd|disk)/, sabab: 'writes raw data to a disk' },
+  { naqsh: />\s*\/dev\/(?:sd|nvme|hd|disk)\w/, sabab: 'writes raw data to a disk' },
+  { naqsh: /\bdd\s+if=\/dev\/(?:zero|random|urandom)[^|;&]*\bof=\//, sabab: 'wipes a disk' },
   // Fork bomba — butun buyruqda, chunki o'zida `;` va `|` bor
   {
     naqsh: /:\s*\(\s*\)\s*\{\s*:?\s*\|\s*:?\s*&?\s*\}\s*;?\s*:/,
-    sabab: 'fork bomba — tizimni qotiradi',
+    sabab: 'fork bomb — freezes the machine',
     butunBuyruq: true,
   },
 ]
@@ -75,11 +75,11 @@ const TAQIQLANGAN: TaqiqQoidasi[] = [
  * `echo "shutdown"` da bu so'zlar argument, buyruq emas.
  */
 const TAQIQLANGAN_NOMLAR = new Map<string, string>([
-  ['shutdown', "kompyuterni o'chiradi"],
-  ['poweroff', "kompyuterni o'chiradi"],
-  ['halt', "kompyuterni to'xtatadi"],
-  ['reboot', 'kompyuterni qayta yuklaydi'],
-  ['mkfs', 'fayl tizimini formatlaydi'],
+  ['shutdown', 'shuts the machine down'],
+  ['poweroff', 'shuts the machine down'],
+  ['halt', 'halts the machine'],
+  ['reboot', 'reboots the machine'],
+  ['mkfs', 'formats a file system'],
 ])
 
 /**
@@ -219,8 +219,8 @@ const XAVFSIZ_BUYRUQLAR = new Set([
  * modulning butun modeliga zid (oq ro'yxat modeli).
  */
 const USTIGA_YOZUVCHILAR = new Map<string, string>([
-  ['cp', "mavjud fayl ustiga yozadi"],
-  ['mv', "mavjud fayl ustiga yozadi"],
+  ['cp', 'overwrites an existing file'],
+  ['mv', 'overwrites an existing file'],
 ])
 
 /**
@@ -230,51 +230,51 @@ const USTIGA_YOZUVCHILAR = new Map<string, string>([
  *   - tarmoq va yashirish (curl, wget, sh, eval, base64, nc)
  */
 const XAVFLI_BUYRUQLAR = new Map<string, string>([
-  ['rm', "fayl o'chiradi"],
-  ['rmdir', "papka o'chiradi"],
-  ['shred', "faylni qaytarib bo'lmaydigan qilib o'chiradi"],
-  ['dd', 'disk darajasida yozadi'],
-  ['mkfs', 'fayl tizimini formatlaydi'],
-  ['fdisk', "disk bo'limlarini o'zgartiradi"],
-  ['mount', 'fayl tizimi ulaydi'],
-  ['umount', 'fayl tizimi uzadi'],
-  ['sudo', 'administrator huquqi bilan bajaradi'],
-  ['su', 'boshqa foydalanuvchiga o\'tadi'],
-  ['doas', 'administrator huquqi bilan bajaradi'],
-  ['chown', 'fayl egasini o\'zgartiradi'],
-  ['chmod', 'fayl ruxsatlarini o\'zgartiradi'],
-  ['chgrp', 'fayl guruhini o\'zgartiradi'],
-  ['systemctl', 'tizim xizmatlarini boshqaradi'],
-  ['service', 'tizim xizmatlarini boshqaradi'],
-  ['launchctl', 'tizim xizmatlarini boshqaradi'],
-  ['kill', 'jarayonni to\'xtatadi'],
-  ['killall', 'jarayonlarni to\'xtatadi'],
-  ['pkill', 'jarayonlarni to\'xtatadi'],
-  ['shutdown', 'kompyuterni o\'chiradi'],
-  ['reboot', 'kompyuterni qayta yuklaydi'],
-  ['halt', 'kompyuterni to\'xtatadi'],
-  ['curl', 'tarmoqqa chiqadi'],
-  ['wget', 'tarmoqdan yuklab oladi'],
-  ['nc', 'tarmoq ulanishi ochadi'],
-  ['ncat', 'tarmoq ulanishi ochadi'],
-  ['ssh', 'masofaviy serverga ulanadi'],
-  ['scp', 'masofaviy server bilan fayl almashadi'],
-  ['rsync', 'fayllarni ko\'chiradi/sinxronlaydi'],
-  ['ftp', 'tarmoqqa chiqadi'],
-  ['telnet', 'tarmoqqa chiqadi'],
-  ['sh', 'ixtiyoriy skript bajaradi'],
-  ['bash', 'ixtiyoriy skript bajaradi'],
-  ['zsh', 'ixtiyoriy skript bajaradi'],
-  ['eval', 'ixtiyoriy kod bajaradi'],
-  ['exec', 'jarayonni almashtiradi'],
-  ['source', 'ixtiyoriy skript yuklaydi'],
-  ['base64', 'buyruqni yashirish uchun ishlatilishi mumkin'],
-  ['xxd', 'buyruqni yashirish uchun ishlatilishi mumkin'],
-  ['docker', 'konteynerlarni boshqaradi'],
-  ['podman', 'konteynerlarni boshqaradi'],
-  ['kubectl', 'klasterni boshqaradi'],
-  ['crontab', 'rejalashtirilgan vazifa qo\'shadi'],
-  ['at', 'rejalashtirilgan vazifa qo\'shadi'],
+  ['rm', 'deletes files'],
+  ['rmdir', 'deletes directories'],
+  ['shred', 'deletes a file irrecoverably'],
+  ['dd', 'writes at the disk level'],
+  ['mkfs', 'formats a file system'],
+  ['fdisk', 'changes disk partitions'],
+  ['mount', 'mounts a file system'],
+  ['umount', 'unmounts a file system'],
+  ['sudo', 'runs with administrator privileges'],
+  ['su', 'switches to another user'],
+  ['doas', 'runs with administrator privileges'],
+  ['chown', 'changes file ownership'],
+  ['chmod', 'changes file permissions'],
+  ['chgrp', 'changes the file group'],
+  ['systemctl', 'manages system services'],
+  ['service', 'manages system services'],
+  ['launchctl', 'manages system services'],
+  ['kill', 'stops a process'],
+  ['killall', 'stops processes'],
+  ['pkill', 'stops processes'],
+  ['shutdown', 'shuts the machine down'],
+  ['reboot', 'reboots the machine'],
+  ['halt', 'halts the machine'],
+  ['curl', 'reaches out to the network'],
+  ['wget', 'downloads from the network'],
+  ['nc', 'opens a network connection'],
+  ['ncat', 'opens a network connection'],
+  ['ssh', 'connects to a remote server'],
+  ['scp', 'transfers files with a remote server'],
+  ['rsync', 'copies or syncs files'],
+  ['ftp', 'reaches out to the network'],
+  ['telnet', 'reaches out to the network'],
+  ['sh', 'runs arbitrary scripts'],
+  ['bash', 'runs arbitrary scripts'],
+  ['zsh', 'runs arbitrary scripts'],
+  ['eval', 'runs arbitrary code'],
+  ['exec', 'replaces the process'],
+  ['source', 'loads an arbitrary script'],
+  ['base64', 'can be used to hide a command'],
+  ['xxd', 'can be used to hide a command'],
+  ['docker', 'manages containers'],
+  ['podman', 'manages containers'],
+  ['kubectl', 'manages a cluster'],
+  ['crontab', 'adds a scheduled job'],
+  ['at', 'adds a scheduled job'],
 ])
 
 /**
@@ -489,7 +489,7 @@ export function buyruqniBahola(buyruq: string, sozlama: BuyruqTahlilSozlamalari)
         if (tashqi) {
           return {
             toifa: 'xavfli',
-            sabab: `ish papkasidan tashqariga chiqadi: ${tashqi}`,
+            sabab: `leaves the working directory: ${tashqi}`,
             naqsh,
           }
         }
@@ -502,7 +502,7 @@ export function buyruqniBahola(buyruq: string, sozlama: BuyruqTahlilSozlamalari)
     if (tashqi) {
       return {
         toifa: 'xavfli',
-        sabab: `ish papkasidan tashqaridagi yo'l: ${tashqi}`,
+        sabab: `path outside the working directory: ${tashqi}`,
         naqsh,
       }
     }
@@ -533,8 +533,8 @@ export function buyruqniBahola(buyruq: string, sozlama: BuyruqTahlilSozlamalari)
       return {
         toifa: 'xavfli',
         sabab: kichik
-          ? `\`git ${kichik}\` — tashqariga chiqadi yoki qaytarib bo'lmaydi`
-          : 'git kichik buyrug\'i aniqlanmadi',
+          ? `\`git ${kichik}\` — reaches outward or cannot be undone`
+          : 'the git subcommand could not be determined',
         naqsh,
       }
     }
@@ -543,7 +543,7 @@ export function buyruqniBahola(buyruq: string, sozlama: BuyruqTahlilSozlamalari)
     if (!XAVFSIZ_BUYRUQLAR.has(nom) && !notanish) {
       notanish = {
         toifa: 'notanish',
-        sabab: `\`${nom}\` tanish buyruqlar ro'yxatida yo'q`,
+        sabab: `\`${nom}\` is not in the list of known commands`,
         naqsh,
       }
     }

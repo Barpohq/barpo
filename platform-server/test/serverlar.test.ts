@@ -115,7 +115,7 @@ describe('POST /api/servers', () => {
     soxta(() => RAD)
     const { status, body } = await post('/api/servers', { name: 'olis', host: 'olis.uz' })
     expect(status).toBe(502)
-    expect(String(body.detail)).toContain('Parol kiriting')
+    expect(String(body.detail)).toContain('Enter a password')
     expect(serverlarOqi(db)).toHaveLength(0)
   })
 })

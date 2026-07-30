@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
-  "title": "Platforma sozlamalari",
-  "description": "Platformaning AI agenti, tool'lari va ruxsat tizimi sozlamalari. Bu fayl generatsiya qilinadi — qo'lda tahrirlamang, platform-config/src/sxema.ts ni o'zgartiring.",
+  "title": "Platform settings",
+  "description": "Settings for the platform AI agent, its tools and the permission system. This file is generated — do not edit it by hand, change platform-config/src/sxema.ts instead.",
   "properties": {
     "$schema": {
       "type": "string"
@@ -13,14 +13,14 @@
           "type": "object",
           "properties": {
             "maksXabar": {
-              "description": "LLM'ga yuboriladigan eng ko'p xabar soni. Bundan eskilari tashlanadi (compaction yoqilgan bo'lsa avval siqiladi).",
+              "description": "Maximum number of messages sent to the LLM. Older ones are dropped (compacted first if compaction is enabled).",
               "default": 200,
               "type": "number",
               "minimum": 10,
               "maximum": 5000
             },
             "toolNatijasiChegarasi": {
-              "description": "Tarixga saqlanadigan bitta tool natijasining eng katta uzunligi (belgi). Uzun `read`/`bash` chiqishlari kontekstni bosib ketmasin.",
+              "description": "Maximum length (characters) of a single tool result stored in history, so long `read`/`bash` output does not swamp the context.",
               "default": 4000,
               "type": "number",
               "minimum": 200,
@@ -33,26 +33,26 @@
           "type": "object",
           "properties": {
             "yoqilgan": {
-              "description": "Kontekst to'lganda tarixni avtomatik siqish. O'chirilsa uzun suhbat context window'ga sig'may qoladi.",
+              "description": "Automatically compact history when the context fills up. If disabled, a long conversation stops fitting in the context window.",
               "default": true,
               "type": "boolean"
             },
             "zaxiraTokenlar": {
-              "description": "Context window'ning summary prompti va javob uchun ajratilgan qismi. Kontekst (window - zaxira) dan oshsa siqish boshlanadi.",
+              "description": "Part of the context window reserved for the summary prompt and the response. Compaction starts once the context exceeds (window - reserve).",
               "default": 16384,
               "type": "number",
               "minimum": 1000,
               "maximum": 200000
             },
             "saqlanadiganTokenlar": {
-              "description": "Siqishdan keyin o'zgarishsiz saqlanadigan eng yangi kontekst hajmi. Kattaroq qiymat — yaqin tarix aniqroq, lekin siqish kamroq foyda beradi.",
+              "description": "How much of the most recent context is kept verbatim after compaction. A larger value keeps recent history more precise but makes compaction less effective.",
               "default": 20000,
               "type": "number",
               "minimum": 1000,
               "maximum": 200000
             },
             "modeli": {
-              "description": "Siqish uchun model, `provider/model` shaklida. `null` bo'lsa asosiy chat modeli ishlatiladi (summary sifati muhim, shuning uchun standart shunday).",
+              "description": "Model used for compaction, as `provider/model`. When `null` the main chat model is used (summary quality matters, hence the default).",
               "default": null,
               "type": [
                 "string",
@@ -66,7 +66,7 @@
           "type": "object",
           "properties": {
             "yoqilgan": {
-              "description": "Agentga beriladigan tool'lar. Ro'yxatdan olib tashlangan tool umuman ko'rinmaydi — agent uning borligini bilmaydi.",
+              "description": "Tools given to the agent. A tool removed from the list is invisible — the agent does not know it exists.",
               "default": [
                 "read",
                 "write",
@@ -84,14 +84,14 @@
               }
             },
             "bashTimeoutSekund": {
-              "description": "Bitta `bash` buyrug'i uchun eng uzun bajarilish vaqti. Cheksiz kutish web sessiyasini qotiradi.",
+              "description": "Maximum run time for a single `bash` command. Waiting forever would freeze the web session.",
               "default": 120,
               "type": "number",
               "minimum": 1,
               "maximum": 3600
             },
             "natijaChegarasi": {
-              "description": "UI'ga yuboriladigan tool natijasining eng katta uzunligi (belgi). Tarixga saqlanadigan chegara alohida sozlanadi.",
+              "description": "Maximum length (characters) of a tool result sent to the UI. The limit for what is stored in history is configured separately.",
               "default": 2000,
               "type": "number",
               "minimum": 200,
@@ -107,7 +107,7 @@
       "type": "object",
       "properties": {
         "rejim": {
-          "description": "Yangi sessiyaning boshlang'ich ruxsat rejimi. `tasdiq` — har xavfli amal so'raladi; `auto` — klassifikator hal qiladi.",
+          "description": "Initial permission mode for a new session. `tasdiq` asks about every dangerous action; `auto` lets the classifier decide.",
           "default": "tasdiq",
           "type": "string",
           "enum": [
@@ -116,14 +116,14 @@
           ]
         },
         "kutishSoniya": {
-          "description": "Ruxsat so'roviga javob kutish muddati. Muddat tugasa so'rov RAD etiladi — agent abadiy osilib qolmasin.",
+          "description": "How long to wait for an answer to a permission request. On timeout the request is DENIED, so the agent does not hang forever.",
           "default": 300,
           "type": "number",
           "minimum": 10,
           "maximum": 3600
         },
         "klassifikatorModeli": {
-          "description": "Auto rejim klassifikatori uchun model, `provider/model` shaklida. `null` bo'lsa avtomatik tanlanadi (tez va sinalgan modellar ustuvor).",
+          "description": "Model for the auto-mode classifier, as `provider/model`. When `null` it is chosen automatically (fast, proven models first).",
           "default": null,
           "type": [
             "string",
@@ -131,21 +131,21 @@
           ]
         },
         "ketmaKetBlokChegarasi": {
-          "description": "Klassifikator ketma-ket shuncha marta bloklasa auto rejim o'chadi — agent so'ralganidan chetga chiqayotgan bo'lishi mumkin.",
+          "description": "Auto mode turns off after the classifier blocks this many actions in a row — the agent may be going beyond what was asked.",
           "default": 3,
           "type": "number",
           "minimum": 1,
           "maximum": 100
         },
         "jamiBlokChegarasi": {
-          "description": "Sessiya davomida jami shuncha blokdan keyin auto rejim o'chadi.",
+          "description": "Auto mode turns off after this many blocks in total during a session.",
           "default": 20,
           "type": "number",
           "minimum": 1,
           "maximum": 1000
         },
         "qoshimchaTaqiqlar": {
-          "description": "Qo'shimcha taqiqlangan buyruq nomlari. O'rnatilgan qat'iy taqiq ro'yxatiga QO'SHILADI, uni almashtirmaydi — xavfsizlik chegarasini pasaytirib bo'lmaydi.",
+          "description": "Additional forbidden command names. They are ADDED to the built-in hard block list, never replace it — the security boundary cannot be lowered.",
           "default": [],
           "type": "array",
           "items": {
@@ -159,7 +159,7 @@
       "type": "object",
       "properties": {
         "ishPapkasi": {
-          "description": "Agent tool'lari ishlaydigan papkalar ildizi. `null` bo'lsa `~/.platforma/ishlar/` ishlatiladi.",
+          "description": "Root directory the agent tools work in. When `null`, `~/.platforma/ishlar/` is used.",
           "default": null,
           "type": [
             "string",
@@ -167,7 +167,7 @@
           ]
         },
         "faolsizlikDaqiqa": {
-          "description": "Shuncha vaqt faolsiz sessiyaning xotiradagi resurslari (ruxsat holati, rejim) tozalanadi. Suhbat tarixi bazada qoladi.",
+          "description": "In-memory resources of a session idle for this long (permission state, mode) are cleaned up. The conversation history stays in the database.",
           "default": 60,
           "type": "number",
           "minimum": 1,
@@ -180,14 +180,14 @@
       "type": "object",
       "properties": {
         "ulanishTimeoutSekund": {
-          "description": "MCP serverga ulanish (handshake) uchun eng uzun kutish. Server javob bermasa sessiya davom etadi — faqat o'sha server ishlamaydi.",
+          "description": "Maximum wait for the MCP server handshake. If the server does not respond the session continues — only that server is unavailable.",
           "default": 10,
           "type": "number",
           "minimum": 1,
           "maximum": 60
         },
         "chaqiruvTimeoutSekund": {
-          "description": "Bitta MCP tool chaqiruvi uchun eng uzun kutish.",
+          "description": "Maximum wait for a single MCP tool call.",
           "default": 30,
           "type": "number",
           "minimum": 1,
@@ -203,14 +203,14 @@
           "type": "object",
           "properties": {
             "maksFaylMb": {
-              "description": "Chatga biriktiriladigan bitta faylning eng katta hajmi (MB).",
+              "description": "Maximum size (MB) of a single file attached to a chat.",
               "default": 20,
               "type": "number",
               "minimum": 1,
               "maximum": 200
             },
             "maksSoni": {
-              "description": "Bitta xabarga biriktiriladigan eng ko'p fayl soni.",
+              "description": "Maximum number of files attached to a single message.",
               "default": 10,
               "type": "number",
               "minimum": 1,

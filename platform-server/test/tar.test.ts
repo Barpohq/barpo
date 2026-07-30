@@ -135,7 +135,7 @@ describe('tarOqi', () => {
 
   test('hajm chegarasi oshsa xato — zip bomb himoyasi', () => {
     const arxiv = tarQur([{ yol: 'repo/katta.bin', mazmun: 'x'.repeat(5000) }])
-    expect(() => tarOqi(arxiv, 1000)).toThrow(/juda katta/)
+    expect(() => tarOqi(arxiv, 1000)).toThrow(/too large/)
   })
 
   test('bo\'sh arxiv bo\'sh ro\'yxat', () => {

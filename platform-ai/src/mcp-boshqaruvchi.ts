@@ -184,8 +184,8 @@ export class McpBoshqaruvchi {
       const sabab = this.xatolar.get(serverId)
       throw new Error(
         sabab
-          ? `MCP server ulanmagan: ${serverNomi} (${sabab})`
-          : `MCP server topilmadi: ${serverNomi}`,
+          ? `MCP server not connected: ${serverNomi} (${sabab})`
+          : `MCP server not found: ${serverNomi}`,
       )
     }
 
@@ -193,12 +193,12 @@ export class McpBoshqaruvchi {
       tur: 'mcp',
       amal: `${serverNomi}.${toolNomi}`,
       nishon: argumentlarniNishonga(argumentlar),
-      sabab: `"${serverNomi}" MCP serverining "${toolNomi}" vositasi tashqi tizimga murojaat qiladi`,
+      sabab: `the "${toolNomi}" tool of the "${serverNomi}" MCP server reaches an external system`,
       naqsh: mcpNaqshi(serverNomi, toolNomi),
     })
 
     if (javob === 'rad') {
-      throw new Error(`Ruxsat berilmadi: ${serverNomi}.${toolNomi}`)
+      throw new Error(`Permission denied: ${serverNomi}.${toolNomi}`)
     }
 
     return klient.chaqir(toolNomi, argumentlar, signal)

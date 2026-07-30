@@ -26,7 +26,7 @@ const baza = db()
 const seed = seedQol(baza)
 if (seed.audit || seed.apps) {
   console.log(
-    `[seed] boshlang'ich ma'lumot yozildi: ${seed.audit} audit · ${seed.apps} ilova`,
+    `[seed] initial data written: ${seed.audit} audit · ${seed.apps} apps`,
   )
 }
 
@@ -76,7 +76,7 @@ const server = Bun.serve<UlanishHolati, never>({
     if (url.pathname === '/ws') {
       const ok = srv.upgrade(req, { data: yangiUlanishHolati() })
       if (ok) return undefined // upgrade muvaffaqiyatli — javob WS qatlamida
-      return new Response('WebSocket upgrade kerak', { status: 426 })
+      return new Response('WebSocket upgrade required', { status: 426 })
     }
 
     return app.fetch(req)
@@ -97,18 +97,18 @@ const server = Bun.serve<UlanishHolati, never>({
 
 console.log(`[platforma] http://localhost:${server.port}  ·  ws://localhost:${server.port}/ws`)
 
-auditYoz('platforma', 'Server ishga tushdi', `port ${server.port}`, "o'qish", 'OK')
+auditYoz('platform', 'Server started', `port ${server.port}`, "o'qish", 'OK')
 
 // Toza to'xtash: WAL checkpoint qilinishi uchun bazani yopamiz
 function toxtat(signal: string) {
-  console.log(`\n[platforma] ${signal} — to'xtatilmoqda...`)
+  console.log(`\n[platforma] ${signal} — shutting down...`)
   server.stop()
   // MCP jarayonlari — OXIRGI HIMOYA QATLAMI. `process.exit()` bola
   // jarayonlarni o'ldirmaydi: ular yetim qolib fonda ishlab turardi
   // (`mcp-transport.ts` dagi reestr izohiga q.).
   const mcpSoni = tirikJarayonlarSoni()
   if (mcpSoni > 0) {
-    console.log(`[mcp] ${mcpSoni} ta jarayon to'xtatilmoqda`)
+    console.log(`[mcp] stopping ${mcpSoni} process(es)`)
     hammaMcpJarayoniniOldir()
   }
   baza.close()

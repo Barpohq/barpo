@@ -160,7 +160,7 @@ export function natijaniAjrat(natija: unknown): McpToolNatijasi {
     if (tur === 'text') {
       return { type: 'text', text: typeof bolak.text === 'string' ? bolak.text : '' }
     }
-    return { type: tur, text: `[${tur} — matn bo'lmagan mazmun]` }
+    return { type: tur, text: `[${tur} — non-text content]` }
   })
 
   return { content, isError }

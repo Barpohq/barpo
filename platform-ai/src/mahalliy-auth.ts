@@ -132,12 +132,12 @@ function muddatniNormalla(qiymat: number | undefined): number {
 async function jsonOqi(yol: string): Promise<{ qiymat?: unknown; sabab?: string }> {
   try {
     const fayl = Bun.file(yol)
-    if (!(await fayl.exists())) return { sabab: 'fayl topilmadi' }
+    if (!(await fayl.exists())) return { sabab: 'file not found' }
     return { qiymat: JSON.parse(await fayl.text()) as unknown }
   } catch (xato) {
     const xabar = xato instanceof Error ? xato.message : String(xato)
     // Faylning o'zi maxfiy — faqat xato turini qaytaramiz, mazmunini emas
-    return { sabab: `o'qib bo'lmadi (${xabar.slice(0, 80)})` }
+    return { sabab: `could not be read (${xabar.slice(0, 80)})` }
   }
 }
 

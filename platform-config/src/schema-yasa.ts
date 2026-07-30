@@ -97,11 +97,11 @@ export function schemaYasa(): Record<string, unknown> {
 
   return {
     $schema: 'https://json-schema.org/draft-07/schema#',
-    title: 'Platforma sozlamalari',
+    title: 'Platform settings',
     description:
-      "Platformaning AI agenti, tool'lari va ruxsat tizimi sozlamalari. " +
-      'Bu fayl generatsiya qilinadi — qo\'lda tahrirlamang, ' +
-      'platform-config/src/sxema.ts ni o\'zgartiring.',
+      'Settings for the platform AI agent, its tools and the permission system. ' +
+      'This file is generated — do not edit it by hand, ' +
+      'change platform-config/src/sxema.ts instead.',
     // `$schema` config faylida ham yoziladi — uni notanish maydon deb
     // hisoblamaslik uchun ruxsat beramiz
     properties: { $schema: { type: 'string' }, ...(ildiz.properties ?? {}) },

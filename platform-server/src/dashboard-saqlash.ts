@@ -57,7 +57,7 @@ export async function dashboardniSaqla(
     const yaroqli = manifest.states.filter((s) => {
       const xatolar = kodniTekshir(s.kod)
       if (xatolar.length === 0) return true
-      ogohlantirishlar.push(`State "${s.nom}" tashlandi: ${xatolar.join('; ')}`)
+      ogohlantirishlar.push(`State "${s.nom}" dropped: ${xatolar.join('; ')}`)
       return false
     })
     if (yaroqli.length > 0) manifest.states = yaroqli
@@ -75,7 +75,7 @@ export async function dashboardniSaqla(
       // Ko'rsatadigan boshqa narsa BOR — ilovani yo'qotmaymiz.
       delete manifest.view
       ogohlantirishlar.push(
-        'Ko\'rinish kodi kompilyatsiya qilinmadi va TASHLANDI (vidjetlar saqlandi): ' +
+        'The view code did not compile and was DROPPED (widgets were kept): ' +
           qurish.xatolar.join('; '),
       )
     } else {
@@ -85,7 +85,7 @@ export async function dashboardniSaqla(
         ok: false,
         xatolar: [
           ...qurish.xatolar,
-          'Vidjet ham berilmagan, shuning uchun ko\'rsatadigan narsa qolmadi.',
+          'No widgets were provided either, so there is nothing left to display.',
         ],
       }
     }
@@ -117,6 +117,6 @@ export async function dashboardniSaqla(
   } catch (xato) {
     // Baza xatosi (disk to'lgan, qulflangan) — agentga aytamiz, lekin
     // jarayonni yiqitmaymiz.
-    return { ok: false, xatolar: [`Bazaga saqlab bo'lmadi: ${String(xato)}`] }
+    return { ok: false, xatolar: [`Could not save to the database: ${String(xato)}`] }
   }
 }

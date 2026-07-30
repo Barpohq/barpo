@@ -1138,7 +1138,7 @@ export function xabarlarOqi(sessionId: string, baza?: Database): ChatMessage[] {
       id: messageId,
       sessionId,
       role: 'assistant',
-      text: "⚠︎ Javob tugamadi — oqim uzilgan. Bajarilgan amallar quyida.",
+      text: '⚠︎ The response did not finish — the stream was interrupted. The actions that ran are below.',
       toolCards: kartalar,
       createdAt: yetimVaqti(d, messageId),
     })

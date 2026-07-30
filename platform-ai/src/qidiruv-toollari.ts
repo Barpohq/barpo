@@ -83,7 +83,7 @@ function natija(matn: string, tafsilot: QidiruvTafsiloti): AgentToolResult<Qidir
  * ham aytiladi (naqshni toraytir), aks holda u shunchaki qayta urinadi.
  */
 function kesilganOgohi(korsatilgan: number, nima: string): string {
-  return `\n\n[Natija ${korsatilgan} ta ${nima} bilan cheklandi — yana bor. Naqshni toraytiring yoki \`path\` bilan aniqroq papka bering.]`
+  return `\n\n[Results were capped at ${korsatilgan} ${nima} — there are more. Narrow the pattern or pass a more specific \`path\` folder.]`
 }
 
 // ---------------------------------------------------------------------------
@@ -122,10 +122,10 @@ export type GrepToolKirishi = Static<typeof grepSxemasi>
 
 /** Grep natijasini `fayl:qator:matn` qatorlariga aylantiradi */
 export function grepNatijasiniMatnga(natija: QidiruvNatijasi<GrepMosligi>): string {
-  if (natija.elementlar.length === 0) return 'Mos kelish topilmadi.'
+  if (natija.elementlar.length === 0) return 'No matches found.'
   const qatorlar = natija.elementlar.map((m) => `${m.yol}:${m.qator}:${m.matn}`)
   let matn = qatorlar.join('\n')
-  if (natija.kesildi) matn += kesilganOgohi(natija.elementlar.length, 'mos kelish')
+  if (natija.kesildi) matn += kesilganOgohi(natija.elementlar.length, 'matches')
   return matn
 }
 
@@ -185,9 +185,9 @@ const findSxemasi = Type.Object({
 export type FindToolKirishi = Static<typeof findSxemasi>
 
 export function findNatijasiniMatnga(natija: QidiruvNatijasi<string>): string {
-  if (natija.elementlar.length === 0) return 'Fayl topilmadi.'
+  if (natija.elementlar.length === 0) return 'No files found.'
   let matn = natija.elementlar.join('\n')
-  if (natija.kesildi) matn += kesilganOgohi(natija.elementlar.length, 'fayl')
+  if (natija.kesildi) matn += kesilganOgohi(natija.elementlar.length, 'files')
   return matn
 }
 
@@ -249,7 +249,7 @@ export function olchamniMatnga(bayt: number): string {
 }
 
 export function lsNatijasiniMatnga(natija: QidiruvNatijasi<PapkaElementi>): string {
-  if (natija.elementlar.length === 0) return "Papka bo'sh."
+  if (natija.elementlar.length === 0) return 'The directory is empty.'
   const qatorlar = natija.elementlar.map((e) => {
     // Papka `/` bilan tugaydi, symlink `@` bilan — `ls -F` an'anasi.
     // Bu agent uchun turni bir qarashda ko'rsatadi, qo'shimcha ustunsiz.
@@ -258,7 +258,7 @@ export function lsNatijasiniMatnga(natija: QidiruvNatijasi<PapkaElementi>): stri
     return e.olcham === undefined ? e.nom : `${e.nom}  (${olchamniMatnga(e.olcham)})`
   })
   let matn = qatorlar.join('\n')
-  if (natija.kesildi) matn += kesilganOgohi(natija.elementlar.length, 'element')
+  if (natija.kesildi) matn += kesilganOgohi(natija.elementlar.length, 'entries')
   return matn
 }
 

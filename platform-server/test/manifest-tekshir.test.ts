@@ -126,7 +126,7 @@ describe('data — snapshot chegaralari', () => {
   test('chegaradan katta data rad etiladi', () => {
     const n = manifestniTekshir({ ...asos, data: { katta: 'x'.repeat(DATA_CHEGARASI) } })
     expect(n.ok).toBe(false)
-    expect(n.xatolar.join(' ')).toContain('juda katta')
+    expect(n.xatolar.join(' ')).toContain('too large')
   })
 
   test('siklik havola xato TASHLAMAYDI', () => {

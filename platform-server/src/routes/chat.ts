@@ -71,7 +71,7 @@ chatRoutes.post('/chat/sessions', async (c) => {
   // Yo'q loyiha id'si bilan sessiya yaratilsa foreign key xatosi 500 bo'lib
   // chiqardi — bu yerda tushunarli 404 beramiz.
   if (projectId && !loyihaOqi(projectId)) {
-    return c.json({ error: 'Loyiha topilmadi', detail: projectId }, 404)
+    return c.json({ error: 'Project not found', detail: projectId }, 404)
   }
 
   return c.json({ session: sessiyaYarat(title, undefined, projectId) }, 201)
@@ -105,13 +105,13 @@ chatRoutes.get('/chat/running', (c) => {
  */
 chatRoutes.get('/chat/sessions/:id', (c) => {
   const sessiya = sessiyaOqi(c.req.param('id'))
-  if (!sessiya) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  if (!sessiya) return c.json({ error: 'Session not found' }, 404)
   return c.json({ session: sessiya })
 })
 
 chatRoutes.get('/chat/sessions/:id/messages', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
   return c.json({ messages: xabarlarOqi(id) })
 })
 
@@ -125,25 +125,25 @@ const SARLAVHA_MAX = 200
  */
 chatRoutes.patch('/chat/sessions/:id', async (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
 
   let tana: { title?: unknown }
   try {
     tana = (await c.req.json()) as { title?: unknown }
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   if (typeof tana.title !== 'string') {
-    return c.json({ error: 'title majburiy' }, 400)
+    return c.json({ error: 'title is required' }, 400)
   }
   const title = tana.title.trim()
   if (title.length === 0) {
-    return c.json({ error: "Sarlavha bo'sh bo'lmasligi kerak" }, 400)
+    return c.json({ error: 'Title must not be empty' }, 400)
   }
   if (title.length > SARLAVHA_MAX) {
     return c.json(
-      { error: 'Sarlavha juda uzun', detail: `Eng ko'pi ${SARLAVHA_MAX} belgi` },
+      { error: 'Title too long', detail: `At most ${SARLAVHA_MAX} characters` },
       400,
     )
   }
@@ -161,7 +161,7 @@ chatRoutes.patch('/chat/sessions/:id', async (c) => {
  */
 chatRoutes.delete('/chat/sessions/:id', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
 
   const oqimToxtatildi = oqimBormi(id) ? oqimniToxtat(id) : false
 
@@ -208,17 +208,17 @@ chatRoutes.post('/chat/send', async (c) => {
   try {
     tana = (await c.req.json()) as YuborishTanasi
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   if (typeof tana.sessionId !== 'string' || tana.sessionId.length === 0) {
-    return c.json({ error: 'sessionId majburiy' }, 400)
+    return c.json({ error: 'sessionId is required' }, 400)
   }
   if (typeof tana.text !== 'string') {
-    return c.json({ error: 'text majburiy' }, 400)
+    return c.json({ error: 'text is required' }, 400)
   }
   if (tana.biriktirmalar !== undefined && !idRoyxatimi(tana.biriktirmalar)) {
-    return c.json({ error: "biriktirmalar id satrlari massivi bo'lishi kerak" }, 400)
+    return c.json({ error: 'biriktirmalar must be an array of id strings' }, 400)
   }
 
   const natija = xabarniQabulQil({
@@ -250,23 +250,23 @@ chatRoutes.post('/chat/permission', async (c) => {
   try {
     tana = (await c.req.json()) as typeof tana
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   const sessionId = matnMi(tana.sessionId)
   const sorovId = matnMi(tana.sorovId)
   const javob = tana.javob
   if (!sessionId || !sorovId) {
-    return c.json({ error: 'sessionId va sorovId majburiy' }, 400)
+    return c.json({ error: 'sessionId and sorovId are required' }, 400)
   }
   if (javob !== 'ruxsat' && javob !== 'rad' && javob !== 'hardoim') {
-    return c.json({ error: "javob 'ruxsat', 'rad' yoki 'hardoim' bo'lishi kerak" }, 400)
+    return c.json({ error: "javob must be 'ruxsat', 'rad' or 'hardoim'" }, 400)
   }
 
   const berildi = ruxsatJavobi(sessionId, sorovId, javob)
   if (!berildi) {
     return c.json(
-      { error: "So'rov topilmadi", detail: 'Muddati tugagan yoki allaqachon javob berilgan' },
+      { error: 'Request not found', detail: 'It has expired or was already answered' },
       404,
     )
   }
@@ -283,14 +283,14 @@ chatRoutes.post('/chat/permission', async (c) => {
  */
 chatRoutes.get('/chat/sessions/:id/ruxsatlar', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
   return c.json({ sorovlar: kutayotganRuxsatlar(id) })
 })
 
 /** Sessiyaning hozirgi ruxsat rejimi */
 chatRoutes.get('/chat/sessions/:id/rejim', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
   return c.json({ holat: rejimHolati(id) })
 })
 
@@ -300,18 +300,18 @@ chatRoutes.get('/chat/sessions/:id/rejim', (c) => {
  */
 chatRoutes.post('/chat/sessions/:id/rejim', async (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
 
   let rejim: unknown
   try {
     const tana = (await c.req.json()) as { rejim?: unknown }
     rejim = tana?.rejim
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   if (rejim !== 'tasdiq' && rejim !== 'auto') {
-    return c.json({ error: "rejim 'tasdiq' yoki 'auto' bo'lishi kerak" }, 400)
+    return c.json({ error: "rejim must be 'tasdiq' or 'auto'" }, 400)
   }
   return c.json({ holat: await rejimOrnat(id, rejim) })
 })
@@ -341,7 +341,7 @@ chatRoutes.post('/chat/sessions/:id/rejim', async (c) => {
 const TANA_YUQORI_SHIFT = 256 * 1024 * 1024
 
 /** Rasm nomi bo'sh kelganda ishlatiladigan asos (Windows paste'da shunday bo'ladi) */
-const RASM_ZAXIRA_NOMI = 'rasm'
+const RASM_ZAXIRA_NOMI = 'image'
 
 /**
  * Fayl yoki rasm biriktirish (multipart).
@@ -359,26 +359,26 @@ chatRoutes.post(
   '/chat/biriktirma',
   bodyLimit({
     maxSize: TANA_YUQORI_SHIFT,
-    onError: (c) => c.json({ error: "So'rov tanasi juda katta" }, 413),
+    onError: (c) => c.json({ error: 'Request body too large' }, 413),
   }),
   async (c) => {
     let forma: FormData
     try {
       forma = await c.req.formData()
     } catch {
-      return c.json({ error: "So'rov multipart/form-data bo'lishi kerak" }, 400)
+      return c.json({ error: 'Request must be multipart/form-data' }, 400)
     }
 
     const sessionId = matnMi(forma.get('sessionId'))
-    if (!sessionId) return c.json({ error: 'sessionId majburiy' }, 400)
+    if (!sessionId) return c.json({ error: 'sessionId is required' }, 400)
 
     const sessiya = sessiyaOqi(sessionId)
-    if (!sessiya) return c.json({ error: 'Sessiya topilmadi' }, 404)
+    if (!sessiya) return c.json({ error: 'Session not found' }, 404)
 
     // `File` dan boshqasi (matn maydoni) tashlanadi — mijoz xato yuborgan
     const fayllar = forma.getAll('fayl').filter((f): f is File => f instanceof File)
     if (fayllar.length === 0) {
-      return c.json({ error: 'Fayl yuborilmadi', detail: "`fayl` maydoni bo'sh" }, 400)
+      return c.json({ error: 'No file was sent', detail: '`fayl` field is empty' }, 400)
     }
 
     const papka = sessiyaIshPapkasi(sessionId, sessiyaLoyihaPapkasi(sessionId))
@@ -392,8 +392,8 @@ chatRoutes.post(
     if (mavjudSoni + fayllar.length > maksSoni) {
       return c.json(
         {
-          error: "Biriktirmalar soni chegarasidan oshdi",
-          detail: `Eng ko'pi ${maksSoni} ta (hozir ${mavjudSoni} ta bor)`,
+          error: 'Attachment limit reached',
+          detail: `At most ${maksSoni} (currently ${mavjudSoni})`,
         },
         400,
       )
@@ -401,13 +401,13 @@ chatRoutes.post(
 
     for (const fayl of fayllar) {
       if (fayl.size === 0) {
-        return c.json({ error: "Bo'sh fayl biriktirilmaydi", detail: fayl.name }, 400)
+        return c.json({ error: 'Empty files cannot be attached', detail: fayl.name }, 400)
       }
       if (fayl.size > maksBayt) {
         return c.json(
           {
-            error: 'Fayl juda katta',
-            detail: `${fayl.name} — ${(fayl.size / 1024 / 1024).toFixed(1)} MB, chegara ${sozlamalar.chat.biriktirma.maksFaylMb} MB`,
+            error: 'File too large',
+            detail: `${fayl.name} — ${(fayl.size / 1024 / 1024).toFixed(1)} MB, limit ${sozlamalar.chat.biriktirma.maksFaylMb} MB`,
           },
           413,
         )
@@ -429,7 +429,7 @@ chatRoutes.post(
       // zaxira nom. Rasm paste'ida `File.name` ko'pincha bo'sh keladi.
       const tozaNom =
         yuklamaNomi(fayl.name) ??
-        (rasm ? `${RASM_ZAXIRA_NOMI}.${rasmKengaytmasi(rasm)}` : 'fayl')
+        (rasm ? `${RASM_ZAXIRA_NOMI}.${rasmKengaytmasi(rasm)}` : 'file')
       const nom = bandsizNom(toliq, tozaNom)
 
       // `wx` — fayl allaqachon bo'lsa xato beradi. `bandsizNom` va yozish
@@ -456,7 +456,7 @@ chatRoutes.post(
           )
           continue
         } catch {
-          return c.json({ error: "Faylni saqlab bo'lmadi", detail: fayl.name }, 500)
+          return c.json({ error: 'Could not save the file', detail: fayl.name }, 500)
         }
       }
 
@@ -496,12 +496,12 @@ chatRoutes.post(
  */
 chatRoutes.get('/chat/biriktirma/:id', (c) => {
   const biriktirma = biriktirmaOqi(c.req.param('id'))
-  if (!biriktirma) return c.json({ error: 'Biriktirma topilmadi' }, 404)
+  if (!biriktirma) return c.json({ error: 'Attachment not found' }, 404)
 
   const papka = sessiyaIshPapkasi(biriktirma.sessionId, sessiyaLoyihaPapkasi(biriktirma.sessionId))
   const toliq = join(papka, biriktirma.yol)
   if (!toliq.startsWith(`${papka}/`)) {
-    return c.json({ error: "Yaroqsiz yo'l" }, 400)
+    return c.json({ error: 'Invalid path' }, 400)
   }
 
   const fayl = Bun.file(toliq)
@@ -533,13 +533,13 @@ chatRoutes.get('/chat/biriktirma/:id', (c) => {
 chatRoutes.delete('/chat/biriktirma/:id', (c) => {
   const id = c.req.param('id')
   const biriktirma = biriktirmaOqi(id)
-  if (!biriktirma) return c.json({ error: 'Biriktirma topilmadi' }, 404)
+  if (!biriktirma) return c.json({ error: 'Attachment not found' }, 404)
 
   if (biriktirmaBoglanganmi(id)) {
     return c.json(
       {
-        error: "Yuborilgan biriktirma o'chirilmaydi",
-        detail: 'U suhbat tarixining qismi — agent uni allaqachon ko\'rgan',
+        error: 'A sent attachment cannot be removed',
+        detail: 'It is part of the conversation history — the agent has already seen it',
       },
       409,
     )
@@ -567,7 +567,7 @@ chatRoutes.post('/chat/stop', async (c) => {
   } catch {
     // pastda tekshiriladi
   }
-  if (!sessionId) return c.json({ error: 'sessionId majburiy' }, 400)
+  if (!sessionId) return c.json({ error: 'sessionId is required' }, 400)
   return c.json({ toxtatildi: oqimniToxtat(sessionId) })
 })
 

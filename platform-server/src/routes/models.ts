@@ -23,8 +23,8 @@ modelsRoutes.get('/models', async (c) => {
 modelsRoutes.post('/models/refresh', async (c) => {
   const natija = await modellarniAniqla({ majburiy: true })
   auditYoz(
-    'platforma',
-    'AI providerlari qayta aniqlandi',
+    'platform',
+    'AI providers re-detected',
     `${natija.providers.length} provider · ${natija.models.length} model`,
     "o'qish",
     'OK',

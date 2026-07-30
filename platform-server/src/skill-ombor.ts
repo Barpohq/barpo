@@ -94,13 +94,13 @@ export async function manbaniSkanerla(m: GithubManzil): Promise<SkanerNatija> {
   const { fayllar, kesilgan } = await skillFayllariniTop(m, ref)
 
   if (kesilgan) {
-    ogohlantirishlar.push("Repo juda katta — fayllar ro'yxati to'liq emas")
+    ogohlantirishlar.push('Repository too large — the file list is incomplete')
   }
 
   let royxat = fayllar
   if (royxat.length > MAKS_SKANER_FAYL) {
     ogohlantirishlar.push(
-      `${royxat.length} ta skill topildi, birinchi ${MAKS_SKANER_FAYL} tasi o'qildi`,
+      `Found ${royxat.length} skills, read the first ${MAKS_SKANER_FAYL}`,
     )
     royxat = royxat.slice(0, MAKS_SKANER_FAYL)
   }
@@ -120,7 +120,7 @@ export async function manbaniSkanerla(m: GithubManzil): Promise<SkanerNatija> {
 
     const tahlil = skillFayliniTahlil(xom, papka)
     if (!tahlil) {
-      ogohlantirishlar.push(`${fayl.yol}: tavsif (description) yo'q — o'tkazib yuborildi`)
+      ogohlantirishlar.push(`${fayl.yol}: no description — skipped`)
       continue
     }
 
@@ -180,7 +180,7 @@ export async function skillniOmborga(
     baytlar += yozuv.mazmun.length
     if (baytlar > MAKS_SKILL_BAYT) {
       rmSync(nishon, { recursive: true, force: true })
-      throw new Error(`Skill juda katta (${Math.round(MAKS_SKILL_BAYT / 1024 / 1024)}MB chegarasi)`)
+      throw new Error(`Skill too large (${Math.round(MAKS_SKILL_BAYT / 1024 / 1024)}MB limit)`)
     }
 
     // `tarOqi` yo'lni allaqachon tozalagan (`..` yo'q), lekin yozishdan
@@ -196,7 +196,7 @@ export async function skillniOmborga(
 
   if (fayllar === 0) {
     rmSync(nishon, { recursive: true, force: true })
-    throw new Error(`Arxivda "${skillPapkasi || '/'}" papkasi topilmadi`)
+    throw new Error(`Folder "${skillPapkasi || '/'}" not found in the archive`)
   }
 
   return { fayllar, baytlar }

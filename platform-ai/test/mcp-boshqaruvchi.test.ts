@@ -166,7 +166,7 @@ describe('ulash', () => {
 
     expect(b.ulanganSoni).toBe(1)
     expect(b.royxat().every((r) => r.serverNomi === 'yaxshi')).toBe(true)
-    expect(b.ulanishXatolari.get('id-2')).toMatch(/javob bermadi/)
+    expect(b.ulanishXatolari.get('id-2')).toMatch(/did not respond/)
 
     await b.yop()
   })
@@ -220,7 +220,7 @@ describe('ruxsat oqimi', () => {
     await b.ulash([serverTarifi('id-1', 'github')])
 
     await expect(b.chaqir('id-1', 'ochir', { yol: 'muhim.txt' })).rejects.toThrow(
-      /Ruxsat berilmadi/,
+      /Permission denied/,
     )
     // ENG MUHIM: server chaqirilmagan bo'lishi kerak
     expect(chaqiruvlar).toHaveLength(0)
@@ -336,7 +336,7 @@ describe('xato holatlari', () => {
     const b = new McpBoshqaruvchi('s1', ruxsat)
     await b.ulash([serverTarifi('id-1', 'buzuq')])
 
-    await expect(b.chaqir('id-1', 'oqi', {})).rejects.toThrow(/ulanmagan: buzuq/)
+    await expect(b.chaqir('id-1', 'oqi', {})).rejects.toThrow(/not connected: buzuq/)
     // Ruxsat SO'RALMAYDI — bajarib bo'lmaydigan amal uchun so'rov chiqarish
     // foydalanuvchini chalg'itardi
     expect(sorovlar).toHaveLength(0)
@@ -350,7 +350,7 @@ describe('xato holatlari', () => {
     const b = new McpBoshqaruvchi('s1', ruxsat)
     await b.ulash([serverTarifi('id-1', 'github')])
 
-    await expect(b.chaqir('yoq-bunday', 'oqi', {})).rejects.toThrow(/topilmadi/)
+    await expect(b.chaqir('yoq-bunday', 'oqi', {})).rejects.toThrow(/not found/)
     await b.yop()
   })
 

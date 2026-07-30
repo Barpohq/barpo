@@ -38,7 +38,7 @@ describe('oqimXatosi', () => {
 
   test('sabab matni bo\'lmasa ham xato yo\'qolmaydi', () => {
     expect(oqimXatosi([{ role: 'assistant', stopReason: 'error', content: [] }])).toBe(
-      'provider javobni qaytara olmadi',
+      'the provider could not return a response',
     )
     expect(
       oqimXatosi([{ role: 'assistant', stopReason: 'error', errorMessage: '   ', content: [] }]),

@@ -35,11 +35,11 @@ export function appYarat(): Hono {
 
   app.route('/api', api)
 
-  app.notFound((c) => c.json({ error: 'Topilmadi', path: c.req.path }, 404))
+  app.notFound((c) => c.json({ error: 'Not found', path: c.req.path }, 404))
 
   app.onError((xato, c) => {
     console.error('[xato]', c.req.method, c.req.path, xato)
-    return c.json({ error: 'Ichki server xatosi', detail: String(xato) }, 500)
+    return c.json({ error: 'Internal server error', detail: String(xato) }, 500)
   })
 
   return app

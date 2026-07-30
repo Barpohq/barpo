@@ -201,7 +201,7 @@ export async function chegaraniTekshir(
       ok: false,
       absolut,
       kanonik: absolut,
-      sabab: "ish papkasidan tashqarida",
+      sabab: 'outside the working directory',
     }
   }
 
@@ -230,7 +230,7 @@ export async function chegaraniTekshir(
       ok: false,
       absolut,
       kanonik,
-      sabab: "symlink ish papkasidan tashqariga olib chiqadi",
+      sabab: 'the symlink leads outside the working directory',
     }
   }
 

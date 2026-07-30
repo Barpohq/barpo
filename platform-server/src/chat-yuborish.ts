@@ -64,18 +64,18 @@ export function xabarniQabulQil(sorov: YuborishSorovi): YuborishNatijasi {
   // rasm tashlab, hech narsa yozmasligi tabiiy holat ("bu nima?" degani
   // rasmning o'zidan ham tushunarli).
   if (!matn && biriktirmaIdlari.length === 0) {
-    return { ok: false, status: 400, xato: "Xabar matni bo'sh bo'lmasligi kerak" }
+    return { ok: false, status: 400, xato: 'Message text must not be empty' }
   }
 
   const sessiya = sessiyaOqi(sorov.sessionId)
-  if (!sessiya) return { ok: false, status: 404, xato: 'Sessiya topilmadi' }
+  if (!sessiya) return { ok: false, status: 404, xato: 'Session not found' }
 
   if (oqimBormi(sorov.sessionId)) {
     return {
       ok: false,
       status: 409,
-      xato: 'Bu sessiyada javob hali oqmoqda',
-      tafsilot: "Avval kutib turing yoki to'xtating",
+      xato: 'A response is still streaming in this session',
+      tafsilot: 'Wait for it to finish or stop it first',
     }
   }
 
@@ -85,8 +85,8 @@ export function xabarniQabulQil(sorov: YuborishSorovi): YuborishNatijasi {
       return {
         ok: false,
         status: 400,
-        xato: 'Model tanlanmagan',
-        tafsilot: "Sessiyaning birinchi xabarida model: { provider, model } yuborilishi kerak",
+        xato: 'No model selected',
+        tafsilot: 'The first message of a session must include model: { provider, model }',
       }
     }
     sessiyaModelQulfla(sorov.sessionId, sorov.tanlangan.provider, sorov.tanlangan.model)
@@ -94,8 +94,8 @@ export function xabarniQabulQil(sorov: YuborishSorovi): YuborishNatijasi {
     return {
       ok: false,
       status: 409,
-      xato: "Sessiya provideri o'zgartirib bo'lmaydi",
-      tafsilot: `Sessiya "${sessiya.provider}" provideriga bog'langan. Boshqa provider uchun yangi suhbat boshlang.`,
+      xato: 'The session provider cannot be changed',
+      tafsilot: `This session is bound to the "${sessiya.provider}" provider. Start a new conversation to use a different one.`,
     }
   } else if (sorov.tanlangan?.model && sorov.tanlangan.model !== sessiya.model) {
     // Bir provider ichida modelni almashtirish mumkin
@@ -104,7 +104,7 @@ export function xabarniQabulQil(sorov: YuborishSorovi): YuborishNatijasi {
 
   const yangilangan = sessiyaOqi(sorov.sessionId)
   if (!yangilangan?.provider || !yangilangan.model) {
-    return { ok: false, status: 500, xato: 'Sessiya modeli aniqlanmadi' }
+    return { ok: false, status: 500, xato: 'Could not determine the session model' }
   }
 
   // --- Biriktirmalar ---
@@ -117,8 +117,8 @@ export function xabarniQabulQil(sorov: YuborishSorovi): YuborishNatijasi {
     return {
       ok: false,
       status: 404,
-      xato: 'Biriktirma topilmadi',
-      tafsilot: "Yuklama o'chirilgan yoki boshqa suhbatga tegishli",
+      xato: 'Attachment not found',
+      tafsilot: 'The upload was removed or belongs to another conversation',
     }
   }
 
@@ -127,8 +127,8 @@ export function xabarniQabulQil(sorov: YuborishSorovi): YuborishNatijasi {
     return {
       ok: false,
       status: 400,
-      xato: 'Biriktirmalar soni chegarasidan oshdi',
-      tafsilot: `Eng ko'pi ${chegara} ta`,
+      xato: 'Attachment limit reached',
+      tafsilot: `At most ${chegara}`,
     }
   }
 
@@ -146,8 +146,8 @@ export function xabarniQabulQil(sorov: YuborishSorovi): YuborishNatijasi {
       return {
         ok: false,
         status: 400,
-        xato: "Bu model rasmni qo'llamaydi",
-        tafsilot: `${model.name} faqat matn bilan ishlaydi. Vision qo'llaydigan model tanlang yoki rasmni olib tashlang.`,
+        xato: 'This model does not support images',
+        tafsilot: `${model.name} is text-only. Pick a vision-capable model or remove the image.`,
       }
     }
   }

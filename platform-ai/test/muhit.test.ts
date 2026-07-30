@@ -220,7 +220,7 @@ describe('buyruq bajarish', () => {
   test('rad etilgan buyruq xato xabari tushunarli', async () => {
     const m = muhitYarat('rad')
     const r = await m.exec('sudo ls')
-    expect(!r.ok && r.error.message).toContain('Ruxsat berilmadi')
+    expect(!r.ok && r.error.message).toContain('Permission denied')
   })
 })
 
@@ -242,7 +242,7 @@ describe('cp/mv — mavjud fayl ustiga yozish', () => {
     const r = await m.exec('cp manba.txt ichki.txt')
     expect(r.ok).toBe(false)
     expect(sorovlar).toHaveLength(1)
-    expect(sorovlar[0]?.sabab).toContain('ustiga yozadi')
+    expect(sorovlar[0]?.sabab).toContain('overwrites')
 
     // Eski mazmun joyida
     const oqish = await m.readTextFile('ichki.txt')

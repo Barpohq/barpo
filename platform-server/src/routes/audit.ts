@@ -18,10 +18,10 @@ auditRoutes.get('/audit', (c) => {
   }
 
   if (filtr.limit !== undefined && Number.isNaN(filtr.limit)) {
-    return c.json({ error: "limit butun son bo'lishi kerak" }, 400)
+    return c.json({ error: 'limit must be an integer' }, 400)
   }
   if (filtr.offset !== undefined && Number.isNaN(filtr.offset)) {
-    return c.json({ error: "offset butun son bo'lishi kerak" }, 400)
+    return c.json({ error: 'offset must be an integer' }, 400)
   }
 
   return c.json({

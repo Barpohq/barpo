@@ -54,14 +54,14 @@ describe('maydon tekshiruvi', () => {
   test('noto\'g\'ri tur standartga qaytariladi', () => {
     const n = maydonniTekshir(sonMaydon, 'salom')
     expect(n.qiymat).toBe(10)
-    expect(n.sabab).toContain('son kutildi')
+    expect(n.sabab).toContain('expected a number')
   })
 
   test('chegaradan kichik qiymat KESILADI, standartga qaytarilmaydi', () => {
     // Foydalanuvchi niyati aniq — shunchaki ruxsat etilgan oraliqqa keltiramiz
     const n = maydonniTekshir(sonMaydon, -5)
     expect(n.qiymat).toBe(1)
-    expect(n.sabab).toContain('juda kichik')
+    expect(n.sabab).toContain('too small')
   })
 
   test('chegaradan katta qiymat kesiladi', () => {
@@ -91,14 +91,14 @@ describe('maydon tekshiruvi', () => {
     expect(maydonniTekshir(tanlov, 'b').qiymat).toBe('b')
     const n = maydonniTekshir(tanlov, 'c')
     expect(n.qiymat).toBe('a')
-    expect(n.sabab).toContain('variantlar')
+    expect(n.sabab).toContain('options')
   })
 
   test('ro\'yxatdagi noto\'g\'ri elementlar tashlanadi, butun ro\'yxat emas', () => {
     const royxat = { yol: 't', tur: 'matnRoyxati', standart: [], izoh: '' } as const
     const n = maydonniTekshir(royxat, ['read', 42, 'bash', null])
     expect(n.qiymat).toEqual(['read', 'bash'])
-    expect(n.sabab).toContain('tashlandi')
+    expect(n.sabab).toContain('dropped')
   })
 })
 

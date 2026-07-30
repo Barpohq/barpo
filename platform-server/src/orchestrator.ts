@@ -441,7 +441,7 @@ export async function javobOqizi(
           holatTarqat(sessionId, 'ruxsat-kutmoqda')
           auditYoz(
             'agent',
-            "ruxsat so'raldi",
+            'permission requested',
             `${hodisa.sorov.amal}: ${hodisa.sorov.nishon}`.slice(0, 120),
             'xavfli',
             'kutmoqda',
@@ -465,8 +465,8 @@ export async function javobOqizi(
           toolniYangila(nishonTool, { ruxsat: hodisa.qaror })
           if (hodisa.qaror.sorovId) sorovningTooli.delete(hodisa.qaror.sorovId)
           auditYoz(
-            'platforma',
-            'ruxsat qarori',
+            'platform',
+            'permission decision',
             `${hodisa.qaror.manba}: ${hodisa.qaror.naqsh ?? '—'}`.slice(0, 120),
             'xavfli',
             hodisa.qaror.berildi ? 'tasdiqlandi' : 'rad etildi',
@@ -486,7 +486,7 @@ export async function javobOqizi(
           })
           auditYoz(
             'klassifikator',
-            hodisa.qaror === 'ruxsat' ? 'ruxsat berdi' : 'blokladi',
+            hodisa.qaror === 'ruxsat' ? 'allowed' : 'blocked',
             hodisa.izoh.slice(0, 120),
             'xavfli',
             hodisa.qaror === 'ruxsat' ? 'tasdiqlandi' : 'rad etildi',
@@ -504,7 +504,7 @@ export async function javobOqizi(
             },
           })
           if (hodisa.sabab) {
-            auditYoz('platforma', "auto rejim o'chdi", hodisa.sabab.slice(0, 120), 'xavfli', 'OK')
+            auditYoz('platform', 'auto mode turned off', hodisa.sabab.slice(0, 120), 'xavfli', 'OK')
           }
           break
 
@@ -512,8 +512,8 @@ export async function javobOqizi(
           // Kontekst siqildi — foydalanuvchi buni bilishi kerak, chunki
           // agent endi eski tafsilotlarni xulosadan ko'radi
           auditYoz(
-            'platforma',
-            'kontekst siqildi',
+            'platform',
+            'context compacted',
             `${hodisa.oldingiTokenlar} → ~${hodisa.yangiTokenlar} token`,
             "o'zgartirish",
             'OK',
@@ -601,7 +601,7 @@ export async function javobOqizi(
 
   if (xato && !toxtatildi) {
     hub.broadcast({ type: 'chat.error', sessionId, messageId, error: xato })
-    auditYoz('chat', 'LLM javobi xato', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'rad etildi')
+    auditYoz('chat', 'LLM response failed', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'rad etildi')
   } else if (toxtatildi) {
     // UI uchun bu oddiy tugash: oqim yopiladi, qizil ogohlantirish chiqmaydi.
     hub.broadcast({
@@ -610,9 +610,9 @@ export async function javobOqizi(
       messageId,
       usage: { input: 0, output: 0, cost: 0 },
     })
-    auditYoz('chat', "LLM javobi to'xtatildi", `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
+    auditYoz('chat', 'LLM response stopped', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
   } else {
-    auditYoz('chat', 'LLM javobi', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
+    auditYoz('chat', 'LLM response', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
   }
 
   // Yakuniy holat — to'xtatish (abort) ham shu yerdan o'tadi: bekor qilingan
@@ -674,7 +674,7 @@ export async function rejimOrnat(
     if (!klassifikatorNomi(sessionId)) {
       const holat: RejimHolati = {
         rejim: 'tasdiq',
-        sabab: "klassifikator uchun mos model topilmadi — provider sozlanganini tekshiring",
+        sabab: 'no suitable model found for the classifier — check that a provider is configured',
       }
       hub.broadcast({ type: 'chat.rejim', sessionId, holat })
       return holat
@@ -684,7 +684,7 @@ export async function rejimOrnat(
   b.ornat(rejim)
   const holat = rejimHolati(sessionId)
   hub.broadcast({ type: 'chat.rejim', sessionId, holat })
-  auditYoz('foydalanuvchi', 'ruxsat rejimi', rejim, "o'zgartirish", 'OK')
+  auditYoz('user', 'permission mode', rejim, "o'zgartirish", 'OK')
   return holat
 }
 
@@ -710,8 +710,8 @@ export function ruxsatJavobi(sessionId: string, sorovId: string, javob: RuxsatJa
   const berildi = ruxsatBoshqaruvchisi(sessionId).javobBer(sorovId, javob)
   if (berildi) {
     auditYoz(
-      'foydalanuvchi',
-      'ruxsat javobi',
+      'user',
+      'permission reply',
       `${sorovId.slice(0, 8)} → ${javob}`,
       'xavfli',
       javob === 'rad' ? 'rad etildi' : 'tasdiqlandi',
@@ -798,13 +798,13 @@ function klassifikatorTarixiniTayyorla(sessionId: string): SuhbatXabari[] {
 }
 
 function xatoliMatn(toplangan: string, xato: string): string {
-  const belgi = `⚠︎ Javob to'liq kelmadi: ${xato}`
+  const belgi = `⚠︎ The response did not arrive in full: ${xato}`
   return toplangan.trim().length > 0 ? `${toplangan}\n\n${belgi}` : belgi
 }
 
 /** Ruxsat berilmagani xato natijasidan ajratiladi — UI boshqa rang beradi */
 function xatoHolati(natija: string): ToolChaqiruv['holat'] {
-  return natija.includes('Ruxsat berilmadi') ? 'rad etildi' : 'xato'
+  return natija.includes('Permission denied') ? 'rad etildi' : 'xato'
 }
 
 /** Audit uchun: tool nimaga tegdi */

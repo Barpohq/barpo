@@ -162,7 +162,7 @@ describe('uzunlik hooki', () => {
     const uzun = 'x'.repeat(5000)
     const n = await keyinZanjiri([uzunlikHooki(100)], { ...natijaKonteksti, natija: uzun })
     expect(n.natija.length).toBeLessThan(200)
-    expect(n.natija).toContain('qisqartirildi')
+    expect(n.natija).toContain('truncated')
   })
 
   test('qisqa natija tegilmaydi', async () => {

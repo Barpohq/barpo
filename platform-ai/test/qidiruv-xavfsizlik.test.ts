@@ -57,7 +57,7 @@ describe('chegaraniTekshir', () => {
   test('`..` bilan yuqoriga chiqish rad etiladi', async () => {
     const n = await chegaraniTekshir(ish, '../tashqi')
     expect(n.ok).toBe(false)
-    expect(n.sabab).toContain('tashqarida')
+    expect(n.sabab).toContain('outside the working directory')
   })
 
   test('absolut tashqi yo\'l rad etiladi', async () => {

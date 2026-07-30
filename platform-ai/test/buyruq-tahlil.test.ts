@@ -86,7 +86,7 @@ describe('qat\'iy taqiq', () => {
   })
 
   test('sabab foydalanuvchiga tushunarli', () => {
-    expect(bahola('rm -rf /').sabab).toContain("o'chiradi")
+    expect(bahola('rm -rf /').sabab).toContain('deletes')
     expect(bahola(':(){ :|:& };:').sabab).toContain('fork bomba')
     expect(bahola('mkfs /dev/sda').sabab).toContain('formatlaydi')
   })
@@ -177,14 +177,14 @@ describe('xavfli buyruqlar', () => {
   test('sabab foydalanuvchiga tushunarli', () => {
     const b = bahola('rm -rf x')
     expect(b.sabab).toContain('rm')
-    expect(b.sabab).toContain("o'chiradi")
+    expect(b.sabab).toContain('deletes')
   })
 })
 
 describe('ish papkasidan tashqari', () => {
   test('absolut tashqi yo\'l xavfli', () => {
     expect(bahola('cat /etc/passwd').toifa).toBe('xavfli')
-    expect(bahola('cat /etc/passwd').sabab).toContain('tashqarida')
+    expect(bahola('cat /etc/passwd').sabab).toContain('outside the working directory')
   })
 
   test('uy papkasi belgisi xavfli', () => {
@@ -303,7 +303,7 @@ describe('cp/mv — ustiga yozish', () => {
   test('nishon mavjud bo\'lsa xavfli — ustiga yozadi', () => {
     const b = mavjudlar('b.txt')('cp a.txt b.txt')
     expect(b.toifa).toBe('xavfli')
-    expect(b.sabab).toContain('ustiga yozadi')
+    expect(b.sabab).toContain('overwrites')
   })
 
   test('mv ham xuddi shunday', () => {

@@ -153,7 +153,7 @@ async function aniqlashniBajar(sozlama?: AniqlashSozlamalari): Promise<AniqlashN
     } else {
       ogohlantirishlar.push({
         manba: 'Ollama',
-        sabab: 'mahalliy server javob bermadi yoki modellar yuklanmagan',
+        sabab: 'the local server did not respond or no models are loaded',
       })
     }
   } catch (xato) {
@@ -275,7 +275,7 @@ async function mahalliyAuthlarniUla(
     } catch (xato) {
       ogohlantirishlar.push({
         manba: natija.topilma.manba,
-        sabab: `omborga yozib bo'lmadi: ${xatoMatni(xato)}`,
+        sabab: `could not write to the store: ${xatoMatni(xato)}`,
       })
     }
   }

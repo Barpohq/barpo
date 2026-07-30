@@ -124,13 +124,13 @@ export class RejimBoshqaruvchi {
 
     if (this.ketmaKetBlok >= this.ketmaKetChegara) {
       this.autoniOchir(
-        `klassifikator ketma-ket ${this.ketmaKetChegara} marta bloklandi — ` +
-          'agent so\'ralganidan chetga chiqayotgan bo\'lishi mumkin',
+        `the classifier blocked ${this.ketmaKetChegara} actions in a row — ` +
+          'the agent may be going beyond what was asked',
       )
       return true
     }
     if (this.jamiBlok >= this.jamiChegara) {
-      this.autoniOchir(`sessiyada jami ${this.jamiChegara} marta bloklandi`)
+      this.autoniOchir(`${this.jamiChegara} actions were blocked in this session in total`)
       return true
     }
     return false
@@ -142,7 +142,7 @@ export class RejimBoshqaruvchi {
    */
   klassifikatorNosoz(xabar: string): void {
     if (this._rejim !== 'auto') return
-    this.autoniOchir(`klassifikator ishlamadi: ${xabar}`)
+    this.autoniOchir(`the classifier failed: ${xabar}`)
   }
 
   private autoniOchir(sabab: string): void {

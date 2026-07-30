@@ -339,7 +339,7 @@ export function stdioTransportYarat(
 
   return {
     async yubor(xabar) {
-      if (yopilgan) throw new Error('MCP transport yopilgan')
+      if (yopilgan) throw new Error('The MCP transport is closed')
       jarayon.yoz(`${JSON.stringify(xabar)}\n`)
     },
 
@@ -477,7 +477,7 @@ export function httpTransportYarat(
 
   return {
     async yubor(xabar) {
-      if (yopilgan) throw new Error('MCP transport yopilgan')
+      if (yopilgan) throw new Error('The MCP transport is closed')
 
       const javob = await fetch(url, {
         method: 'POST',
@@ -498,7 +498,7 @@ export function httpTransportYarat(
       if (!javob.ok) {
         // Tana xato sababini o'z ichiga olishi mumkin — diagnostika uchun saqlaymiz
         oxirgiXato = (await javob.text().catch(() => '')).slice(0, 500)
-        throw new Error(`MCP HTTP xatosi: ${javob.status} ${javob.statusText}`)
+        throw new Error(`MCP HTTP error: ${javob.status} ${javob.statusText}`)
       }
 
       // Xabarnoma (`id` yo'q) uchun server 202 va bo'sh tana qaytaradi
@@ -519,7 +519,7 @@ export function httpTransportYarat(
         for (const x of Array.isArray(xom) ? xom : [xom]) tarqat(x)
       } catch {
         oxirgiXato = matn.slice(0, 500)
-        throw new Error('MCP javobi JSON emas')
+        throw new Error('The MCP response is not JSON')
       }
     },
 

@@ -22,7 +22,7 @@ appsRoutes.get('/apps', (c) => {
 
 appsRoutes.get('/apps/:id', (c) => {
   const record = ilovaOqi(c.req.param('id'))
-  if (!record) return c.json({ error: 'Ilova topilmadi' }, 404)
+  if (!record) return c.json({ error: 'App not found' }, 404)
   return c.json({
     manifest: record.manifest,
     status: record.status,
@@ -55,10 +55,10 @@ appsRoutes.get('/apps/:id/state/:nom', async (c) => {
   const nom = c.req.param('nom')
 
   const record = ilovaOqi(appId)
-  if (!record) return c.json({ error: 'Ilova topilmadi' }, 404)
+  if (!record) return c.json({ error: 'App not found' }, 404)
 
   const state = record.manifest.states?.find((s) => s.nom === nom)
-  if (!state) return c.json({ error: `State topilmadi: ${nom}` }, 404)
+  if (!state) return c.json({ error: `State not found: ${nom}` }, 404)
 
   const natija = await stateniOl(
     appId,
@@ -84,7 +84,7 @@ appsRoutes.get('/apps/:id/state/:nom', async (c) => {
 appsRoutes.get('/apps/:id/state', async (c) => {
   const appId = c.req.param('id')
   const record = ilovaOqi(appId)
-  if (!record) return c.json({ error: 'Ilova topilmadi' }, 404)
+  if (!record) return c.json({ error: 'App not found' }, 404)
 
   const statelar = record.manifest.states ?? []
   // Parallel: sekin state (masalan `ssh`) qolganlarini kutdirmasin.
@@ -116,7 +116,7 @@ appsRoutes.get('/apps/:id/state', async (c) => {
 // └──────────────────────────────────────────────────────────────────────┘
 
 /** Amal bajargan aktyor — audit uchun. Hozircha yagona foydalanuvchi. */
-const AKTYOR = 'foydalanuvchi'
+const AKTYOR = 'user'
 
 /**
  * Sozlama sxemasi va joriy qiymatlar.
@@ -132,10 +132,10 @@ const AKTYOR = 'foydalanuvchi'
 appsRoutes.get('/apps/:id/sozlama', async (c) => {
   const appId = c.req.param('id')
   const record = ilovaOqi(appId)
-  if (!record) return c.json({ error: 'Ilova topilmadi' }, 404)
+  if (!record) return c.json({ error: 'App not found' }, 404)
 
   const sozlamalar = record.manifest.sozlamalar
-  if (!sozlamalar) return c.json({ error: 'Bu ilovada sozlamalar yo\'q' }, 404)
+  if (!sozlamalar) return c.json({ error: 'This app has no settings' }, 404)
 
   const oqilgan = await sozlamalarniOqi(sozlamalar, { appId, sozlama: {} })
 
@@ -168,16 +168,16 @@ appsRoutes.get('/apps/:id/sozlama', async (c) => {
 appsRoutes.put('/apps/:id/sozlama', async (c) => {
   const appId = c.req.param('id')
   const record = ilovaOqi(appId)
-  if (!record) return c.json({ error: 'Ilova topilmadi' }, 404)
+  if (!record) return c.json({ error: 'App not found' }, 404)
 
   const sozlamalar = record.manifest.sozlamalar
-  if (!sozlamalar) return c.json({ error: 'Bu ilovada sozlamalar yo\'q' }, 404)
+  if (!sozlamalar) return c.json({ error: 'This app has no settings' }, 404)
 
   let tana: unknown
   try {
     tana = await c.req.json()
   } catch {
-    return c.json({ error: 'JSON kutilgan' }, 400)
+    return c.json({ error: 'Expected JSON' }, 400)
   }
 
   const xom =
@@ -185,7 +185,7 @@ appsRoutes.put('/apps/:id/sozlama', async (c) => {
       ? ((tana as { qiymatlar?: unknown }).qiymatlar ?? tana)
       : null
   if (!xom || typeof xom !== 'object' || Array.isArray(xom)) {
-    return c.json({ error: '`qiymatlar` obyekt bo\'lishi kerak' }, 400)
+    return c.json({ error: '`qiymatlar` must be an object' }, 400)
   }
 
   const kirish = xom as Record<string, unknown>
@@ -200,7 +200,7 @@ appsRoutes.put('/apps/:id/sozlama', async (c) => {
     if (berilgan === undefined || berilgan === null) {
       if (maydon.majburiy && maydon.turi !== 'sir') {
         // Sir uchun bu xato EMAS: u allaqachon serverda bo'lishi mumkin.
-        xatolar.push(`"${maydon.yorliq}" majburiy`)
+        xatolar.push(`"${maydon.yorliq}" is required`)
       }
       continue
     }
@@ -213,7 +213,7 @@ appsRoutes.put('/apps/:id/sozlama', async (c) => {
           : null
 
     if (qiymat === null) {
-      xatolar.push(`"${maydon.yorliq}": qiymat matn bo'lishi kerak`)
+      xatolar.push(`"${maydon.yorliq}": value must be text`)
       continue
     }
 
@@ -221,7 +221,7 @@ appsRoutes.put('/apps/:id/sozlama', async (c) => {
     if (maydon.turi === 'sir' && qiymat.length === 0) continue
 
     if (maydon.majburiy && qiymat.trim().length === 0) {
-      xatolar.push(`"${maydon.yorliq}" majburiy`)
+      xatolar.push(`"${maydon.yorliq}" is required`)
       continue
     }
 
@@ -243,13 +243,13 @@ appsRoutes.put('/apps/:id/sozlama', async (c) => {
         mos = true
       }
       if (!mos) {
-        xatolar.push(maydon.naqshIzohi || `"${maydon.yorliq}" formati to'g'ri kelmadi`)
+        xatolar.push(maydon.naqshIzohi || `"${maydon.yorliq}" does not match the required format`)
         continue
       }
     }
 
     if (maydon.turi === 'raqam' && qiymat.trim().length > 0 && !Number.isFinite(Number(qiymat))) {
-      xatolar.push(`"${maydon.yorliq}" raqam bo'lishi kerak`)
+      xatolar.push(`"${maydon.yorliq}" must be a number`)
       continue
     }
 
@@ -259,7 +259,7 @@ appsRoutes.put('/apps/:id/sozlama', async (c) => {
   if (xatolar.length > 0) return c.json({ ok: false, xatolar }, 400)
 
   if (Object.keys(qiymatlar).length === 0) {
-    return c.json({ ok: false, xatolar: ['O\'zgargan qiymat yo\'q'] }, 400)
+    return c.json({ ok: false, xatolar: ['No values changed'] }, 400)
   }
 
   const natija = await sozlamalarniYoz(sozlamalar, qiymatlar, { appId, sozlama: {} })
@@ -268,7 +268,7 @@ appsRoutes.put('/apps/:id/sozlama', async (c) => {
   // KALITLAR yoziladi, QIYMATLAR emas — sir auditga tushmasligi kerak.
   auditYoz(
     AKTYOR,
-    `Sozlamalar yozildi: ${Object.keys(qiymatlar).join(', ')}`,
+    `Settings saved: ${Object.keys(qiymatlar).join(', ')}`,
     appId,
     "o'zgartirish",
     natija.ok ? 'OK' : 'rad etildi',
@@ -290,10 +290,10 @@ appsRoutes.post('/apps/:id/amal/:nom', async (c) => {
   const nom = c.req.param('nom')
 
   const record = ilovaOqi(appId)
-  if (!record) return c.json({ error: 'Ilova topilmadi' }, 404)
+  if (!record) return c.json({ error: 'App not found' }, 404)
 
   const amal = record.manifest.amallar?.find((a) => a.nom === nom)
-  if (!amal) return c.json({ error: `Amal topilmadi: ${nom}` }, 404)
+  if (!amal) return c.json({ error: `Action not found: ${nom}` }, 404)
 
   // Band bo'lsa 409: UI tugmani o'chirib turadi, lekin ikki brauzer oynasi
   // yoki sekin tarmoq bir vaqtda ikki so'rov yuborishi mumkin. Qulf
@@ -310,7 +310,7 @@ appsRoutes.post('/apps/:id/amal/:nom', async (c) => {
 
   auditYoz(
     AKTYOR,
-    `Amal bajarildi: ${amal.yorliq}`,
+    `Action executed: ${amal.yorliq}`,
     appId,
     amal.xavf ?? "o'zgartirish",
     natija.ok ? 'OK' : 'rad etildi',

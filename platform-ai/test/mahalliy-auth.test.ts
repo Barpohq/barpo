@@ -31,7 +31,7 @@ describe('claudeCodeAuth', () => {
   test('fayl yo\'q bo\'lsa sabab bilan qaytadi, throw qilmaydi', async () => {
     const natija = await claudeCodeAuth(uy)
     expect(natija.topilma).toBeUndefined()
-    expect(natija.sabab).toContain('topilmadi')
+    expect(natija.sabab).toContain('not found')
   })
 
   test('buzuq JSON throw qilmaydi', async () => {
@@ -101,7 +101,7 @@ describe('codexAuth', () => {
   test('fayl yo\'q bo\'lsa sabab qaytadi', async () => {
     const natija = await codexAuth(uy)
     expect(natija.topilma).toBeUndefined()
-    expect(natija.sabab).toContain('topilmadi')
+    expect(natija.sabab).toContain('not found')
   })
 
   test('topilganda openai-codex provideriga bog\'lanadi', async () => {

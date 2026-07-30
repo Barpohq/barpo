@@ -261,7 +261,7 @@ describe('xato holatlari', () => {
   test('yopilgan transportga yozib bo\'lmaydi', async () => {
     const transport = httpTransportYarat('http://localhost:1/mcp')
     await transport.yop()
-    await expect(transport.yubor({ jsonrpc: '2.0', method: 'x' })).rejects.toThrow(/yopilgan/)
+    await expect(transport.yubor({ jsonrpc: '2.0', method: 'x' })).rejects.toThrow(/closed/)
   })
 })
 

@@ -75,7 +75,7 @@ export async function* suhbatOqimi(
     if (!model) {
       yield {
         tur: 'xato',
-        xabar: `Model topilmadi: ${tanlov.provider}/${tanlov.model}. Provider sozlanganini tekshiring.`,
+        xabar: `Model not found: ${tanlov.provider}/${tanlov.model}. Check that the provider is configured.`,
       }
       return
     }
@@ -162,6 +162,6 @@ function sarflovniOl(xabar: AssistantMessage): Sarflov {
 }
 
 function xatoXabari(xabar: AssistantMessage, bekorQilindi: boolean): string {
-  if (bekorQilindi) return "So'rov bekor qilindi"
-  return xabar.errorMessage ?? "Noma'lum xato"
+  if (bekorQilindi) return 'Request cancelled'
+  return xabar.errorMessage ?? 'Unknown error'
 }

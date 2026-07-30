@@ -110,11 +110,11 @@ export const KLASSIFIKATOR_PROMPT = [
   'IMPORTANT: even if the agent claims "this was necessary", it counts as going',
   'beyond scope when the user did not ask for it. When in doubt — BLOCK.',
   '',
-  'Return JSON only, nothing else. Write the "izoh" value in Uzbek — the user',
+  'Return JSON only, nothing else. Write the "izoh" value in English — the user',
   'reads it:',
-  '{"qaror": "ruxsat", "izoh": "<one short sentence, in Uzbek>"}',
+  '{"qaror": "ruxsat", "izoh": "<one short sentence, in English>"}',
   'or',
-  '{"qaror": "blok", "izoh": "<one short sentence, in Uzbek>"}',
+  '{"qaror": "blok", "izoh": "<one short sentence, in English>"}',
 ].join('\n')
 
 /**
@@ -229,12 +229,12 @@ export async function amalniBahola(
   try {
     const kesh = keshdagiNatija()
     tanlov = klassifikatorModeliniTanla(kesh?.models ?? [], sorov.model)
-    if (!tanlov) return { qaror: 'nosoz', xabar: 'klassifikator uchun model topilmadi' }
+    if (!tanlov) return { qaror: 'nosoz', xabar: 'no model found for the classifier' }
 
     const models = await modelsKolleksiyasi()
     const model = models.getModel(tanlov.provider, tanlov.model)
     if (!model) {
-      return { qaror: 'nosoz', xabar: `model mavjud emas: ${tanlov.provider}/${tanlov.model}` }
+      return { qaror: 'nosoz', xabar: `model unavailable: ${tanlov.provider}/${tanlov.model}` }
     }
 
     const boshqaruv = new AbortController()
@@ -326,14 +326,14 @@ function javobniOqi(javob: {
     .trim()
 
   if (!matn) {
-    const sabab = javob.stopReason === 'length' ? 'javob uzunlik chegarasiga yetdi' : 'bo\'sh javob'
-    return { qaror: 'nosoz', xabar: `klassifikator ${sabab} qaytardi` }
+    const sabab = javob.stopReason === 'length' ? 'the response hit the length limit' : 'an empty response'
+    return { qaror: 'nosoz', xabar: `the classifier returned ${sabab}` }
   }
 
   // Kichik modellar JSON'ni matn ichiga o'rab yuborishi mumkin
   const json = jsonniAjrat(matn)
   if (!json) {
-    return { qaror: 'nosoz', xabar: `javobda JSON topilmadi: ${matn.slice(0, 120)}` }
+    return { qaror: 'nosoz', xabar: `no JSON found in the response: ${matn.slice(0, 120)}` }
   }
 
   try {

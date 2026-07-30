@@ -48,18 +48,18 @@ export function codexGaYoz(credential: OAuthCredential, uy = homedir()): Sinxron
 
   if (!existsSync(yol)) {
     // Codex o'rnatilmagan — bizning ishimiz emas
-    return { yozildi: false, sabab: 'fayl topilmadi' }
+    return { yozildi: false, sabab: 'file not found' }
   }
 
   let hozirgi: Record<string, unknown>
   try {
     const qiymat = JSON.parse(readFileSync(yol, 'utf8')) as unknown
     if (typeof qiymat !== 'object' || qiymat === null || Array.isArray(qiymat)) {
-      return { yozildi: false, sabab: 'kutilmagan shakl' }
+      return { yozildi: false, sabab: 'unexpected shape' }
     }
     hozirgi = qiymat as Record<string, unknown>
   } catch (xato) {
-    return { yozildi: false, sabab: `o'qib bo'lmadi (${xatoQisqa(xato)})` }
+    return { yozildi: false, sabab: `could not be read (${xatoQisqa(xato)})` }
   }
 
   const eskiTokens =
@@ -70,7 +70,7 @@ export function codexGaYoz(credential: OAuthCredential, uy = homedir()): Sinxron
   // Fayldagi token allaqachon o'sha bo'lsa — yozmaymiz. Keraksiz disk yozuvi
   // va codex'ning fayl kuzatuvchisini bezovta qilmaslik uchun.
   if (eskiTokens.access_token === credential.access && eskiTokens.refresh_token === credential.refresh) {
-    return { yozildi: false, sabab: "o'zgarish yo'q" }
+    return { yozildi: false, sabab: 'no change' }
   }
 
   const yangi = {
@@ -109,7 +109,7 @@ function atomikYoz(yol: string, mazmun: string): SinxronNatija {
     } catch {
       // tozalab bo'lmadi — kritik emas
     }
-    return { yozildi: false, sabab: `yozib bo'lmadi (${xatoQisqa(xato)})` }
+    return { yozildi: false, sabab: `could not be written (${xatoQisqa(xato)})` }
   }
 }
 

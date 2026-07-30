@@ -30,15 +30,15 @@ projectsRoutes.post('/projects', async (c) => {
     const tana = (await c.req.json()) as { name?: unknown }
     nom = tana?.name
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   if (typeof nom !== 'string' || nom.trim().length === 0) {
-    return c.json({ error: 'Loyiha nomi majburiy' }, 400)
+    return c.json({ error: 'Project name is required' }, 400)
   }
   const toza = nom.trim()
   if (toza.length > NOM_MAX) {
-    return c.json({ error: `Loyiha nomi ${NOM_MAX} belgidan uzun bo'lmasin` }, 400)
+    return c.json({ error: `Project name must not exceed ${NOM_MAX} characters` }, 400)
   }
 
   // Papka nomi faqat xavfsiz belgilardan quriladi. Bo'sh qolsa — nom
@@ -49,8 +49,8 @@ projectsRoutes.post('/projects', async (c) => {
   if (!slug) {
     return c.json(
       {
-        error: "Loyiha nomidan papka nomi hosil bo'lmadi",
-        detail: 'Nomda kamida bitta lotin harfi yoki raqam bo\'lsin',
+        error: 'Could not derive a folder name from the project name',
+        detail: 'The name needs at least one latin letter or digit',
       },
       400,
     )
@@ -58,7 +58,7 @@ projectsRoutes.post('/projects', async (c) => {
 
   if (loyihaNomBoyicha(toza)) {
     return c.json(
-      { error: 'Bunday nomli loyiha allaqachon bor', detail: toza },
+      { error: 'A project with this name already exists', detail: toza },
       409,
     )
   }
@@ -71,7 +71,7 @@ projectsRoutes.post('/projects', async (c) => {
   } catch (xato) {
     return c.json(
       {
-        error: "Loyiha papkasini yaratib bo'lmadi",
+        error: 'Could not create the project folder',
         detail: xato instanceof Error ? xato.message : String(xato),
       },
       500,
@@ -86,7 +86,7 @@ projectsRoutes.post('/projects', async (c) => {
   } catch (xato) {
     const xabar = xato instanceof Error ? xato.message : String(xato)
     if (xabar.includes('UNIQUE')) {
-      return c.json({ error: 'Bunday nomli loyiha allaqachon bor', detail: toza }, 409)
+      return c.json({ error: 'A project with this name already exists', detail: toza }, 409)
     }
     throw xato
   }

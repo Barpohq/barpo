@@ -100,7 +100,7 @@ describe('POST /api/chat/send — validatsiya', () => {
     const s = sessiyaYarat('sinov', db)
     const { status, body } = await yubor({ sessionId: s.id, text: '   ' })
     expect(status).toBe(400)
-    expect(body.error).toContain("bo'sh")
+    expect(body.error).toContain('empty')
   })
 
   test('mavjud bo\'lmagan sessiya — 404', async () => {
@@ -116,7 +116,7 @@ describe('POST /api/chat/send — validatsiya', () => {
     const s = sessiyaYarat('sinov', db)
     const { status, body } = await yubor({ sessionId: s.id, text: 'salom' })
     expect(status).toBe(400)
-    expect(body.error).toContain('Model')
+    expect(body.error).toContain('model')
   })
 })
 
@@ -131,7 +131,7 @@ describe('POST /api/chat/send — provider qulfi', () => {
       model: { provider: 'anthropic', model: 'claude-haiku-4-5' },
     })
     expect(status).toBe(409)
-    expect(body.error).toContain("o'zgartirib bo'lmaydi")
+    expect(body.error).toContain('cannot be changed')
     expect(body.detail).toContain('ollama')
   })
 })
@@ -347,7 +347,7 @@ describe('POST /api/chat/send — biriktirmalar', () => {
     })
 
     expect(status).toBe(404)
-    expect(body.error).toContain('Biriktirma')
+    expect(body.error).toContain('Attachment')
     // Xabar YOZILMASLIGI kerak — bazada yetim user xabari qolmasin
     expect(xabarlarOqi(bir.id, db)).toHaveLength(0)
   })
@@ -441,7 +441,7 @@ describe('POST /api/chat/send — vision qorovuli', () => {
     })
 
     expect(status).toBe(400)
-    expect(body.error).toContain('rasm')
+    expect(body.error).toContain('images')
     expect(body.detail).toContain("Ko'rmaydigan")
     // Rad etilgan xabar bazada qolmasligi kerak
     expect(xabarlarOqi(s.id, db)).toHaveLength(0)

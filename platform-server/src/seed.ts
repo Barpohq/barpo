@@ -20,18 +20,18 @@ import type { AppManifest, AuditEntry } from '@platforma/shared'
 // ---------------------------------------------------------------------------
 
 export const seedAuditLog: AuditEntry[] = [
-  { time: '00:12', actor: 'berlin-1 daemon', action: 'Kunlik backup', target: 'sqlite → berlin-1', level: "o'zgartirish", result: 'tasdiqlandi' },
-  { time: '05:55', actor: 'server-monitor', action: 'Restart taklifi', target: 'nyc-1 · nginx', level: "o'zgartirish", result: 'kutmoqda' },
-  { time: '06:00', actor: 'ai-news-bot', action: 'Pipeline ishga tushdi', target: 'helsinki-1', level: "o'qish", result: 'OK' },
-  { time: '08:47', actor: 'skill:postgres-backup', action: 'DROP TABLE urinishi bloklandi', target: 'db-01', level: 'xavfli', result: 'rad etildi' },
-  { time: '09:00', actor: 'ai-news-bot', action: 'Health hisobot yuborildi', target: 'admin chat', level: "o'qish", result: 'OK' },
-  { time: '10:14', actor: 'ai-news-bot', action: 'Tavily search chaqiruvi', target: 'enricher', level: "o'qish", result: 'OK' },
-  { time: '11:31', actor: 'firdavs', action: "Deploy so'rovi (chat orqali)", target: 'frankfurt-1', level: "o'zgartirish", result: 'OK' },
-  { time: '11:32', actor: 'claude-code', action: 'tmux sessiya ochildi', target: 'frankfurt-1', level: "o'zgartirish", result: 'tasdiqlandi' },
-  { time: '11:50', actor: 'server-monitor', action: "Disk holati o'qildi", target: 'helsinki-1', level: "o'qish", result: 'OK' },
-  { time: '11:50', actor: 'server-monitor', action: 'Alert yuborildi', target: 'admin chat', level: "o'qish", result: 'OK' },
-  { time: '12:04', actor: 'firdavs', action: 'Post tasdiqlandi (✅)', target: 'post #4', level: "o'zgartirish", result: 'OK' },
-  { time: '12:06', actor: 'ai-news-bot', action: 'Post nashr qilindi', target: 't.me/kanal/6', level: "o'zgartirish", result: 'tasdiqlandi' },
+  { time: '00:12', actor: 'berlin-1 daemon', action: 'Daily backup', target: 'sqlite → berlin-1', level: "o'zgartirish", result: 'tasdiqlandi' },
+  { time: '05:55', actor: 'server-monitor', action: 'Restart proposed', target: 'nyc-1 · nginx', level: "o'zgartirish", result: 'kutmoqda' },
+  { time: '06:00', actor: 'ai-news-bot', action: 'Pipeline started', target: 'helsinki-1', level: "o'qish", result: 'OK' },
+  { time: '08:47', actor: 'skill:postgres-backup', action: 'DROP TABLE attempt blocked', target: 'db-01', level: 'xavfli', result: 'rad etildi' },
+  { time: '09:00', actor: 'ai-news-bot', action: 'Health report sent', target: 'admin chat', level: "o'qish", result: 'OK' },
+  { time: '10:14', actor: 'ai-news-bot', action: 'Tavily search call', target: 'enricher', level: "o'qish", result: 'OK' },
+  { time: '11:31', actor: 'firdavs', action: 'Deploy request (via chat)', target: 'frankfurt-1', level: "o'zgartirish", result: 'OK' },
+  { time: '11:32', actor: 'claude-code', action: 'tmux session opened', target: 'frankfurt-1', level: "o'zgartirish", result: 'tasdiqlandi' },
+  { time: '11:50', actor: 'server-monitor', action: 'Disk usage read', target: 'helsinki-1', level: "o'qish", result: 'OK' },
+  { time: '11:50', actor: 'server-monitor', action: 'Alert sent', target: 'admin chat', level: "o'qish", result: 'OK' },
+  { time: '12:04', actor: 'firdavs', action: 'Post approved (✅)', target: 'post #4', level: "o'zgartirish", result: 'OK' },
+  { time: '12:06', actor: 'ai-news-bot', action: 'Post published', target: 't.me/kanal/6', level: "o'zgartirish", result: 'tasdiqlandi' },
 ]
 
 // ---------------------------------------------------------------------------

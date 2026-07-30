@@ -190,26 +190,26 @@ export function skillFayliniTahlil(xomMatn: string, papkaNomi: string): SkillFay
 
   // --- Nomni tekshirish (spec: [a-z0-9-]+, ≤64, chetida/ketma-ket `-` yo'q) ---
   if (nom.length > NOM_CHEGARASI) {
-    ogohlantirishlar.push(`nom ${NOM_CHEGARASI} belgidan uzun — kesildi`)
+    ogohlantirishlar.push(`name longer than ${NOM_CHEGARASI} characters — truncated`)
     nom = nom.slice(0, NOM_CHEGARASI)
   }
   if (!/^[a-z0-9-]+$/.test(nom)) {
-    ogohlantirishlar.push("nom spec'ga mos emas: faqat kichik harf, raqam va `-` bo'lishi kerak")
+    ogohlantirishlar.push('name does not match the spec: only lowercase letters, digits and `-` are allowed')
   }
   if (nom.startsWith('-') || nom.endsWith('-') || nom.includes('--')) {
-    ogohlantirishlar.push("nomda chetki yoki ketma-ket `-` bor — spec'ga mos emas")
+    ogohlantirishlar.push('name has a leading, trailing or repeated `-` — does not match the spec')
   }
 
   // Nom papka nomidan farq qilsa — spec buni taqiqlaydi, lekin pi ataylab
   // yumshoq qaraydi (bir papka bir necha vosita bilan bo'lishilganda halal
   // beradi). Biz ham ogohlantirish bilan cheklanamiz.
   if (satr(maydonlar.name) && satr(maydonlar.name)?.trim() !== papkaNomi) {
-    ogohlantirishlar.push(`nom papka nomiga (${papkaNomi}) mos emas`)
+    ogohlantirishlar.push(`name does not match the folder name (${papkaNomi})`)
   }
 
   let toliqTavsif = tavsif
   if (toliqTavsif.length > TAVSIF_CHEGARASI) {
-    ogohlantirishlar.push(`tavsif ${TAVSIF_CHEGARASI} belgidan uzun — kesildi`)
+    ogohlantirishlar.push(`description longer than ${TAVSIF_CHEGARASI} characters — truncated`)
     toliqTavsif = `${toliqTavsif.slice(0, TAVSIF_CHEGARASI)}…`
   }
 

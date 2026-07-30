@@ -62,19 +62,19 @@ skillsRoutes.post('/skills/manba', async (c) => {
     const tana = (await c.req.json()) as { url?: unknown }
     url = tana?.url
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   if (typeof url !== 'string' || !url.trim()) {
-    return c.json({ error: 'Repo manzili majburiy' }, 400)
+    return c.json({ error: 'Repository URL is required' }, 400)
   }
 
   const manzil = manzilniAjrat(url)
   if (!manzil) {
     return c.json(
       {
-        error: "Manzilni tanib bo'lmadi",
-        detail: 'Masalan: https://github.com/anthropics/skills yoki anthropics/skills',
+        error: 'Could not parse the URL',
+        detail: 'For example: https://github.com/anthropics/skills or anthropics/skills',
       },
       400,
     )
@@ -84,7 +84,7 @@ skillsRoutes.post('/skills/manba', async (c) => {
   try {
     skaner = await manbaniSkanerla(manzil)
   } catch (xato) {
-    return c.json({ error: xato instanceof Error ? xato.message : 'Skanerlash muvaffaqiyatsiz' }, 502)
+    return c.json({ error: xato instanceof Error ? xato.message : 'Scan failed' }, 502)
   }
 
   const manba = manbaYarat({
@@ -98,8 +98,8 @@ skillsRoutes.post('/skills/manba', async (c) => {
   const natija = skilllarniSinxronla(manba.id, skaner.skilllar, skaner.sha)
 
   auditYoz(
-    'foydalanuvchi',
-    'Skill manbasi ulandi',
+    'user',
+    'Skill source connected',
     `${manzil.owner}/${manzil.repo} — ${natija.qoshildi} skill`,
     "o'zgartirish",
   )
@@ -110,20 +110,20 @@ skillsRoutes.post('/skills/manba', async (c) => {
 /** Qayta skanerlash — repo'da yangi skill paydo bo'lgan bo'lsa katalogga tushadi */
 skillsRoutes.post('/skills/manba/:id/sinxron', async (c) => {
   const manba = manbaOqi(c.req.param('id'))
-  if (!manba) return c.json({ error: 'Manba topilmadi' }, 404)
+  if (!manba) return c.json({ error: 'Source not found' }, 404)
 
   let skaner: Awaited<ReturnType<typeof manbaniSkanerla>>
   try {
     skaner = await manbaniSkanerla({ owner: manba.owner, repo: manba.repo, ref: manba.ref })
   } catch (xato) {
-    return c.json({ error: xato instanceof Error ? xato.message : 'Skanerlash muvaffaqiyatsiz' }, 502)
+    return c.json({ error: xato instanceof Error ? xato.message : 'Scan failed' }, 502)
   }
 
   const natija = skilllarniSinxronla(manba.id, skaner.skilllar, skaner.sha)
 
   auditYoz(
-    'foydalanuvchi',
-    'Skill manbasi sinxronlandi',
+    'user',
+    'Skill source synced',
     `${manba.owner}/${manba.repo} — +${natija.qoshildi} / -${natija.ochirildi}`,
     "o'zgartirish",
   )
@@ -135,14 +135,14 @@ skillsRoutes.post('/skills/manba/:id/sinxron', async (c) => {
 skillsRoutes.delete('/skills/manba/:id', (c) => {
   const id = c.req.param('id')
   const manba = manbaOqi(id)
-  if (!manba) return c.json({ error: 'Manba topilmadi' }, 404)
+  if (!manba) return c.json({ error: 'Source not found' }, 404)
 
   manbaOchir(id)
   manbaniOmbordanOchir(id)
 
   auditYoz(
-    'foydalanuvchi',
-    "Skill manbasi o'chirildi",
+    'user',
+    'Skill source removed',
     `${manba.owner}/${manba.repo}`,
     "o'zgartirish",
   )
@@ -169,31 +169,31 @@ interface OrnatTana {
  */
 skillsRoutes.post('/skills/:id/ornat', async (c) => {
   const skill = skillOqi(c.req.param('id'))
-  if (!skill) return c.json({ error: 'Skill topilmadi' }, 404)
+  if (!skill) return c.json({ error: 'Skill not found' }, 404)
 
   const manba = manbaOqi(skill.manbaId)
-  if (!manba) return c.json({ error: 'Skill manbasi topilmadi' }, 404)
+  if (!manba) return c.json({ error: 'Skill source not found' }, 404)
 
   let tana: OrnatTana
   try {
     tana = (await c.req.json()) as OrnatTana
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   const qamrov = tana.qamrov
   if (qamrov !== 'global' && qamrov !== 'loyiha') {
-    return c.json({ error: "qamrov 'global' yoki 'loyiha' bo'lishi kerak" }, 400)
+    return c.json({ error: "qamrov must be 'global' or 'loyiha'" }, 400)
   }
 
   let loyihalar: string[] = []
   if (qamrov === 'loyiha') {
     if (!Array.isArray(tana.projectIds) || tana.projectIds.length === 0) {
-      return c.json({ error: "Loyiha qamrovida kamida bitta loyiha tanlanishi kerak" }, 400)
+      return c.json({ error: 'Project scope needs at least one project selected' }, 400)
     }
     loyihalar = tana.projectIds.filter((x): x is string => typeof x === 'string')
     for (const id of loyihalar) {
-      if (!loyihaOqi(id)) return c.json({ error: `Loyiha topilmadi: ${id}` }, 404)
+      if (!loyihaOqi(id)) return c.json({ error: `Project not found: ${id}` }, 404)
     }
   }
 
@@ -209,7 +209,7 @@ skillsRoutes.post('/skills/:id/ornat', async (c) => {
     // Qayta o'rnatishda eski holat qolmasin (GitHub yo'lidagi bilan bir xil)
     rmSync(nishon, { recursive: true, force: true })
     if (!standartniOmborga(skill.yol, nishon)) {
-      return c.json({ error: "Standart skill papkasi topilmadi" }, 500)
+      return c.json({ error: 'Built-in skill folder not found' }, 500)
     }
   } else {
     try {
@@ -222,7 +222,7 @@ skillsRoutes.post('/skills/:id/ornat', async (c) => {
       )
     } catch (xato) {
       return c.json(
-        { error: xato instanceof Error ? xato.message : "Yuklab bo'lmadi" },
+        { error: xato instanceof Error ? xato.message : 'Download failed' },
         502,
       )
     }
@@ -235,8 +235,8 @@ skillsRoutes.post('/skills/:id/ornat', async (c) => {
   }
 
   auditYoz(
-    'foydalanuvchi',
-    "Skill o'rnatildi",
+    'user',
+    'Skill installed',
     `${skill.nom} — ${qamrov === 'global' ? 'global' : `${loyihalar.length} loyiha`}`,
     "o'zgartirish",
   )
@@ -253,18 +253,18 @@ skillsRoutes.post('/skills/:id/ornat', async (c) => {
  */
 skillsRoutes.delete('/skills/:id/ornat', async (c) => {
   const skill = skillOqi(c.req.param('id'))
-  if (!skill) return c.json({ error: 'Skill topilmadi' }, 404)
+  if (!skill) return c.json({ error: 'Skill not found' }, 404)
 
   let tana: OrnatTana
   try {
     tana = (await c.req.json()) as OrnatTana
   } catch {
-    return c.json({ error: "So'rov tanasi JSON bo'lishi kerak" }, 400)
+    return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
   const qamrov = tana.qamrov
   if (qamrov !== 'global' && qamrov !== 'loyiha') {
-    return c.json({ error: "qamrov 'global' yoki 'loyiha' bo'lishi kerak" }, 400)
+    return c.json({ error: "qamrov must be 'global' or 'loyiha'" }, 400)
   }
 
   const projectIds = Array.isArray(tana.projectIds)
@@ -275,7 +275,7 @@ skillsRoutes.delete('/skills/:id/ornat', async (c) => {
     skillOrnatishniOchir(skill.id, 'global', null)
   } else {
     if (projectIds.length === 0) {
-      return c.json({ error: 'Loyiha tanlanmadi' }, 400)
+      return c.json({ error: 'No project selected' }, 400)
     }
     for (const projectId of projectIds) skillOrnatishniOchir(skill.id, 'loyiha', projectId)
   }
@@ -286,7 +286,7 @@ skillsRoutes.delete('/skills/:id/ornat', async (c) => {
     skillniOmbordanOchir(skill.manbaId, skill.id)
   }
 
-  auditYoz('foydalanuvchi', "Skill o'rnatishi bekor qilindi", skill.nom, "o'zgartirish")
+  auditYoz('user', 'Skill installation removed', skill.nom, "o'zgartirish")
 
   return c.json({ skill: yangilangan })
 })

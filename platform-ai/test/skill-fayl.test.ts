@@ -171,26 +171,26 @@ describe('YUMSHOQ validatsiya — buzilgan skill baribir yuklanadi', () => {
     const n = skillFayliniTahlil(['---', 'name: PDF-Fill', 'description: t', '---'].join('\n'), 'PDF-Fill')
     expect(n).not.toBeNull()
     expect(n?.nom).toBe('PDF-Fill')
-    expect(n?.ogohlantirishlar.some((x) => x.includes('kichik harf'))).toBe(true)
+    expect(n?.ogohlantirishlar.some((x) => x.includes('lowercase'))).toBe(true)
   })
 
   test('ketma-ket tire ogohlantiriladi', () => {
     const n = skillFayliniTahlil(['---', 'name: a--b', 'description: t', '---'].join('\n'), 'a--b')
-    expect(n?.ogohlantirishlar.some((x) => x.includes('ketma-ket'))).toBe(true)
+    expect(n?.ogohlantirishlar.some((x) => x.includes('repeated'))).toBe(true)
   })
 
   test('uzun nom kesiladi', () => {
     const uzun = 'a'.repeat(NOM_CHEGARASI + 20)
     const n = skillFayliniTahlil(['---', `name: ${uzun}`, 'description: t', '---'].join('\n'), uzun)
     expect(n?.nom.length).toBe(NOM_CHEGARASI)
-    expect(n?.ogohlantirishlar.some((x) => x.includes('uzun'))).toBe(true)
+    expect(n?.ogohlantirishlar.some((x) => x.includes('longer than'))).toBe(true)
   })
 
   test('uzun tavsif kesiladi — prompt shishib ketmasin', () => {
     const uzun = 'b'.repeat(TAVSIF_CHEGARASI + 500)
     const n = skillFayliniTahlil(['---', 'name: x', `description: ${uzun}`, '---'].join('\n'), 'x')
     expect(n!.tavsif.length).toBeLessThanOrEqual(TAVSIF_CHEGARASI + 1)
-    expect(n?.ogohlantirishlar.some((x) => x.includes('uzun'))).toBe(true)
+    expect(n?.ogohlantirishlar.some((x) => x.includes('longer than'))).toBe(true)
   })
 
   test('nom papka nomiga mos kelmasa ogohlantirish (lekin rad etilmaydi)', () => {
