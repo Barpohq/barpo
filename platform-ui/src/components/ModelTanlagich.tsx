@@ -17,16 +17,16 @@ import { modelniSaqla } from '../lib/model-saqlash'
  * kanalidan ishlatib yuboradi.
  */
 const MANBA_YORLIQ: Record<ManbaTuri, { belgi: string; matn: string; rang: string }> = {
-  obuna: { belgi: '⬢', matn: 'obuna', rang: 'text-mint' },
-  mahalliy: { belgi: '⌂', matn: 'mahalliy', rang: 'text-mint' },
-  kalit: { belgi: '◇', matn: 'API kalit', rang: 'text-faint' },
+  obuna: { belgi: '⬢', matn: 'subscription', rang: 'text-mint' },
+  mahalliy: { belgi: '⌂', matn: 'local', rang: 'text-mint' },
+  kalit: { belgi: '◇', matn: 'API key', rang: 'text-faint' },
 }
 
 /** $/1M tokenni o'qilishi oson shaklga keltiradi */
 function narxMatni(m: ModelInfo): string {
   // Obunada tokenlar oylik to'lovga kiradi — $ ko'rsatish chalg'itadi
-  if (m.manbaTuri === 'obuna') return 'obunada'
-  if (m.cost.input === 0 && m.cost.output === 0) return 'bepul'
+  if (m.manbaTuri === 'obuna') return 'included'
+  if (m.cost.input === 0 && m.cost.output === 0) return 'free'
   const f = (n: number) => (n < 1 ? n.toFixed(2) : n.toFixed(1))
   return `$${f(m.cost.input)}/$${f(m.cost.output)}`
 }
@@ -119,7 +119,7 @@ export default function ModelTanlagich({
       <div className="flex items-center gap-2 px-2.5 py-1 text-xs text-faint">
         <span className="inline-block size-1.5 rounded-full bg-lazur" aria-hidden />
         <span className="font-mono">
-          {tanlangan ? `${tanlangan.providerName} · ${tanlangan.name}` : 'model tanlangan'}
+          {tanlangan ? `${tanlangan.providerName} · ${tanlangan.name}` : 'model selected'}
         </span>
         {tanlangan && (
           <span
@@ -129,7 +129,7 @@ export default function ModelTanlagich({
             {MANBA_YORLIQ[tanlangan.manbaTuri].belgi} {MANBA_YORLIQ[tanlangan.manbaTuri].matn}
           </span>
         )}
-        <span title="Suhbat boshlangach provider o'zgartirilmaydi">🔒</span>
+        <span title="The provider cannot be changed once the chat has started">🔒</span>
       </div>
     )
   }
@@ -142,13 +142,13 @@ export default function ModelTanlagich({
         disabled={yuklanmoqda || modellar.length === 0}
         aria-expanded={ochiq}
         aria-haspopup="listbox"
-        title="Model tanlash — suhbat boshlangach provider qulflanadi"
+        title="Pick a model — the provider locks once the chat starts"
         className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[13px] transition disabled:opacity-50 ${
           ochiq ? 'border-lazur-dim bg-panel2' : 'border-transparent hover:bg-panel2/60'
         }`}
       >
         {yuklanmoqda ? (
-          <span className="text-muted">modellar yuklanmoqda…</span>
+          <span className="text-muted">loading models…</span>
         ) : tanlangan ? (
           <>
             <span className="font-mono text-xs text-lazur">{tanlangan.providerName}</span>
@@ -161,7 +161,7 @@ export default function ModelTanlagich({
             <span className="truncate">{tanlangan.name}</span>
           </>
         ) : (
-          <span className="text-muted">{modellar.length ? 'Model tanlang' : 'Model topilmadi'}</span>
+          <span className="text-muted">{modellar.length ? 'Select a model' : 'No models found'}</span>
         )}
         <span className="ml-0.5 text-faint" aria-hidden>
           ▾
@@ -180,8 +180,8 @@ export default function ModelTanlagich({
               ref={qidiruvRef}
               value={qidiruv}
               onChange={(e) => setQidiruv(e.target.value)}
-              placeholder="Model yoki provider nomi…"
-              aria-label="Model qidirish"
+              placeholder="Model or provider name…"
+              aria-label="Search models"
               // `fokus-tashqarida`: global halqa o'rniga maydonning o'z
               // chegarasi — aks holda ochilgach ikki qavat chegara ko'rinadi
               className="fokus-tashqarida w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none transition placeholder:text-faint focus:border-lazur-dim"
@@ -190,7 +190,7 @@ export default function ModelTanlagich({
 
           <div className="thin-scroll max-h-[calc(60vh-3.5rem)] overflow-y-auto">
             {jamiMos === 0 && (
-              <p className="px-4 py-6 text-center text-sm text-muted">Mos model topilmadi</p>
+              <p className="px-4 py-6 text-center text-sm text-muted">No matching models</p>
             )}
 
             {guruhlar.map(({ boshi, modellari: guruhModellari }) => {

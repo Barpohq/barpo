@@ -5,7 +5,7 @@ import { Card, PageHead, StatTile } from '../ui'
 const S1 = 'var(--color-s1)'
 const S2 = 'var(--color-s2)'
 
-// 7 kunlik xarajat — 2 seriyali stacked bar (agent kesimida)
+// 7-day cost — 2-series stacked bar (broken down by agent)
 function CostChart() {
   const [hover, setHover] = useState<number | null>(null)
   const W = 560
@@ -20,7 +20,7 @@ function CostChart() {
 
   return (
     <div className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="7 kunlik xarajat, agent kesimida">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="7-day cost, broken down by agent">
         {[0, 0.05, 0.1].map((g) => (
           <g key={g}>
             <line x1={pad.l} x2={W - pad.r} y1={y(g)} y2={y(g)} stroke="var(--color-line)" strokeWidth="1" />
@@ -41,12 +41,12 @@ function CostChart() {
               onMouseLeave={() => setHover(null)}
               opacity={hover === null || hover === i ? 1 : 0.45}
             >
-              {/* hover nishoni — markdan kattaroq */}
+              {/* hover target — larger than the mark itself */}
               <rect x={pad.l + step * i} y={pad.t} width={step} height={innerH} fill="transparent" />
               <rect x={x} y={yBot} width={barW} height={hBot} rx="4" fill={S1} />
-              {/* poydevor to'g'ri burchakli bo'lsin — pastki yumaloqlikni yopamiz */}
+              {/* keep the base square — cover the bottom rounding */}
               <rect x={x} y={pad.t + innerH - Math.min(6, hBot)} width={barW} height={Math.min(6, hBot)} fill={S1} />
-              {/* monitor segmenti — 2px bo'shliq bilan */}
+              {/* monitor segment — with a 2px gap */}
               <rect x={x} y={yBot - hMon - 2} width={barW} height={hMon} rx="2" fill={S2} />
               <text x={x + barW / 2} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--color-muted)" fontFamily="var(--font-mono)">
                 {d.day}
@@ -79,7 +79,7 @@ function CostChart() {
   )
 }
 
-// Model bo'yicha xarajat — bitta o'lchov, bitta rang, to'g'ridan-to'g'ri qiymat yorlig'i
+// Cost by model — one measure, one colour, direct value labels
 function ModelChart() {
   const max = 2
   return (
@@ -98,7 +98,7 @@ function ModelChart() {
               />
             </div>
             <span className="w-12 shrink-0 text-right font-mono text-xs text-muted">
-              {m.cost === 0 ? 'bepul' : `$${m.cost.toFixed(2)}`}
+              {m.cost === 0 ? 'free' : `$${m.cost.toFixed(2)}`}
             </span>
           </div>
         </div>
@@ -110,43 +110,43 @@ function ModelChart() {
 export default function Dashboard() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
-      <PageHead title="Boshqaruv paneli" sub="Xarajatlar, token sarfi va agentlar faoliyati — hammasi bir joyda" />
+      <PageHead title="Dashboard" sub="Costs, token usage and agent activity — all in one place" />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Bugungi xarajat" value="$0.084" hint="kecha: $0.072" accent="var(--color-gold)" />
-        <StatTile label="Oylik jami" value="$2.41" hint="~$0.60/post writer ulushi" />
-        <StatTile label="Postlar (7 kun)" value="23" hint="21 nashr · 2 rad" />
-        <StatTile label="Approval rate" value="96%" hint="avtonom rejimga: ≥95% ✓" accent="var(--color-lazur)" />
+        <StatTile label="Cost today" value="$0.084" hint="yesterday: $0.072" accent="var(--color-gold)" />
+        <StatTile label="Monthly total" value="$2.41" hint="~$0.60/post writer share" />
+        <StatTile label="Posts (7 days)" value="23" hint="21 published · 2 rejected" />
+        <StatTile label="Approval rate" value="96%" hint="for autonomous mode: ≥95% ✓" accent="var(--color-lazur)" />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-5">
         <Card className="p-5 lg:col-span-3">
-          <h2 className="mb-4 font-display text-sm font-semibold">Kunlik xarajat — 7 kun</h2>
+          <h2 className="mb-4 font-display text-sm font-semibold">Daily cost — 7 days</h2>
           <CostChart />
         </Card>
         <Card className="p-5 lg:col-span-2">
-          <h2 className="mb-4 font-display text-sm font-semibold">Model bo'yicha (30 kun)</h2>
+          <h2 className="mb-4 font-display text-sm font-semibold">By model (30 days)</h2>
           <ModelChart />
           <p className="mt-4 border-t border-line pt-3 text-xs leading-relaxed text-faint">
-            Til sinovi tugagach writer flash modelga o'tsa, oylik xarajat ~5× tushadi.
+            Once the language trial ends and the writer moves to a flash model, the monthly cost drops ~5×.
           </p>
         </Card>
       </div>
 
       <Card className="mt-4 overflow-hidden">
         <h2 className="border-b border-line px-5 py-3 font-display text-sm font-semibold">
-          Oxirgi LLM chaqiruvlari
+          Recent LLM calls
         </h2>
         <div className="thin-scroll overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="text-xs text-faint">
-                <th className="px-5 py-2 font-medium">Vaqt</th>
+                <th className="px-5 py-2 font-medium">Time</th>
                 <th className="px-3 py-2 font-medium">Agent</th>
                 <th className="px-3 py-2 font-medium">Model</th>
-                <th className="px-3 py-2 font-medium">Vazifa</th>
-                <th className="px-3 py-2 font-medium">Tokenlar</th>
-                <th className="px-5 py-2 text-right font-medium">Narx</th>
+                <th className="px-3 py-2 font-medium">Task</th>
+                <th className="px-3 py-2 font-medium">Tokens</th>
+                <th className="px-5 py-2 text-right font-medium">Cost</th>
               </tr>
             </thead>
             <tbody className="font-mono text-xs">

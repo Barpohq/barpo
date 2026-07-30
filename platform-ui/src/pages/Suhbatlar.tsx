@@ -118,7 +118,10 @@ export default function Suhbatlar({
       // Eski nomni qaytarish uchun serverdan qayta so'raymiz — mahalliy
       // holatni "orqaga qaytarish"dan ishonchliroq
       yangila()
-      toast(x instanceof ApiXatosi ? `Nom o'zgarmadi: ${x.message}` : "Nom o'zgarmadi", 'error')
+      toast(
+        x instanceof ApiXatosi ? `Rename failed: ${x.message}` : 'Rename failed',
+        'error',
+      )
     }
   }
 
@@ -131,7 +134,10 @@ export default function Suhbatlar({
       // Ochiq suhbat o'chirilgan bo'lsa — bo'sh chatga tushamiz
       if (s.id === ochiqSessiya) onYangiSuhbat()
     } catch (x) {
-      toast(x instanceof ApiXatosi ? `O'chirilmadi: ${x.message}` : "Suhbat o'chirilmadi", 'error')
+      toast(
+        x instanceof ApiXatosi ? `Delete failed: ${x.message}` : 'Could not delete the chat',
+        'error',
+      )
       setOchirilsinmi(null)
     } finally {
       setAmalKetmoqda(false)
@@ -144,11 +150,11 @@ export default function Suhbatlar({
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
       <PageHead
-        title="Suhbatlar"
-        sub="Barcha chatlar — fonda ishlayotganlari jonli indikator bilan belgilanadi"
+        title="Chats"
+        sub="All chats — the ones running in the background are marked with a live indicator"
       />
 
-      {/* Boshqaruv qatori: qidiruv + loyiha filtri + yangi suhbat */}
+      {/* Control row: search + project filter + new chat */}
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1">
           <svg
@@ -165,8 +171,8 @@ export default function Suhbatlar({
           <input
             value={qidiruv}
             onChange={(e) => setQidiruv(e.target.value)}
-            placeholder="Suhbat nomi bo'yicha qidirish…"
-            aria-label="Qidirish"
+            placeholder="Search by chat name…"
+            aria-label="Search"
             className="w-full rounded-xl border border-line bg-panel py-2 pr-3 pl-9 text-sm outline-none transition placeholder:text-faint focus:border-lazur-dim"
           />
         </div>
@@ -175,11 +181,11 @@ export default function Suhbatlar({
           <select
             value={loyihaFiltri}
             onChange={(e) => setLoyihaFiltri(e.target.value)}
-            aria-label="Loyiha bo'yicha filtr"
+            aria-label="Filter by project"
             className="shrink-0 rounded-xl border border-line bg-panel px-3 py-2 text-sm text-muted outline-none transition focus:border-lazur-dim"
           >
-            <option value="hammasi">Barcha loyihalar</option>
-            <option value="yoq">Loyihasiz</option>
+            <option value="hammasi">All projects</option>
+            <option value="yoq">No project</option>
             {loyihalar.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.name}
@@ -192,38 +198,38 @@ export default function Suhbatlar({
           onClick={onYangiSuhbat}
           className="shrink-0 rounded-xl bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110"
         >
-          + Yangi suhbat
+          + New chat
         </button>
       </div>
 
       {yuklanmoqda && suhbatlar.length === 0 && (
-        <p className="text-sm text-faint">Yuklanmoqda…</p>
+        <p className="text-sm text-faint">Loading…</p>
       )}
 
       {xato && suhbatlar.length === 0 && (
         <Card className="px-6 py-8 text-center">
-          <p className="text-sm text-coral">Suhbatlar ro'yxatini yuklab bo'lmadi.</p>
+          <p className="text-sm text-coral">Could not load the chat list.</p>
           <button
             onClick={yangila}
             className="mt-3 rounded-lg border border-line px-3 py-1.5 text-xs text-muted transition hover:border-lazur-dim hover:text-lazur"
           >
-            Qayta urinish
+            Try again
           </button>
         </Card>
       )}
 
       {bosh && !xato && (
         <Card className="px-6 py-10 text-center">
-          <p className="text-sm text-muted">Hali birorta suhbat yo'q.</p>
+          <p className="text-sm text-muted">No chats yet.</p>
           <p className="mt-1.5 text-xs text-faint">
-            Chatda xabar yuboring — suhbat shu yerda saqlanadi.
+            Send a message in chat — it gets saved here.
           </p>
         </Card>
       )}
 
       {filtrBosh && (
         <Card className="px-6 py-8 text-center">
-          <p className="text-sm text-muted">Bu shartlarga mos suhbat topilmadi.</p>
+          <p className="text-sm text-muted">No chats match these filters.</p>
         </Card>
       )}
 
@@ -257,7 +263,7 @@ export default function Suhbatlar({
                             if (e.key === 'Escape') setTahrir(null)
                           }}
                           onBlur={() => void nomniSaqla()}
-                          aria-label="Suhbat nomi"
+                          aria-label="Chat name"
                           maxLength={200}
                           className="w-full rounded-md border border-lazur-dim bg-bg px-2 py-1 text-sm outline-none"
                         />
@@ -288,7 +294,7 @@ export default function Suhbatlar({
                         {s.xabarlarSoni === 0 && (
                           <>
                             <span aria-hidden>·</span>
-                            <span>bo'sh</span>
+                            <span>empty</span>
                           </>
                         )}
                       </div>
@@ -301,19 +307,19 @@ export default function Suhbatlar({
                       <div className="flex shrink-0 gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
                         <button
                           onClick={() => setTahrir({ id: s.id, matn: s.title })}
-                          title="Nomini o'zgartirish"
-                          aria-label={`"${s.title}" nomini o'zgartirish`}
+                          title="Rename"
+                          aria-label={`Rename "${s.title}"`}
                           className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-muted transition hover:border-lazur-dim hover:text-lazur"
                         >
-                          Nomi
+                          Rename
                         </button>
                         <button
                           onClick={() => setOchirilsinmi(s)}
-                          title="O'chirish"
-                          aria-label={`"${s.title}" suhbatini o'chirish`}
+                          title="Delete"
+                          aria-label={`Delete chat "${s.title}"`}
                           className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-muted transition hover:border-coral hover:text-coral"
                         >
-                          O'chirish
+                          Delete
                         </button>
                       </div>
                     )}
@@ -332,18 +338,18 @@ export default function Suhbatlar({
           onClick={() => !amalKetmoqda && setOchirilsinmi(null)}
           role="dialog"
           aria-modal="true"
-          aria-label="Suhbatni o'chirish"
+          aria-label="Delete chat"
         >
           <Card className="rise-in w-full max-w-sm p-6">
             <div onClick={(e) => e.stopPropagation()}>
-              <h2 className="font-display text-lg font-semibold">Suhbat o'chirilsinmi?</h2>
+              <h2 className="font-display text-lg font-semibold">Delete this chat?</h2>
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                <span className="text-ink">{ochirilsinmi.title}</span> — barcha xabarlari bilan
-                birga o'chadi. Buni qaytarib bo'lmaydi.
+                <span className="text-ink">{ochirilsinmi.title}</span> — will be deleted along with
+                all of its messages. This cannot be undone.
               </p>
               {ishlayotganlar[ochirilsinmi.id] && (
                 <p className="mt-2 text-xs text-gold">
-                  Bu suhbatda agent hozir ishlayapti — u ham to'xtatiladi.
+                  An agent is currently running in this chat — it will be stopped too.
                 </p>
               )}
 
@@ -353,14 +359,14 @@ export default function Suhbatlar({
                   disabled={amalKetmoqda}
                   className="rounded-lg border border-line px-4 py-2 text-sm text-muted transition hover:text-ink disabled:opacity-40"
                 >
-                  Bekor qilish
+                  Cancel
                 </button>
                 <button
                   onClick={() => void ochir(ochirilsinmi)}
                   disabled={amalKetmoqda}
                   className="rounded-lg bg-coral px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-40"
                 >
-                  {amalKetmoqda ? "O'chirilmoqda…" : "O'chirish"}
+                  {amalKetmoqda ? 'Deleting…' : 'Delete'}
                 </button>
               </div>
             </div>

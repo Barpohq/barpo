@@ -61,7 +61,7 @@ export default function BiriktirmaChipi({ biriktirma, nom, xato, onOchir }: Prop
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs text-ink">{nom}</div>
         <div className={`text-[10px] ${xato ? 'text-coral' : 'text-faint'}`}>
-          {xato ?? (biriktirma ? hajmMatni(biriktirma.hajm) : 'yuklanmoqda…')}
+          {xato ?? (biriktirma ? hajmMatni(biriktirma.hajm) : 'uploading…')}
         </div>
       </div>
 
@@ -69,7 +69,7 @@ export default function BiriktirmaChipi({ biriktirma, nom, xato, onOchir }: Prop
         <button
           type="button"
           onClick={onOchir}
-          aria-label={`${nom} — biriktirmani olib tashlash`}
+          aria-label={`${nom} — remove attachment`}
           className="shrink-0 text-faint transition hover:text-coral"
         >
           ×

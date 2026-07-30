@@ -52,7 +52,11 @@ function QoshishModal({
       onQoshildi(server, ulanishXatosi)
       onClose()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? `${x.message}${x.detail ? ` — ${x.detail}` : ''}` : "Qo'shib bo'lmadi")
+      setXato(
+        x instanceof ApiXatosi
+          ? `${x.message}${x.detail ? ` — ${x.detail}` : ''}`
+          : 'Could not add the server',
+      )
       setIshlayapti(false)
     }
   }
@@ -67,19 +71,19 @@ function QoshishModal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Server qo'shish"
+      aria-label="Add server"
     >
       <Card className="rise-in w-full max-w-md p-6">
         <form onClick={(e) => e.stopPropagation()} onSubmit={yubor}>
-          <h2 className="font-display text-lg font-semibold">Server qo'shish</h2>
+          <h2 className="font-display text-lg font-semibold">Add server</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted">
-            Platforma SSH kalitini serverga joylaydi — keyin terminalda ham{' '}
-            <code className="font-mono text-lazur">ssh {nom.trim() || 'server-nomi'}</code>{' '}
-            parolsiz ishlaydi.
+            The platform installs its SSH key on the server — after that{' '}
+            <code className="font-mono text-lazur">ssh {nom.trim() || 'server-name'}</code>{' '}
+            works without a password in your terminal too.
           </p>
 
           <label className="mt-4 block text-xs font-medium uppercase tracking-wider text-faint">
-            Nom (ssh alias)
+            Name (ssh alias)
             <input
               className={kiritish}
               value={nom}
@@ -113,24 +117,24 @@ function QoshishModal({
           </div>
 
           <label className="mt-3 block text-xs font-medium uppercase tracking-wider text-faint">
-            Foydalanuvchi
+            User
             <input className={kiritish} value={username} onChange={(e) => setUsername(e.target.value)} />
           </label>
 
           <label className="mt-3 block text-xs font-medium uppercase tracking-wider text-faint">
-            Parol (ixtiyoriy)
+            Password (optional)
             <input
               className={kiritish}
               type="password"
               value={parol}
               onChange={(e) => setParol(e.target.value)}
-              placeholder="kalitingiz serverga kira olsa — bo'sh qoldiring"
+              placeholder="leave empty if your key already gets you in"
               autoComplete="off"
             />
           </label>
           <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
-            Avval mavjud SSH kalitlaringiz bilan urinib ko'riladi. Parol faqat
-            birinchi ulanish uchun ishlatiladi va hech qayerda saqlanmaydi.
+            Your existing SSH keys are tried first. The password is only used for
+            the initial connection and is never stored anywhere.
           </p>
 
           {xato && (
@@ -145,14 +149,14 @@ function QoshishModal({
               onClick={onClose}
               className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-panel2"
             >
-              Bekor qilish
+              Cancel
             </button>
             <button
               type="submit"
               disabled={ishlayapti}
               className="rounded-lg bg-lazur-dim px-4 py-1.5 text-sm font-medium text-bg disabled:opacity-60"
             >
-              {ishlayapti ? 'Kalit joylanmoqda…' : 'Ulash'}
+              {ishlayapti ? 'Installing key…' : 'Connect'}
             </button>
           </div>
         </form>
@@ -185,7 +189,7 @@ function OchirishModal({
       onOchirildi()
       onClose()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "O'chirib bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not delete')
       setIshlayapti(false)
     }
   }
@@ -196,17 +200,17 @@ function OchirishModal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Serverni o'chirish"
+      aria-label="Delete server"
     >
       <Card className="rise-in w-full max-w-sm p-6">
         <div onClick={(e) => e.stopPropagation()}>
           <h2 className="font-display text-lg font-semibold">
-            {server.name} o'chirilsinmi?
+            Delete {server.name}?
           </h2>
           <p className="mt-2 text-sm leading-relaxed text-muted">
-            Ro'yxatdan va ssh config'dan olib tashlanadi. Platforma kaliti
-            serverning o'zida (<code className="font-mono">authorized_keys</code>)
-            qoladi — xohlasangiz keyin qo'lda o'chirasiz.
+            It will be removed from the list and from your ssh config. The platform
+            key stays on the server itself (<code className="font-mono">authorized_keys</code>)
+            — remove it by hand later if you want.
           </p>
 
           {xato && (
@@ -218,14 +222,14 @@ function OchirishModal({
               onClick={onClose}
               className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-panel2"
             >
-              Bekor qilish
+              Cancel
             </button>
             <button
               onClick={ochir}
               disabled={ishlayapti}
               className="rounded-lg bg-coral/80 px-4 py-1.5 text-sm font-medium text-bg disabled:opacity-60"
             >
-              {ishlayapti ? "O'chirilmoqda…" : "O'chirish"}
+              {ishlayapti ? 'Deleting…' : 'Delete'}
             </button>
           </div>
         </div>
@@ -273,7 +277,7 @@ function ServerKartasi({
           <div className="mt-0.5 font-mono text-[11px] text-faint">ssh {server.name}</div>
         </div>
         {metrika === undefined ? (
-          <span className="text-xs text-faint">tekshirilmoqda…</span>
+          <span className="text-xs text-faint">checking…</span>
         ) : (
           <StatusDot status={ulangan ? 'healthy' : 'offline'} />
         )}
@@ -304,7 +308,7 @@ function ServerKartasi({
           onClick={() => onOchir(server)}
           className="rounded-md px-2 py-1 text-coral/80 hover:bg-coral/10"
         >
-          o'chirish
+          delete
         </button>
       </div>
     </Card>
@@ -325,7 +329,7 @@ export default function Servers() {
   const yangila = useCallback(() => {
     serverlarOl()
       .then((j) => setServerlar(j.servers))
-      .catch(() => toast("Serverlar ro'yxatini olib bo'lmadi", 'error'))
+      .catch(() => toast('Could not load the server list', 'error'))
       .finally(() => setYuklanmoqda(false))
   }, [toast])
 
@@ -336,8 +340,8 @@ export default function Servers() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <PageHead
-        title="Serverlar"
-        sub="Platforma kaliti serverga bir marta joylanadi — keyin ulanish parolsiz, terminalda ham `ssh nom` ishlaydi"
+        title="Servers"
+        sub="The platform key is installed once — after that connections are passwordless and `ssh name` works in your terminal too"
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -347,17 +351,17 @@ export default function Servers() {
 
         <Card className="flex flex-col items-center justify-center border-dashed p-5 text-center">
           <div className="font-display text-sm font-semibold text-muted">
-            {yuklanmoqda ? 'Yuklanmoqda…' : serverlar.length === 0 ? 'Hali server yo\'q' : 'Server qo\'shish'}
+            {yuklanmoqda ? 'Loading…' : serverlar.length === 0 ? 'No servers yet' : 'Add server'}
           </div>
           <p className="mt-2 max-w-52 text-xs leading-relaxed text-faint">
-            Host va nom kiriting — SSH kalit avtomatik joylanadi, parol
-            saqlanmaydi.
+            Enter a host and a name — the SSH key is installed automatically and
+            no password is stored.
           </p>
           <button
             onClick={() => setQoshishOchiq(true)}
             className="mt-3 rounded-lg bg-lazur-dim px-4 py-1.5 text-sm font-medium text-bg"
           >
-            Qo'shish
+            Add
           </button>
         </Card>
       </div>
@@ -368,9 +372,9 @@ export default function Servers() {
           onQoshildi={(server, ulanishXatosi) => {
             yangila()
             if (ulanishXatosi) {
-              toast(`${server.name} qo'shildi, lekin tekshiruv o'tmadi: ${ulanishXatosi}`, 'warning')
+              toast(`${server.name} added, but the check failed: ${ulanishXatosi}`, 'warning')
             } else {
-              toast(`${server.name} ulandi — endi «ssh ${server.name}» parolsiz ishlaydi`, 'success')
+              toast(`${server.name} connected — «ssh ${server.name}» now works without a password`, 'success')
             }
           }}
         />
@@ -382,7 +386,7 @@ export default function Servers() {
           onClose={() => setOchirilayotgan(null)}
           onOchirildi={() => {
             yangila()
-            toast(`${ochirilayotgan.name} o'chirildi`, 'info')
+            toast(`${ochirilayotgan.name} deleted`, 'info')
           }}
         />
       )}

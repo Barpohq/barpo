@@ -30,12 +30,12 @@ function KodBloki({ til, kod }: { til: string | null; kod: string }) {
   return (
     <div className="my-3 overflow-hidden rounded-lg border border-line bg-bg">
       <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
-        <span className="font-mono text-[11px] text-faint">{til ?? 'matn'}</span>
+        <span className="font-mono text-[11px] text-faint">{til ?? 'text'}</span>
         <button
           onClick={() => void nusxala()}
           className="font-mono text-[11px] text-faint transition hover:text-lazur"
         >
-          {nusxalandi ? '✓ nusxalandi' : 'nusxalash'}
+          {nusxalandi ? '✓ copied' : 'copy'}
         </button>
       </div>
       <pre className="thin-scroll overflow-x-auto px-3 py-2.5">

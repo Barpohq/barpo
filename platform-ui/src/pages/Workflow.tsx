@@ -7,18 +7,18 @@ const stepColor = {
   waiting: 'var(--color-faint)',
 } as const
 
-const stepLabel = { done: 'bajarildi', running: 'ishlayapti', waiting: 'navbatda' } as const
+const stepLabel = { done: 'done', running: 'running', waiting: 'queued' } as const
 
 export default function Workflow() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
       <PageHead
-        title="Workflow — yangiliklar zanjiri"
-        sub="Bugungi run #212 · har bosqich mustaqil, xato bo'lsa shu yerdan davom etadi"
+        title="Workflow — news pipeline"
+        sub="Today's run #212 · every stage is independent; on failure it resumes from here"
       />
 
       <div className="relative">
-        {/* vertikal chiziq */}
+        {/* vertical line */}
         <div className="absolute top-2 bottom-6 left-[15px] w-px bg-line" aria-hidden />
 
         <div className="space-y-3">
@@ -54,15 +54,15 @@ export default function Workflow() {
       </div>
 
       <Card className="mt-6 p-5">
-        <h2 className="font-display text-sm font-semibold">Bugungi voronka</h2>
+        <h2 className="font-display text-sm font-semibold">Today's funnel</h2>
         <div className="mt-3 flex flex-wrap items-center gap-2 font-mono text-xs">
           {[
-            ['412', 'element'],
-            ['247', 'klaster'],
-            ['151', 'qabul'],
-            ['26', 'boyitildi'],
-            ['5', 'post'],
-            ['4', 'nashr'],
+            ['412', 'items'],
+            ['247', 'clusters'],
+            ['151', 'accepted'],
+            ['26', 'enriched'],
+            ['5', 'posts'],
+            ['4', 'published'],
           ].map(([n, label], i, arr) => (
             <span key={label} className="flex items-center gap-2">
               <span className="rounded-lg bg-panel2 px-3 py-1.5">

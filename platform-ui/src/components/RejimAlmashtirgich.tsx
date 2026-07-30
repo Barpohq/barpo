@@ -21,12 +21,12 @@ export default function RejimAlmashtirgich({ holat, onOzgart, bandmi }: Props) {
   // Sabab bor, lekin rejim tasdiq — ya'ni auto o'z-o'zidan o'chgan
   const ozidanOchgan = !auto && Boolean(holat.sabab)
 
-  const yorliq = auto ? '⏵⏵ auto' : '⏸ tasdiq'
+  const yorliq = auto ? '⏵⏵ auto' : '⏸ confirm'
   const tavsif = auto
-    ? `Klassifikator hal qiladi${holat.klassifikatorModeli ? ` · ${holat.klassifikatorModeli}` : ''}`
+    ? `The classifier decides${holat.klassifikatorModeli ? ` · ${holat.klassifikatorModeli}` : ''}`
     : holat.sabab
-      ? `Auto o'chdi: ${holat.sabab}`
-      : 'Har xavfli amal so\'raladi'
+      ? `Auto turned off: ${holat.sabab}`
+      : 'Every dangerous action is asked about'
 
   return (
     <button
@@ -34,7 +34,7 @@ export default function RejimAlmashtirgich({ holat, onOzgart, bandmi }: Props) {
       onClick={() => onOzgart(auto ? 'tasdiq' : 'auto')}
       disabled={bandmi}
       title={tavsif}
-      aria-label={`Ruxsat rejimi: ${auto ? 'auto' : 'tasdiq'}. ${tavsif}`}
+      aria-label={`Permission mode: ${auto ? 'auto' : 'confirm'}. ${tavsif}`}
       className={`shrink-0 rounded-lg border px-2.5 py-1 font-mono text-[11px] transition disabled:opacity-40 ${
         auto
           ? 'border-lazur-dim text-lazur hover:brightness-110'

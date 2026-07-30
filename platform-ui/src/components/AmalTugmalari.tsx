@@ -45,12 +45,12 @@ function TasdiqModali({
       >
         <h3 className="font-display text-sm font-semibold">{amal.yorliq}</h3>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          {amal.izoh || 'Bu amalni bajarishni tasdiqlaysizmi?'}
+          {amal.izoh || 'Do you want to run this action?'}
         </p>
 
         {amal.xavf === 'xavfli' && (
           <p className="mt-3 rounded-lg border border-dashed border-gold/50 px-3 py-2 text-[11px] leading-relaxed text-gold">
-            Bu amal xavfli deb belgilangan — natijasini qaytarib bo'lmasligi mumkin.
+            This action is marked dangerous — its result may not be reversible.
           </p>
         )}
 
@@ -60,7 +60,7 @@ function TasdiqModali({
             onClick={bekor}
             className="rounded-lg px-3 py-1.5 text-xs text-muted transition-colors hover:text-fg"
           >
-            Bekor qilish
+            Cancel
           </button>
           <button
             type="button"
@@ -70,7 +70,7 @@ function TasdiqModali({
               amal.xavf === 'xavfli' ? 'bg-gold' : 'bg-lazur'
             }`}
           >
-            Bajarish
+            Run
           </button>
         </div>
       </div>
@@ -106,15 +106,15 @@ export default function AmalTugmalari({
       const javob = await ilovaAmaliniBajar(appId, amal.nom)
 
       if (javob.ok) {
-        toast(javob.xabar || `${amal.yorliq} — bajarildi`, 'success')
+        toast(javob.xabar || `${amal.yorliq} — done`, 'success')
       } else {
         // Amal ichidagi xato — bu server xatosi emas, ilova xatosi.
-        toast(javob.xato || 'Amal bajarilmadi', 'error')
+        toast(javob.xato || 'The action did not run', 'error')
       }
 
       onBajarildi?.(javob)
     } catch (x) {
-      toast(x instanceof ApiXatosi ? x.message : 'Amalni bajarib bo\'lmadi', 'error')
+      toast(x instanceof ApiXatosi ? x.message : 'Could not run the action', 'error')
     } finally {
       setKetmoqda((o) => {
         const yangi = new Set(o)
@@ -133,7 +133,7 @@ export default function AmalTugmalari({
     <>
       <Card className="overflow-hidden">
         <h2 className="border-b border-line px-5 py-3 font-display text-sm font-semibold">
-          Boshqaruv
+          Controls
         </h2>
 
         <div className="flex flex-wrap gap-2 px-5 py-4">

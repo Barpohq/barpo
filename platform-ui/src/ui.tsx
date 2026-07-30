@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { AuditLevel } from './data/mock'
+import { LEVEL_LABEL } from './lib/audit-yorliq'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -31,12 +32,12 @@ export function StatTile({ label, value, hint, accent }: { label: string; value:
 }
 
 const statusMap = {
-  running: { color: 'var(--color-mint)', label: 'ishlayapti' },
-  idle: { color: 'var(--color-muted)', label: 'kutmoqda' },
-  paused: { color: 'var(--color-gold)', label: "to'xtatilgan" },
-  healthy: { color: 'var(--color-mint)', label: "sog'lom" },
-  warning: { color: 'var(--color-gold)', label: 'ogohlantirish' },
-  offline: { color: 'var(--color-coral)', label: 'uzilgan' },
+  running: { color: 'var(--color-mint)', label: 'running' },
+  idle: { color: 'var(--color-muted)', label: 'idle' },
+  paused: { color: 'var(--color-gold)', label: 'paused' },
+  healthy: { color: 'var(--color-mint)', label: 'healthy' },
+  warning: { color: 'var(--color-gold)', label: 'warning' },
+  offline: { color: 'var(--color-coral)', label: 'offline' },
 } as const
 
 export function StatusDot({ status, pulse = false }: { status: keyof typeof statusMap; pulse?: boolean }) {
@@ -53,6 +54,13 @@ export function StatusDot({ status, pulse = false }: { status: keyof typeof stat
   )
 }
 
+// `AuditLevel` qiymatlari BAZADAN keladi va `001-boshlangich.ts` dagi
+// `CHECK` cheklovi bilan qulflangan — ularni o'zgartirish migratsiya
+// talab qiladi. Shuning uchun qiymat o'z holicha qoladi, UI esa
+// quyidagi xarita orqali inglizcha yorliq ko'rsatadi.
+//
+// Xarita `lib/audit-yorliq.ts` da: bu fayl faqat komponent eksport
+// qilsin (Vite fast refresh talabi).
 const levelStyle: Record<AuditLevel, { bg: string; fg: string }> = {
   "o'qish": { bg: 'color-mix(in oklab, var(--color-s3) 18%, transparent)', fg: '#9dc0ef' },
   "o'zgartirish": { bg: 'color-mix(in oklab, var(--color-gold) 16%, transparent)', fg: '#e5c37f' },
@@ -66,7 +74,7 @@ export function LevelBadge({ level }: { level: AuditLevel }) {
       className="inline-block rounded-md px-1.5 py-0.5 font-mono text-[11px]"
       style={{ background: s.bg, color: s.fg }}
     >
-      {level}
+      {LEVEL_LABEL[level]}
     </span>
   )
 }

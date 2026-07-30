@@ -39,16 +39,16 @@ function maydonniTekshir(maydon: SozlamaMaydoni, qiymat: string): string | null 
   // Sir uchun bo'sh — "o'zgartirmadim", ya'ni xato EMAS
   if (bosh && maydon.turi === 'sir') return null
 
-  if (bosh && maydon.majburiy) return 'majburiy'
+  if (bosh && maydon.majburiy) return 'required'
 
   if (bosh) return null
 
-  if (maydon.turi === 'raqam' && !Number.isFinite(Number(qiymat))) return 'raqam kutilgan'
+  if (maydon.turi === 'raqam' && !Number.isFinite(Number(qiymat))) return 'number expected'
 
   if (maydon.naqsh) {
     try {
       if (!new RegExp(maydon.naqsh).test(qiymat)) {
-        return maydon.naqshIzohi || 'format to\'g\'ri kelmadi'
+        return maydon.naqshIzohi || 'format does not match'
       }
     } catch {
       // Naqsh yaroqsiz — server tomoni ham o'tkazib yuboradi
@@ -100,7 +100,7 @@ function MaydonKirishi({
   if (maydon.turi === 'tanlov') {
     return (
       <select value={qiymat} onChange={(e) => ozgardi(e.target.value)} className={asosiy}>
-        <option value="">— tanlanmagan —</option>
+        <option value="">— not selected —</option>
         {(maydon.variantlar ?? []).map((v) => (
           <option key={v} value={v}>
             {v}
@@ -131,10 +131,10 @@ function MaydonKirishi({
       placeholder={
         maydon.turi === 'sir'
           ? ornatilgan
-            ? 'o\'zgartirish uchun yangi qiymat kiriting'
-            : 'hali kiritilmagan'
+            ? 'enter a new value to change it'
+            : 'not set yet'
           : maydon.standart
-            ? `standart: ${maydon.standart}`
+            ? `default: ${maydon.standart}`
             : ''
       }
       autoComplete={maydon.turi === 'sir' ? 'new-password' : 'off'}
@@ -173,7 +173,7 @@ export default function SozlamaFormasi({
       })
       .catch((x: unknown) => {
         if (bekor) return
-        setOqishXatosi(x instanceof ApiXatosi ? x.message : 'Sozlamalarni olib bo\'lmadi')
+        setOqishXatosi(x instanceof ApiXatosi ? x.message : 'Could not load the settings')
       })
       .finally(() => {
         if (!bekor) setYuklanmoqda(false)
@@ -231,7 +231,7 @@ export default function SozlamaFormasi({
     setSaqlanmoqda(true)
     try {
       const javob = await ilovaSozlamalariniSaqla(appId, yuboriladigan)
-      toast(javob.xabar || 'Sozlamalar saqlandi', 'success')
+      toast(javob.xabar || 'Settings saved', 'success')
       setKiritilgan({})
 
       // Serverdan qayta o'qiymiz: `oqi` yangi holatni ko'rsatadi va sir
@@ -247,7 +247,7 @@ export default function SozlamaFormasi({
         // o'tib ketgan holatlar (masalan naqsh serverda qat'iyroq).
         toast(x.detail ? `${x.message}: ${x.detail}` : x.message, 'error')
       } else {
-        toast('Saqlab bo\'lmadi', 'error')
+        toast('Could not save', 'error')
       }
     } finally {
       setSaqlanmoqda(false)
@@ -257,7 +257,7 @@ export default function SozlamaFormasi({
   if (yuklanmoqda) {
     return (
       <Card className="p-5">
-        <div className="text-xs text-faint">Sozlamalar yuklanmoqda…</div>
+        <div className="text-xs text-faint">Loading settings…</div>
       </Card>
     )
   }
@@ -265,8 +265,8 @@ export default function SozlamaFormasi({
   if (oqishXatosi || !holat) {
     return (
       <Card className="p-5">
-        <div className="text-xs font-medium uppercase tracking-wider text-gold">Sozlamalar</div>
-        <p className="mt-2 text-xs text-muted">{oqishXatosi ?? 'Sozlamalar topilmadi'}</p>
+        <div className="text-xs font-medium uppercase tracking-wider text-gold">Settings</div>
+        <p className="mt-2 text-xs text-muted">{oqishXatosi ?? 'No settings found'}</p>
       </Card>
     )
   }
@@ -274,12 +274,12 @@ export default function SozlamaFormasi({
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3">
-        <h2 className="font-display text-sm font-semibold">Sozlamalar</h2>
+        <h2 className="font-display text-sm font-semibold">Settings</h2>
         {holat.ogohlantirish && (
           // O'qish yiqilgan — forma baribir ishlaydi, foydalanuvchi yangi
           // qiymat yozib tuzatishi mumkin.
           <span className="font-mono text-[11px] text-gold" title={holat.ogohlantirish}>
-            joriy qiymatlar o'qilmadi
+            current values could not be read
           </span>
         )}
       </div>
@@ -302,7 +302,7 @@ export default function SozlamaFormasi({
                   <span
                     className={`font-mono text-[11px] ${ornatilgan ? 'text-lazur' : 'text-faint'}`}
                   >
-                    {ornatilgan ? '✓ o\'rnatilgan' : 'o\'rnatilmagan'}
+                    {ornatilgan ? '✓ set' : 'not set'}
                   </span>
                 )}
 
@@ -327,7 +327,7 @@ export default function SozlamaFormasi({
 
       <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-3">
         <span className="text-[11px] text-faint">
-          Qiymatlar serverdagi ilovaga yoziladi
+          Values are written to the app on the server
         </span>
         <div className="flex items-center gap-2">
           {ozgargan && (
@@ -337,7 +337,7 @@ export default function SozlamaFormasi({
               disabled={saqlanmoqda}
               className="rounded-lg px-3 py-1.5 text-xs text-muted transition-colors hover:text-fg disabled:opacity-50"
             >
-              Bekor qilish
+              Cancel
             </button>
           )}
           <button
@@ -346,7 +346,7 @@ export default function SozlamaFormasi({
             disabled={!ozgargan || xatoBor || saqlanmoqda}
             className="rounded-lg bg-lazur px-4 py-1.5 text-xs font-medium text-bg transition-opacity disabled:opacity-40"
           >
-            {saqlanmoqda ? 'Saqlanmoqda…' : 'Saqlash'}
+            {saqlanmoqda ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>

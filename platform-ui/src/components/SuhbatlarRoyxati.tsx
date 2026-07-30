@@ -79,7 +79,7 @@ export default function SuhbatlarRoyxati({
           onClick={onToggle}
           tabIndex={tabIndex}
           aria-expanded={ochiq}
-          aria-label={ochiq ? "Suhbatlar ro'yxatini yopish" : "Suhbatlar ro'yxatini ochish"}
+          aria-label={ochiq ? 'Collapse chat list' : 'Expand chat list'}
           className="grid shrink-0 place-items-center px-2.5 py-2 text-faint transition hover:text-ink"
         >
           {/* Yopiq holatda fonda ish ketayotgani bilinib tursin */}
@@ -108,12 +108,12 @@ export default function SuhbatlarRoyxati({
       {ochiq && (
         <div className="mt-0.5 space-y-0.5 pl-3">
           {yuklanmoqda && korinadigan.length === 0 && (
-            <p className="px-3 py-1.5 font-mono text-[11px] text-faint">Yuklanmoqda…</p>
+            <p className="px-3 py-1.5 font-mono text-[11px] text-faint">Loading…</p>
           )}
 
           {!yuklanmoqda && korinadigan.length === 0 && (
             <p className="px-3 py-1.5 text-[11px] leading-relaxed text-faint">
-              Hali suhbat yo'q — pastdan yozib boshlang
+              No chats yet — start typing below
             </p>
           )}
 
@@ -143,12 +143,12 @@ export default function SuhbatlarRoyxati({
             tabIndex={tabIndex}
             className="flex w-full items-center gap-1.5 rounded-lg py-1.5 pr-2 pl-2.5 text-left font-mono text-[11px] text-faint transition hover:text-lazur"
           >
-            Barchasi
+            All chats
             {korinmaydiganIshlayotgan > 0 && (
               <span
                 className="pulse-dot inline-block size-1.5 rounded-full"
                 style={{ background: 'var(--color-mint)' }}
-                title={`Ro'yxatdan tashqarida ${korinmaydiganIshlayotgan} ta agent ishlayapti`}
+                title={`${korinmaydiganIshlayotgan} agents running outside this list`}
                 aria-hidden
               />
             )}

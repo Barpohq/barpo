@@ -38,8 +38,8 @@ import { Card, PageHead } from '../ui'
 
 /** Transport belgisi — kartada va modalda bir xil ko'rinsin */
 const transportBelgisi: Record<McpTransportTuri, string> = {
-  stdio: 'mahalliy',
-  http: 'masofaviy',
+  stdio: 'local',
+  http: 'remote',
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ function RegistryModal({
     try {
       setNatijalar(await mcpRegistryQidir(soz))
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "Qidirib bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not search')
       setNatijalar(null)
     } finally {
       setQidirilmoqda(false)
@@ -117,20 +117,20 @@ function RegistryModal({
     try {
       await mcpRegistryQosh(nom)
       await onQoshildi()
-      toast(`${nom} katalogga qo'shildi`)
+      toast(`${nom} added to the catalog`)
       onClose()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "Qo'shib bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not add')
     } finally {
       setBandNom(null)
     }
   }
 
   return (
-    <Modal sarlavha="Rasmiy registry" onClose={onClose} kenglik="max-w-2xl">
-      <h2 className="font-display text-lg font-semibold">Rasmiy registry</h2>
+    <Modal sarlavha="Official registry" onClose={onClose} kenglik="max-w-2xl">
+      <h2 className="font-display text-lg font-semibold">Official registry</h2>
       <p className="mt-1.5 text-sm text-muted">
-        registry.modelcontextprotocol.io — ekotizimdagi ochiq MCP serverlar
+        registry.modelcontextprotocol.io — open MCP servers from the ecosystem
       </p>
 
       <div className="mt-4 flex gap-2">
@@ -141,7 +141,7 @@ function RegistryModal({
             if (e.key === 'Enter') void qidir()
           }}
           placeholder="github, postgres, slack…"
-          aria-label="Registry'da qidirish"
+          aria-label="Search the registry"
           className="flex-1 rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
         />
         <button
@@ -149,7 +149,7 @@ function RegistryModal({
           disabled={qidirilmoqda}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {qidirilmoqda ? 'Qidirilmoqda…' : 'Qidirish'}
+          {qidirilmoqda ? 'Searching…' : 'Search'}
         </button>
       </div>
 
@@ -158,7 +158,7 @@ function RegistryModal({
       {natijalar !== null && (
         <div className="mt-4 max-h-96 space-y-2 overflow-y-auto">
           {natijalar.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted">Hech narsa topilmadi.</p>
+            <p className="py-6 text-center text-sm text-muted">Nothing found.</p>
           ) : (
             natijalar.map((n) => (
               <div
@@ -176,12 +176,12 @@ function RegistryModal({
                     )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
-                    {n.tavsif || '(tavsif yo\'q)'}
+                    {n.tavsif || '(no description)'}
                   </p>
                   {n.sozlamalar.length > 0 && (
                     <p className="mt-1 text-[11px] text-faint">
-                      {n.sozlamalar.length} sozlama kerak
-                      {n.sozlamalar.some((s) => s.maxfiy) && ' (kalit bilan)'}
+                      {n.sozlamalar.length} settings required
+                      {n.sozlamalar.some((s) => s.maxfiy) && ' (including a key)'}
                     </p>
                   )}
                 </div>
@@ -190,7 +190,7 @@ function RegistryModal({
                   disabled={bandNom !== null}
                   className="shrink-0 rounded-lg border border-lazur-dim px-3 py-1.5 text-xs text-lazur transition hover:bg-lazur-dim hover:text-bg disabled:opacity-50"
                 >
-                  {bandNom === n.nom ? '…' : "Qo'shish"}
+                  {bandNom === n.nom ? '…' : 'Add'}
                 </button>
               </div>
             ))
@@ -203,7 +203,7 @@ function RegistryModal({
           onClick={onClose}
           className="rounded-lg border border-line px-4 py-2 text-sm text-muted transition hover:text-ink"
         >
-          Yopish
+          Close
         </button>
       </div>
     </Modal>
@@ -234,11 +234,11 @@ function GithubModal({
       await onQoshildi()
       const ogoh = natija.ogohlantirishlar?.length ?? 0
       toast(
-        `${natija.qoshildi} server qo'shildi${ogoh > 0 ? ` · ${ogoh} ogohlantirish` : ''}`,
+        `${natija.qoshildi} servers added${ogoh > 0 ? ` · ${ogoh} warnings` : ''}`,
       )
       onClose()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? (x.detail ?? x.message) : "Ulab bo'lmadi")
+      setXato(x instanceof ApiXatosi ? (x.detail ?? x.message) : 'Could not connect')
       setIshlayapti(false)
     }
   }
@@ -247,8 +247,8 @@ function GithubModal({
     <Modal sarlavha="GitHub repo" onClose={onClose}>
       <h2 className="font-display text-lg font-semibold">GitHub repo</h2>
       <p className="mt-1.5 text-sm text-muted">
-        Repo'da <code className="font-mono text-xs text-ink">server.json</code> fayllari
-        qidiriladi — bu MCP serverlarning rasmiy e'lon formati.
+        The repo is scanned for <code className="font-mono text-xs text-ink">server.json</code> files —
+        the official declaration format for MCP servers.
       </p>
 
       <input
@@ -258,7 +258,7 @@ function GithubModal({
           if (e.key === 'Enter' && url.trim()) void ula()
         }}
         placeholder="github/github-mcp-server"
-        aria-label="Repo manzili"
+        aria-label="Repo address"
         className="mt-4 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
       />
 
@@ -269,14 +269,14 @@ function GithubModal({
           onClick={onClose}
           className="rounded-lg border border-line px-4 py-2 text-sm text-muted transition hover:text-ink"
         >
-          Bekor qilish
+          Cancel
         </button>
         <button
           onClick={ula}
           disabled={ishlayapti || !url.trim()}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {ishlayapti ? 'Ulanmoqda…' : 'Ulash'}
+          {ishlayapti ? 'Connecting…' : 'Connect'}
         </button>
       </div>
     </Modal>
@@ -337,10 +337,10 @@ function QoldaModal({
           .map((s) => ({ nom: s.nom.trim(), majburiy: s.majburiy, maxfiy: s.maxfiy })),
       })
       await onQoshildi()
-      toast(`${nom.trim()} qo'shildi`)
+      toast(`${nom.trim()} added`)
       onClose()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "Qo'shib bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not add')
       setIshlayapti(false)
     }
   }
@@ -352,15 +352,15 @@ function QoldaModal({
   }
 
   return (
-    <Modal sarlavha="Qo'lda qo'shish" onClose={onClose} kenglik="max-w-lg">
-      <h2 className="font-display text-lg font-semibold">Qo'lda qo'shish</h2>
+    <Modal sarlavha="Add manually" onClose={onClose} kenglik="max-w-lg">
+      <h2 className="font-display text-lg font-semibold">Add manually</h2>
       <p className="mt-1.5 text-sm text-muted">
-        Ishga tushirish buyrug'ini yoki masofaviy manzilni o'zingiz kiritasiz.
+        You enter the start command or the remote address yourself.
       </p>
 
       <div className="mt-4 space-y-3">
         <label className="block">
-          <span className="text-xs font-medium uppercase tracking-wider text-faint">Nom</span>
+          <span className="text-xs font-medium uppercase tracking-wider text-faint">Name</span>
           <input
             value={nom}
             onChange={(e) => setNom(e.target.value)}
@@ -371,12 +371,12 @@ function QoldaModal({
 
         <label className="block">
           <span className="text-xs font-medium uppercase tracking-wider text-faint">
-            Tavsif (ixtiyoriy)
+            Description (optional)
           </span>
           <input
             value={tavsif}
             onChange={(e) => setTavsif(e.target.value)}
-            placeholder="Nima qiladi — agent shu matnni o'qiydi"
+            placeholder="What it does — the agent reads this text"
             className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
           />
         </label>
@@ -393,7 +393,7 @@ function QoldaModal({
                   onChange={() => setTransport(t)}
                 />
                 <span className="text-muted">
-                  {t === 'stdio' ? 'Mahalliy jarayon (stdio)' : 'Masofaviy (http)'}
+                  {t === 'stdio' ? 'Local process (stdio)' : 'Remote (http)'}
                 </span>
               </label>
             ))}
@@ -404,7 +404,7 @@ function QoldaModal({
           <>
             <label className="block">
               <span className="text-xs font-medium uppercase tracking-wider text-faint">
-                Buyruq
+                Command
               </span>
               <input
                 value={buyruq}
@@ -415,7 +415,7 @@ function QoldaModal({
             </label>
             <label className="block">
               <span className="text-xs font-medium uppercase tracking-wider text-faint">
-                Argumentlar
+                Arguments
               </span>
               <input
                 value={argumentlar}
@@ -424,8 +424,7 @@ function QoldaModal({
                 className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
               />
               <span className="mt-1 block text-[11px] text-faint">
-                Bo'shliq bilan ajratiladi. Buyruq shell orqali emas, to'g'ridan-to'g'ri
-                ishga tushadi.
+                Separated by spaces. The command runs directly, not through a shell.
               </span>
             </label>
           </>
@@ -445,7 +444,7 @@ function QoldaModal({
         <div className="rounded-lg border border-line bg-bg p-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium uppercase tracking-wider text-faint">
-              Sozlamalar {transport === 'stdio' ? '(env)' : '(sarlavhalar)'}
+              Settings {transport === 'stdio' ? '(env)' : '(headers)'}
             </span>
             <button
               onClick={() =>
@@ -453,13 +452,13 @@ function QoldaModal({
               }
               className="text-xs text-lazur transition hover:brightness-125"
             >
-              + qo'shish
+              + add
             </button>
           </div>
 
           {sozlamalar.length === 0 ? (
             <p className="mt-2 text-[11px] text-faint">
-              Server token yoki manzil so'raydigan bo'lsa shu yerga qo'shing.
+              If the server asks for a token or an address, add it here.
             </p>
           ) : (
             <div className="mt-2 space-y-2">
@@ -478,7 +477,7 @@ function QoldaModal({
                       checked={s.maxfiy}
                       onChange={(e) => qatorYangila(i, { maxfiy: e.target.checked })}
                     />
-                    maxfiy
+                    secret
                   </label>
                   <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-muted">
                     <input
@@ -486,11 +485,11 @@ function QoldaModal({
                       checked={s.majburiy}
                       onChange={(e) => qatorYangila(i, { majburiy: e.target.checked })}
                     />
-                    majburiy
+                    required
                   </label>
                   <button
                     onClick={() => setSozlamalar((e) => e.filter((_, j) => j !== i))}
-                    aria-label="Qatorni o'chirish"
+                    aria-label="Delete row"
                     className="shrink-0 text-sm text-faint transition hover:text-coral"
                   >
                     ✕
@@ -509,14 +508,14 @@ function QoldaModal({
           onClick={onClose}
           className="rounded-lg border border-line px-4 py-2 text-sm text-muted transition hover:text-ink"
         >
-          Bekor qilish
+          Cancel
         </button>
         <button
           onClick={qosh}
           disabled={ishlayapti || !tayyor}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {ishlayapti ? "Qo'shilmoqda…" : "Qo'shish"}
+          {ishlayapti ? 'Adding…' : 'Add'}
         </button>
       </div>
     </Modal>
@@ -582,13 +581,13 @@ function OrnatishModal({
       await onSaqla(global, [...tanlangan], qiymatlar)
       onClose()
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "Saqlab bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not save')
       setIshlayapti(false)
     }
   }
 
   return (
-    <Modal sarlavha={`${server.nom} sozlamalari`} onClose={onClose} kenglik="max-w-lg">
+    <Modal sarlavha={`${server.nom} settings`} onClose={onClose} kenglik="max-w-lg">
       <div className="flex items-start justify-between gap-2">
         <h2 className="font-display text-lg font-semibold">{server.nom}</h2>
         <span className="shrink-0 rounded-md bg-panel2 px-2 py-0.5 text-[10px] text-faint">
@@ -600,7 +599,7 @@ function OrnatishModal({
       {/* Ishga tushirish tafsiloti — foydalanuvchi NIMA ishga tushishini bilsin */}
       <div className="mt-4 rounded-lg border border-line bg-bg p-3">
         <div className="text-xs font-medium uppercase tracking-wider text-faint">
-          {server.transport === 'stdio' ? 'Ishga tushadi' : 'Ulanadi'}
+          {server.transport === 'stdio' ? 'Runs' : 'Connects to'}
         </div>
         <code className="mt-1.5 block break-all font-mono text-[11px] leading-relaxed text-ink">
           {server.transport === 'stdio'
@@ -613,7 +612,7 @@ function OrnatishModal({
       {server.sozlamalar.length > 0 && (
         <div className="mt-3 rounded-lg border border-line bg-bg p-4">
           <div className="text-xs font-medium uppercase tracking-wider text-faint">
-            Sozlamalar
+            Settings
           </div>
           <div className="mt-3 space-y-3">
             {server.sozlamalar.map((maydon) => (
@@ -628,8 +627,8 @@ function OrnatishModal({
           </div>
           {server.sozlamalar.some((s) => s.maxfiy) && (
             <p className="mt-3 text-[11px] leading-relaxed text-faint">
-              Maxfiy qiymatlar bazaga yozilmaydi — alohida faylda saqlanadi va
-              qaytarib ko'rsatilmaydi. Bo'sh qoldirilsa saqlangani o'z joyida qoladi.
+              Secret values are not written to the database — they are kept in a separate
+              file and never shown back. Leave a field empty to keep the stored value.
             </p>
           )}
         </div>
@@ -638,7 +637,7 @@ function OrnatishModal({
       {/* Qamrov */}
       <div className="mt-3 rounded-lg border border-line bg-bg p-4">
         <div className="text-xs font-medium uppercase tracking-wider text-faint">
-          Qayerda ishlasin
+          Where it should work
         </div>
 
         <label className="mt-3 flex cursor-pointer items-start gap-2.5 text-sm">
@@ -649,9 +648,9 @@ function OrnatishModal({
             className="mt-0.5"
           />
           <span>
-            <span className="text-ink">Hamma joyda (global)</span>
+            <span className="text-ink">Everywhere (global)</span>
             <span className="block text-xs text-faint">
-              Barcha suhbatlar va loyihalarda mavjud bo'ladi
+              Available in all chats and projects
             </span>
           </span>
         </label>
@@ -659,7 +658,7 @@ function OrnatishModal({
         {loyihalar.length > 0 && (
           <>
             <div className="mt-4 text-xs font-medium uppercase tracking-wider text-faint">
-              Yoki tanlangan loyihalarda
+              Or in selected projects
             </div>
             <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
               {loyihalar.map((l) => (
@@ -683,8 +682,8 @@ function OrnatishModal({
       </div>
 
       <p className="mt-3 text-xs leading-relaxed text-faint">
-        Server har suhbat boshida ishga tushadi va agentga o'z vositalarini beradi.
-        Har chaqiruv ruxsat so'raydi — xuddi buyruq bajarish kabi.
+        The server starts at the beginning of every chat and exposes its tools to the agent.
+        Every call asks for permission — just like running a command.
       </p>
 
       {xato && <p className="mt-3 text-sm text-coral">{xato}</p>}
@@ -694,14 +693,14 @@ function OrnatishModal({
           onClick={onClose}
           className="rounded-lg border border-line px-4 py-2 text-sm text-muted transition hover:text-ink"
         >
-          Bekor qilish
+          Cancel
         </button>
         <button
           onClick={saqla}
           disabled={ishlayapti}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {ishlayapti ? 'Saqlanmoqda…' : hechnima ? "O'chirish" : 'Saqlash'}
+          {ishlayapti ? 'Saving…' : hechnima ? 'Uninstall' : 'Save'}
         </button>
       </div>
     </Modal>
@@ -724,8 +723,8 @@ function SozlamaKirishi({
     <label className="block">
       <span className="flex items-center gap-1.5">
         <span className="font-mono text-xs text-ink">{maydon.nom}</span>
-        {maydon.majburiy && <span className="text-[10px] text-coral">majburiy</span>}
-        {maydon.maxfiy && <span className="text-[10px] text-gold">maxfiy</span>}
+        {maydon.majburiy && <span className="text-[10px] text-coral">required</span>}
+        {maydon.maxfiy && <span className="text-[10px] text-gold">secret</span>}
       </span>
       {maydon.izoh && (
         <span className="mt-0.5 block text-[11px] leading-relaxed text-faint">{maydon.izoh}</span>
@@ -739,7 +738,7 @@ function SozlamaKirishi({
         onChange={(e) => onChange(e.target.value)}
         placeholder={
           maydon.maxfiy && ornatilganmi
-            ? "(saqlangan — o'zgartirish uchun yozing)"
+            ? '(stored — type to change it)'
             : (maydon.standart ?? '')
         }
         className="mt-1 w-full rounded-lg border border-line bg-panel px-2.5 py-1.5 font-mono text-xs outline-none placeholder:text-faint focus:border-lazur-dim"
@@ -771,22 +770,22 @@ function Manbalar({
       await onYangilandi()
       toast(`+${natija.qoshildi} / -${natija.ochirildi}`)
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "Sinxronlab bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not sync')
     } finally {
       setBandId(null)
     }
   }
 
   const ochir = async (m: McpManba) => {
-    if (!confirm(`${m.manbaNomi} o'chirilsinmi? Serverlari va kalitlari ham ketadi.`)) return
+    if (!confirm(`Delete ${m.manbaNomi}? Its servers and keys go with it.`)) return
     setBandId(m.id)
     setXato(null)
     try {
       await mcpManbaOchir(m.id)
       await onYangilandi()
-      toast("Manba o'chirildi")
+      toast('Source deleted')
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "O'chirib bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not delete')
     } finally {
       setBandId(null)
     }
@@ -796,7 +795,7 @@ function Manbalar({
 
   return (
     <Card className="mb-6 p-5">
-      <div className="text-xs font-medium uppercase tracking-wider text-faint">Manbalar</div>
+      <div className="text-xs font-medium uppercase tracking-wider text-faint">Sources</div>
       {xato && <p className="mt-2 text-sm text-coral">{xato}</p>}
       <div className="mt-3 space-y-2">
         {manbalar.map((m) => {
@@ -828,7 +827,7 @@ function Manbalar({
                     disabled={bandId !== null}
                     className="rounded-lg border border-line px-2.5 py-1 text-xs text-muted transition hover:text-ink disabled:opacity-50"
                   >
-                    {bandId === m.id ? '…' : 'Sinxron'}
+                    {bandId === m.id ? '…' : 'Sync'}
                   </button>
                 )}
                 {m.tur !== 'standart' && (
@@ -837,7 +836,7 @@ function Manbalar({
                     disabled={bandId !== null}
                     className="rounded-lg border border-line px-2.5 py-1 text-xs text-muted transition hover:border-coral/40 hover:text-coral disabled:opacity-50"
                   >
-                    O'chirish
+                    Delete
                   </button>
                 )}
               </div>
@@ -873,7 +872,7 @@ export default function Mcp() {
       setXato(null)
       return katalog.serverlar
     } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : "Ma'lumotni olib bo'lmadi")
+      setXato(x instanceof ApiXatosi ? x.message : 'Could not load the data')
       return null
     } finally {
       setYuklanmoqda(false)
@@ -922,9 +921,9 @@ export default function Mcp() {
   const qamrovMatni = (server: McpServer): string => {
     const global = server.ornatilgan.some((o) => o.qamrov === 'global')
     const loyihaSoni = server.ornatilgan.filter((o) => o.qamrov === 'loyiha').length
-    if (global && loyihaSoni > 0) return `Global + ${loyihaSoni} loyiha`
+    if (global && loyihaSoni > 0) return `Global + ${loyihaSoni} projects`
     if (global) return 'Global'
-    if (loyihaSoni > 0) return `${loyihaSoni} loyiha`
+    if (loyihaSoni > 0) return `${loyihaSoni} projects`
     return ''
   }
 
@@ -940,21 +939,21 @@ export default function Mcp() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <PageHead
-        title="MCP serverlar"
-        sub="Tashqi vositalarni agentga ulash: registry, GitHub yoki qo'lda"
+        title="MCP servers"
+        sub="Connect external tools to the agent: registry, GitHub or manually"
       />
 
-      {/* Qo'shish yo'llari */}
+      {/* Ways to add a server */}
       <Card className="mb-6 p-5">
         <div className="text-xs font-medium uppercase tracking-wider text-faint">
-          Server qo'shish
+          Add server
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => setQoshishModali('registry')}
             className="rounded-lg border border-lazur-dim px-3 py-2 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg"
           >
-            Rasmiy registry
+            Official registry
           </button>
           <button
             onClick={() => setQoshishModali('github')}
@@ -966,7 +965,7 @@ export default function Mcp() {
             onClick={() => setQoshishModali('qolda')}
             className="rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:text-ink"
           >
-            Qo'lda
+            Manually
           </button>
         </div>
       </Card>
@@ -984,28 +983,28 @@ export default function Mcp() {
           <input
             value={qidiruv}
             onChange={(e) => setQidiruv(e.target.value)}
-            placeholder="Qidirish…"
-            aria-label="MCP serverlar ichida qidirish"
+            placeholder="Search…"
+            aria-label="Search MCP servers"
             className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
           />
         </div>
       )}
 
       {yuklanmoqda ? (
-        <p className="text-sm text-muted">Yuklanmoqda…</p>
+        <p className="text-sm text-muted">Loading…</p>
       ) : serverlar.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-sm text-muted">
-            Katalog bo'sh. Yuqoridagi tugmalardan biri bilan server qo'shing.
+            The catalog is empty. Add a server using one of the buttons above.
           </p>
           <p className="mt-2 text-xs text-faint">
-            MCP — tashqi vositalarni AI'ga ulash standarti. Server o'rnatilgach
-            uning vositalari suhbatda paydo bo'ladi.
+            MCP is the standard for connecting external tools to an AI. Once a server is
+            installed, its tools show up in the chat.
           </p>
         </Card>
       ) : korinadigan.length === 0 ? (
         <Card className="p-8 text-center">
-          <p className="text-sm text-muted">Hech narsa topilmadi.</p>
+          <p className="text-sm text-muted">Nothing found.</p>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1025,10 +1024,10 @@ export default function Mcp() {
 
                 <div className="mt-2 flex-1">
                   <p className="line-clamp-3 text-sm leading-relaxed text-muted">
-                    {s.tavsif || '(tavsif yo\'q)'}
+                    {s.tavsif || '(no description)'}
                   </p>
                   {kalitKerak && (
-                    <p className="mt-1.5 text-[11px] text-gold">kalit talab qiladi</p>
+                    <p className="mt-1.5 text-[11px] text-gold">requires a key</p>
                   )}
                 </div>
 
@@ -1038,7 +1037,7 @@ export default function Mcp() {
                       ✓ {qamrov}
                     </span>
                   ) : (
-                    <span className="text-xs text-faint">o'rnatilmagan</span>
+                    <span className="text-xs text-faint">not installed</span>
                   )}
                   <button
                     onClick={() => setModal(s)}
@@ -1048,7 +1047,7 @@ export default function Mcp() {
                         : 'shrink-0 rounded-lg border border-lazur-dim px-3 py-1.5 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg'
                     }
                   >
-                    {qamrov ? 'Sozlash' : "O'rnatish"}
+                    {qamrov ? 'Configure' : 'Install'}
                   </button>
                 </div>
               </Card>

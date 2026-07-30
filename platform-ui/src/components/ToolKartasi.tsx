@@ -24,15 +24,15 @@ const QISQA_QATOR = 6
  * borligi o'zi "bu amal tekshiruvdan o'tgan" degani.
  */
 const ruxsatMatni: Record<RuxsatManbasi, string> = {
-  hardoim: '"har doim" tanlangani uchun bajarildi',
-  auto: 'auto rejim: klassifikator ruxsat berdi',
-  'auto-blok': 'auto rejim: klassifikator bloklandi',
-  foydalanuvchi: 'siz ruxsat berdingiz',
-  'foydalanuvchi-hardoim': 'siz "har doim" ruxsat berdingiz',
-  rad: 'siz rad etdingiz',
-  muddat: "javob kelmadi — muddat tugadi, rad etildi",
-  bekor: "javob to'xtatildi — amal bajarilmadi",
-  taqiqlangan: "qat'iy taqiq ro'yxatida — hech kimdan so'ralmaydi",
+  hardoim: 'executed because "always" was selected',
+  auto: 'auto mode: the classifier allowed it',
+  'auto-blok': 'auto mode: blocked by the classifier',
+  foydalanuvchi: 'you granted permission',
+  'foydalanuvchi-hardoim': 'you granted "always" permission',
+  rad: 'you denied it',
+  muddat: 'no answer — timed out and was denied',
+  bekor: 'answer cancelled — the action was not executed',
+  taqiqlangan: 'on the hard denylist — never asked of anyone',
 }
 
 const nomBelgisi: Record<string, string> = {
@@ -45,13 +45,13 @@ const nomBelgisi: Record<string, string> = {
 function holatUslubi(holat: ToolChaqiruv['holat']): { rang: string; belgi: string; matn: string } {
   switch (holat) {
     case 'ishlamoqda':
-      return { rang: 'text-gold', belgi: '', matn: 'ishlamoqda…' }
+      return { rang: 'text-gold', belgi: '', matn: 'running…' }
     case 'tugadi':
       return { rang: 'text-mint', belgi: '✓', matn: '' }
     case 'rad etildi':
-      return { rang: 'text-gold', belgi: '⊘', matn: 'ruxsat berilmadi' }
+      return { rang: 'text-gold', belgi: '⊘', matn: 'permission denied' }
     case 'xato':
-      return { rang: 'text-coral', belgi: '✕', matn: 'xato' }
+      return { rang: 'text-coral', belgi: '✕', matn: 'error' }
   }
 }
 
@@ -112,7 +112,7 @@ export default function ToolKartasi({ tool }: { tool: ToolChaqiruv }) {
               {korinadigan}
             </pre>
             {tool.tafsilot?.qisqartirilgan && (
-              <div className="mt-1 text-faint">[chiqish qisqartirildi]</div>
+              <div className="mt-1 text-faint">[output truncated]</div>
             )}
           </div>
         )
@@ -123,7 +123,7 @@ export default function ToolKartasi({ tool }: { tool: ToolChaqiruv }) {
           onClick={() => setOchiq((v) => !v)}
           className="w-full border-t border-line px-3 py-1.5 text-left text-faint transition hover:text-lazur"
         >
-          {ochiq ? '▴ yopish' : `▾ yana ${qatorlar.length - QISQA_QATOR} qator`}
+          {ochiq ? '▴ collapse' : `▾ ${qatorlar.length - QISQA_QATOR} more lines`}
         </button>
       )}
 
@@ -145,7 +145,7 @@ export default function ToolKartasi({ tool }: { tool: ToolChaqiruv }) {
           className={`flex items-start gap-1.5 border-t border-line px-3 py-1.5 text-[11px] ${
             tool.ruxsat.berildi ? 'text-faint' : 'text-gold'
           }`}
-          title={tool.ruxsat.naqsh ? `naqsh: ${tool.ruxsat.naqsh}` : undefined}
+          title={tool.ruxsat.naqsh ? `pattern: ${tool.ruxsat.naqsh}` : undefined}
         >
           <span aria-hidden>{tool.ruxsat.berildi ? '🔓' : '🔒'}</span>
           <span className="min-w-0 flex-1">{ruxsatMatni[tool.ruxsat.manba]}</span>

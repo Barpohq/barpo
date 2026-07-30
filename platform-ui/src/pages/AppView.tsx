@@ -177,7 +177,7 @@ function WidgetView({ w }: { w: Widget }) {
                   w.kind === 'domen' ? 'bg-lazur-dim/15 text-lazur' : 'bg-gold/15 text-gold'
                 }`}
               >
-                {w.kind === 'domen' ? '🌐 domen ulangan' : '🔌 port preview'}
+                {w.kind === 'domen' ? '🌐 domain connected' : '🔌 port preview'}
               </span>
               <div className="font-mono text-[11px] text-faint">server: {w.server}</div>
               {w.ssl && <div className="font-mono text-[11px] text-faint">SSL: {w.ssl}</div>}
@@ -310,7 +310,7 @@ export default function AppView({ app }: { app: AppManifest }) {
         {yiqilganlar.length > 0 && (
           <Card className="p-4">
             <div className="text-xs font-medium uppercase tracking-wider text-gold">
-              Ma'lumot olinmadi
+              Data unavailable
             </div>
             <ul className="mt-2 space-y-1">
               {yiqilganlar.map(([nom, h]) => (
@@ -328,7 +328,7 @@ export default function AppView({ app }: { app: AppManifest }) {
       </div>
 
       <p className="mt-6 font-mono text-[11px] text-faint">
-        Bu sahifa ilova manifestidan dinamik render qilindi — host UI qayta build qilinmagan.
+        This page was rendered dynamically from the app manifest — the host UI was not rebuilt.
       </p>
     </div>
   )

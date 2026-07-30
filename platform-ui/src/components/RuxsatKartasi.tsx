@@ -51,7 +51,7 @@ export default function RuxsatKartasi({ sorov, onJavob }: Props) {
     <Card className="mt-3 overflow-hidden border-gold/40">
       <div className="flex items-center gap-2 border-b border-line px-4 py-2.5 font-mono text-xs">
         <span className="pulse-dot inline-block size-1.5 rounded-full bg-gold" aria-hidden />
-        <span className="text-gold">ruxsat so'ralmoqda</span>
+        <span className="text-gold">permission requested</span>
         <span className="text-faint">· {sorov.amal}</span>
       </div>
 
@@ -73,16 +73,16 @@ export default function RuxsatKartasi({ sorov, onJavob }: Props) {
           disabled={yuborilmoqda}
           className="rounded-lg bg-lazur-dim px-3.5 py-1.5 text-sm font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
         >
-          Ruxsat berish
+          Allow
         </button>
         {sorov.naqsh && (
           <button
             onClick={() => javobBer('hardoim')}
             disabled={yuborilmoqda}
             className="max-w-[16rem] truncate rounded-lg border border-line px-3.5 py-1.5 text-sm text-muted transition enabled:hover:border-lazur-dim enabled:hover:text-ink disabled:opacity-40"
-            title={`«${sorov.naqsh}» uchun bu suhbatda boshqa so'ralmaydi`}
+            title={`Won't be asked again for «${sorov.naqsh}» in this chat`}
           >
-            Har doim ({naqshYorligi(sorov.naqsh)})
+            Always ({naqshYorligi(sorov.naqsh)})
           </button>
         )}
         <button
@@ -90,7 +90,7 @@ export default function RuxsatKartasi({ sorov, onJavob }: Props) {
           disabled={yuborilmoqda}
           className="rounded-lg border border-line px-3.5 py-1.5 text-sm text-muted transition enabled:hover:border-coral enabled:hover:text-coral disabled:opacity-40"
         >
-          Rad etish
+          Deny
         </button>
       </div>
     </Card>

@@ -31,7 +31,7 @@ export default function Terminal() {
     <div className="mx-auto max-w-4xl px-6 py-8">
       <PageHead
         title="Terminal"
-        sub="Chat'da berilgan buyruq orqa fonda Claude Code'ni tmux sessiyasida ishga tushiradi — Pro rejimda jarayonni jonli kuzatasiz"
+        sub="A command given in chat starts Claude Code in a tmux session in the background — in Pro mode you watch it live"
       />
 
       <Card className="overflow-hidden">
@@ -42,7 +42,7 @@ export default function Terminal() {
             <span className="size-2.5 rounded-full bg-mint/70" />
           </span>
           <span className="ml-2 font-mono text-xs text-muted">tmux: claude-code · helsinki-1 · 0:1</span>
-          <span className="ml-auto rounded-md bg-bg px-2 py-0.5 font-mono text-[10px] text-lazur">jonli</span>
+          <span className="ml-auto rounded-md bg-bg px-2 py-0.5 font-mono text-[10px] text-lazur">live</span>
         </div>
 
         <div ref={boxRef} className="thin-scroll h-80 overflow-y-auto bg-bg px-4 py-3 font-mono text-[13px] leading-relaxed">
@@ -53,10 +53,10 @@ export default function Terminal() {
           ))}
           {approved && (
             <>
-              <div className="text-mint">✓ Tasdiqlandi (firdavs, chat orqali)</div>
+              <div className="text-mint">✓ Approved (firdavs, via chat)</div>
               <div className="text-muted">● Bash(rm -r models_cache/bge-m3-unused-snapshot-0612)</div>
-              <div className="text-faint">  ⎿ 1.8G bo'shatildi · disk: 84% → 61%</div>
-              <div className="text-mint">✓ Ish yakunlandi — natija chatga qaytarildi, audit log'ga yozildi</div>
+              <div className="text-faint">  ⎿ 1.8G freed · disk: 84% → 61%</div>
+              <div className="text-mint">✓ Done — result returned to chat and written to the audit log</div>
             </>
           )}
           {!finished && <span className="cursor-blink text-lazur">▍</span>}
@@ -64,16 +64,16 @@ export default function Terminal() {
 
         {finished && !approved && (
           <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
-            <span className="text-sm text-gold">Amal "o'zgartirish" darajasida — tasdiq kutilmoqda</span>
+            <span className="text-sm text-gold">Action is at the "write" level — awaiting approval</span>
             <div className="flex gap-2">
               <button
                 onClick={() => setApproved(true)}
                 className="rounded-lg bg-lazur-dim px-3.5 py-1.5 text-sm font-semibold text-bg transition hover:brightness-110"
               >
-                ✅ Tasdiqlash
+                ✅ Approve
               </button>
               <button className="rounded-lg border border-line px-3.5 py-1.5 text-sm text-muted transition hover:border-coral hover:text-coral">
-                ❌ Rad etish
+                ❌ Deny
               </button>
             </div>
           </div>
@@ -81,8 +81,8 @@ export default function Terminal() {
       </Card>
 
       <p className="mt-4 text-xs leading-relaxed text-faint">
-        Oddiy rejimda bu sessiya ko'rinmaydi — foydalanuvchi faqat chatdagi natijani ko'radi.
-        Pro rejim esa hamma qatlamni ochib beradi: tmux, loglar, audit.
+        In simple mode this session is hidden — the user only sees the result in chat.
+        Pro mode opens up every layer: tmux, logs, audit.
       </p>
     </div>
   )
