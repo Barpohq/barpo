@@ -267,3 +267,16 @@ eski dashboard o'z holicha qoladi.
 Vidjetlar yetmasa — o'z JSX kodingizni yozishingiz mumkin. Uning
 qoidalari alohida: **`dashboard-jsx` skillini o'qing**. Lekin avval
 vidjetlar bilan qilib ko'ring: ular ishonchliroq va tezroq.
+
+## Boshqarish kerak bo'lsa
+
+Dashboard faqat ko'rsatishi shart emas. Foydalanuvchi qiymat kiritishi
+(bot tokeni, admin id) yoki tugma bosishi (restart, stop) kerak bo'lsa —
+`sozlamalar` va `amallar` qatlamlari bor.
+
+Ular ayniqsa **deploy qilgandan keyin** kerak: ilova serverda ishlayapti,
+lekin uni sozlash va qayta ishga tushirish uchun yo'l bo'lishi kerak.
+
+**`dashboard-boshqaruv` skillini o'qing** — u forma maydonlari, `ssh`
+yordamchisi va foydalanuvchi kirishini shelldan ajratib turadigan
+qoidalarni tushuntiradi.

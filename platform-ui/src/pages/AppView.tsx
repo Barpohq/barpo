@@ -1,5 +1,7 @@
 import type { AppManifest, Widget } from '../data/mock'
 import AiKorinish from '../components/AiKorinish'
+import AmalTugmalari from '../components/AmalTugmalari'
+import SozlamaFormasi from '../components/SozlamaFormasi'
 import { useIlovaStatelari } from '../lib/ilova-statelari'
 import { Card, StatTile, StatusDot } from '../ui'
 
@@ -217,7 +219,7 @@ export default function AppView({ app }: { app: AppManifest }) {
   // yuklash kerak emas (avval iframe uchun ~190 KB yuklanardi).
 
   // Jonli statelar — har biri o'z intervali bilan polling qilinadi.
-  const { qiymatlar, holatlar } = useIlovaStatelari(app.id, app.states)
+  const { qiymatlar, holatlar, yangila, natijalarniQoy } = useIlovaStatelari(app.id, app.states)
 
   // Manifestdagi `data` — BOSHLANG'ICH qiymat, jonli statelar uning
   // ustiga yoziladi. Shu tartib muhim: birinchi renderda sahifa bo'sh
@@ -258,7 +260,47 @@ export default function AppView({ app }: { app: AppManifest }) {
           U izolyatsiyada (sandbox iframe) ishlaydi: yiqilsa faqat o'zi
           o'chadi, quyidagi vidjetlar va butun platforma butun qoladi.
         */}
-        {app.view && <AiKorinish kod={app.view.kod} data={data} />}
+        {app.view && (
+          <AiKorinish
+            kod={app.view.kod}
+            data={data}
+            // `appId` berilishi `ui.saqla`/`ui.amal` ni ochadi. Boshqaruvsiz
+            // ilovada ular BERILMAYDI — ko'rinish faqat chizadi.
+            {...(app.sozlamalar || app.amallar?.length ? { appId: app.id } : {})}
+            onAmal={(javob) => {
+              if (javob.statelar) natijalarniQoy(javob.statelar)
+            }}
+            onSaqlandi={yangila}
+          />
+        )}
+
+        {/*
+          BOSHQARUV VIDJETLARDAN OLDIN. Sabab: foydalanuvchi bu sahifaga
+          odatda BIR NARSA QILISH uchun kiradi (tokenni yangilash, botni
+          restart qilish) — o'qish uchun sidebar'dagi holat ham yetadi.
+          Amallarni jadval va loglar ostiga ko'chirish ularni izlashga
+          majbur qilardi.
+        */}
+        {app.amallar && app.amallar.length > 0 && (
+          <AmalTugmalari
+            appId={app.id}
+            amallar={app.amallar}
+            onBajarildi={(javob) => {
+              // Server `yangila` dagi statelarni allaqachon qayta hisoblab
+              // qaytardi — qayta so'rov kerak emas.
+              if (javob.statelar) natijalarniQoy(javob.statelar)
+            }}
+          />
+        )}
+
+        {app.sozlamalar && (
+          <SozlamaFormasi
+            appId={app.id}
+            // Saqlangandan keyin ilova restart bo'lgan bo'lishi mumkin —
+            // hamma state majburan yangilanadi.
+            onSaqlandi={yangila}
+          />
+        )}
 
         {/*
           Ishlamayotgan statelar. Faqat HECH QACHON qiymat bermaganlari

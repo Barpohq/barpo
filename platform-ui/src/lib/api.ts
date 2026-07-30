@@ -29,6 +29,7 @@ import type {
   Skill,
   SkillManba,
   SkillQamrov,
+  SozlamaMaydoni,
 } from '@platforma/shared'
 
 export class ApiXatosi extends Error {
@@ -264,6 +265,71 @@ export function oqimniToxtat(sessionId: string): Promise<{ toxtatildi: boolean }
 export async function ilovalarOl(): Promise<AppManifest[]> {
   const javob = await sorov<{ apps: AppManifest[] }>('/api/apps')
   return javob.apps
+}
+
+// ---------------------------------------------------------------------------
+// Ilova boshqaruvi — sozlamalar va amallar
+// ---------------------------------------------------------------------------
+//
+// HAQIQAT MANBAI — SERVER. Qiymatlar serverdagi ilovaning o'z
+// konfiguratsiyasiga yoziladi (`types.ts` dagi boshqaruv qatlami izohiga q.),
+// shuning uchun sir qiymatlar HECH QACHON bu yerga kelmaydi — faqat
+// `ornatilgan` bayrog'i.
+
+export interface SozlamaHolati {
+  maydonlar: SozlamaMaydoni[]
+  /** Sirsiz joriy qiymatlar (serverdan o'qilgan) */
+  qiymatlar: Record<string, string>
+  /** Sir maydonlar uchun: kalit → serverda o'rnatilganmi */
+  ornatilgan: Record<string, boolean>
+  /** O'qish yiqilsa — sabab. Forma baribir ko'rsatiladi. */
+  ogohlantirish?: string
+}
+
+export function ilovaSozlamalariniOl(appId: string): Promise<SozlamaHolati> {
+  return sorov<SozlamaHolati>(`/api/apps/${encodeURIComponent(appId)}/sozlama`)
+}
+
+export interface SozlamaYozishJavobi {
+  ok: boolean
+  xabar?: string
+  xato?: string
+  /** Validatsiya xatolari (400) */
+  xatolar?: string[]
+}
+
+/**
+ * Qiymatlarni serverga yozadi.
+ *
+ * BO'SH SIR YUBORILMASIN: bo'sh satr "o'zgartirmadim" degani va server uni
+ * tashlab ketadi, lekin uni umuman yubormaslik aniqroq.
+ */
+export function ilovaSozlamalariniSaqla(
+  appId: string,
+  qiymatlar: Record<string, string>,
+): Promise<SozlamaYozishJavobi> {
+  return sorov<SozlamaYozishJavobi>(`/api/apps/${encodeURIComponent(appId)}/sozlama`, {
+    method: 'PUT',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ qiymatlar }),
+  })
+}
+
+export interface AmalJavobi {
+  ok: boolean
+  xabar?: string
+  xato?: string
+  /** Amal allaqachon bajarilib turgan edi — natija o'shanikidan */
+  bandEdi?: boolean
+  /** `yangila` da ko'rsatilgan statelarning yangi qiymatlari */
+  statelar?: Record<string, { ok: boolean; qiymat?: unknown; xato?: string; vaqt: string }>
+}
+
+export function ilovaAmaliniBajar(appId: string, nom: string): Promise<AmalJavobi> {
+  return sorov<AmalJavobi>(
+    `/api/apps/${encodeURIComponent(appId)}/amal/${encodeURIComponent(nom)}`,
+    { method: 'POST' },
+  )
 }
 
 // ---------------------------------------------------------------------------

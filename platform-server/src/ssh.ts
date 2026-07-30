@@ -35,23 +35,60 @@ export interface BuyruqNatija {
   stderr: string
 }
 
+/**
+ * Buyruq bajarish imkoniyatlari.
+ *
+ * `stdin` — MAXFIY MA'LUMOT UZATISH YO'LI. Token argumentga tushsa u
+ * serverdagi `ps` chiqishida va shell tarixida ko'rinardi; stdin esa faqat
+ * jarayonning o'ziga boradi (`ssh.envYoz()` shuni ishlatadi).
+ *
+ * `timeoutMs` — standart chegarani ko'chirish uchun: `docker restart` +
+ * healthcheck 20 soniyaga sig'maydi (`amal-bajar.ts`).
+ */
+export interface BuyruqImkoniyat {
+  env?: Record<string, string>
+  stdin?: string
+  timeoutMs?: number
+}
+
 export type BuyruqBajaruvchi = (
   argv: string[],
-  env?: Record<string, string>,
+  imkoniyat?: BuyruqImkoniyat,
 ) => Promise<BuyruqNatija>
 
 /** SSH sessiyasi osilib qolmasin — ConnectTimeout'dan tashqari JS tomonda ham chegara */
 const BUYRUQ_TIMEOUT_MS = 20_000
 
-const standartBajaruvchi: BuyruqBajaruvchi = async (argv, env) => {
+const standartBajaruvchi: BuyruqBajaruvchi = async (argv, imkoniyat) => {
+  const stdin = imkoniyat?.stdin
+
   const proc = Bun.spawn(argv, {
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...imkoniyat?.env },
     stdout: 'pipe',
     stderr: 'pipe',
-    stdin: 'ignore',
+    // Berilmasa `ignore` — avvalgi xulq saqlanadi (jarayon stdin kutib
+    // osilib qolmasin).
+    stdin: stdin === undefined ? 'ignore' : 'pipe',
   })
 
-  const soat = setTimeout(() => proc.kill(), BUYRUQ_TIMEOUT_MS)
+  // Yozishni DARHOL boshlaymiz, `await` qilmasdan: katta stdin va to'lgan
+  // quvur holatida yozishni kutib turib chiqishni o'qimasak, ikki tomon
+  // bir-birini kutib deadlock bo'lardi.
+  if (stdin !== undefined) {
+    const yozish = (async () => {
+      try {
+        proc.stdin!.write(stdin)
+        await proc.stdin!.end()
+      } catch {
+        // Jarayon stdin'ni o'qimasdan yopilgan bo'lishi mumkin (EPIPE) —
+        // bu buyruq natijasini bekor qilmaydi, chiqish kodi o'zi aytadi.
+      }
+    })()
+    // Yutilgan xato bo'lmasin
+    void yozish
+  }
+
+  const soat = setTimeout(() => proc.kill(), imkoniyat?.timeoutMs ?? BUYRUQ_TIMEOUT_MS)
   try {
     const [stdout, stderr, kod] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -69,6 +106,21 @@ let bajaruvchi: BuyruqBajaruvchi = standartBajaruvchi
 /** Testlar uchun: soxta bajaruvchi o'rnatish (null — standartga qaytarish) */
 export function bajaruvchiOrnat(b: BuyruqBajaruvchi | null): void {
   bajaruvchi = b ?? standartBajaruvchi
+}
+
+/**
+ * Joriy bajaruvchi orqali buyruq ishga tushiradi.
+ *
+ * `ilova-ssh.ts` uchun ochilgan: u ham SOXTA bajaruvchidan o'tishi kerak,
+ * aks holda ilova amallari testlarida haqiqiy `ssh` chaqirilardi. Modul
+ * ichidagi `bajaruvchi` o'zgaruvchisiga to'g'ridan murojaat qilish import
+ * paytida nusxa olib qolardi (`bajaruvchiOrnat` keyin ishlamasdi).
+ */
+export function sshBajar(
+  argv: string[],
+  imkoniyat?: BuyruqImkoniyat,
+): Promise<BuyruqNatija> {
+  return bajaruvchi(argv, imkoniyat)
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +329,7 @@ export async function kalitJoyla(manzil: JoylashManzil, parol?: string): Promise
       nishon,
       skript,
     ],
-    { SSHPASS: parol },
+    { env: { SSHPASS: parol } },
   )
   if (parolBilan.kod !== 0) {
     const sabab = parolBilan.stderr.trim().split('\n').pop() ?? ''

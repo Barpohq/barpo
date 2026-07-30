@@ -31,6 +31,11 @@
 
 import { Component, useMemo, type ErrorInfo, type ReactNode } from 'react'
 import * as React from 'react'
+import {
+  ilovaAmaliniBajar,
+  ilovaSozlamalariniSaqla,
+  type AmalJavobi,
+} from '../lib/api'
 import { Card, StatTile, StatusDot } from '../ui'
 
 /**
@@ -58,7 +63,19 @@ const HOOKLAR = {
   useId: React.useId,
 } as const
 
-type Komponent = (props: { data: Record<string, unknown>; ui: typeof UI_KOMPONENTLARI }) => ReactNode
+/**
+ * AI kodiga beriladigan `ui` obyektining shakli.
+ *
+ * `saqla`/`amal` IXTIYORIY: ular faqat `appId` berilganda qo'shiladi
+ * (`yozishApiYarat`). Ya'ni boshqaruvsiz ilovada ko'rinish faqat chizadi.
+ */
+type UiObyekti = typeof UI_KOMPONENTLARI & {
+  sozlama: Record<string, string>
+  amal?: (nom: string) => Promise<AmalJavobi>
+  saqla?: (qiymatlar: Record<string, string>) => Promise<unknown>
+}
+
+type Komponent = (props: { data: Record<string, unknown>; ui: UiObyekti }) => ReactNode
 
 /**
  * Kompilyatsiya qilingan koddan komponent yasaydi.
@@ -134,6 +151,55 @@ interface Props {
   kod: string
   /** Ko'rinishga beriladigan ma'lumot (`data` + jonli statelar) */
   data: Record<string, unknown>
+  /**
+   * Ilova id — `ui.saqla` / `ui.amal` NIMAGA yo'nalishini belgilaydi.
+   *
+   * Berilmasa o'sha ikki funksiya BERILMAYDI: `view` faqat chizadi.
+   */
+  appId?: string
+  /** Sirsiz sozlama qiymatlari — `ui.sozlama` */
+  sozlama?: Record<string, string>
+  /** Amal bajarilgandan keyin (statelarni yangilash uchun) */
+  onAmal?: (javob: AmalJavobi) => void
+  /** Sozlama saqlangandan keyin */
+  onSaqlandi?: () => void
+}
+
+/**
+ * `ui.saqla` / `ui.amal` — AI ko'rinishiga beriladigan YOZISH yo'li.
+ *
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ NEGA BU `fetch` TAQIQINI BUZMAYDI.                                 │
+ * │                                                                    │
+ * │ `view-qurish.ts` `fetch` ni taqiqlab turadi va bu O'Z KUCHIDA       │
+ * │ QOLADI: kod IXTIYORIY manzilga so'rov yubora olmaydi. Bu ikki       │
+ * │ funksiya esa PLATFORMA bergan tor yo'l — ular faqat SHU ilovaning   │
+ * │ marshrutlariga boradi, chunki `appId` closure'da qulflangan va      │
+ * │ argument bo'lib uzatilmaydi.                                       │
+ * │                                                                    │
+ * │ Ya'ni AI `ui.amal('restart')` yoza oladi, lekin                     │
+ * │ `ui.amal('/api/apps/boshqa-ilova/amal/ochir')` yoza OLMAYDI.        │
+ * └────────────────────────────────────────────────────────────────────┘
+ */
+function yozishApiYarat(
+  appId: string,
+  onAmal?: (javob: AmalJavobi) => void,
+  onSaqlandi?: () => void,
+) {
+  return {
+    /** Amalni bajaradi — manifestdagi `amallar[].nom` bo'yicha */
+    async amal(nom: string) {
+      const javob = await ilovaAmaliniBajar(appId, nom)
+      onAmal?.(javob)
+      return javob
+    },
+    /** Sozlama qiymatlarini serverga yozadi */
+    async saqla(qiymatlar: Record<string, string>) {
+      const javob = await ilovaSozlamalariniSaqla(appId, qiymatlar)
+      onSaqlandi?.()
+      return javob
+    },
+  }
 }
 
 /** Xato bo'lganda ko'rsatiladigan blok */
@@ -161,7 +227,14 @@ function XatoBloki({ xabar }: { xabar: string }) {
  *   1. Kod bajarilmasa (`komponentYasa`) — sintaksis yoki shakl xatosi
  *   2. Render paytida (`KorinishChegarasi`) — masalan `undefined.map()`
  */
-export default function AiKorinish({ kod, data }: Props) {
+export default function AiKorinish({
+  kod,
+  data,
+  appId,
+  sozlama,
+  onAmal,
+  onSaqlandi,
+}: Props) {
   // Kod o'zgarmaguncha komponent QAYTA YASALMAYDI: har renderda
   // `new Function` chaqirilsa komponent identifikatori o'zgarib, React
   // uni har safar noldan mount qilardi (ichki holat yo'qolardi).
@@ -187,6 +260,19 @@ export default function AiKorinish({ kod, data }: Props) {
 
   const faolXato = renderXatosi?.kod === kod ? renderXatosi.xabar : null
 
+  // `ui` obyekti — komponentlar + (appId bo'lsa) yozish yo'li.
+  //
+  // `useMemo` MUHIM: har renderda yangi obyekt bo'lsa, AI kodidagi
+  // `useEffect(..., [ui])` cheksiz aylanaga tushardi.
+  const ui = React.useMemo(
+    () => ({
+      ...UI_KOMPONENTLARI,
+      ...(appId ? yozishApiYarat(appId, onAmal, onSaqlandi) : {}),
+      sozlama: sozlama ?? {},
+    }),
+    [appId, sozlama, onAmal, onSaqlandi],
+  )
+
   if (xato) return <XatoBloki xabar={xato} />
   if (faolXato) return <XatoBloki xabar={faolXato} />
   if (!komponent) return null
@@ -197,7 +283,7 @@ export default function AiKorinish({ kod, data }: Props) {
       kalit={kod}
       onXato={(xabar) => setRenderXatosi({ kod, xabar })}
     >
-      <Korinish data={data} ui={UI_KOMPONENTLARI} />
+      <Korinish data={data} ui={ui} />
     </KorinishChegarasi>
   )
 }

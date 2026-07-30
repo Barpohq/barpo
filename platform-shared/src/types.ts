@@ -494,16 +494,18 @@ export type Widget =
  * lekin har dashboard unga sig'avermaydi. Kod qatlami o'sha shiftni ochadi —
  * AI o'zi xohlagan tartibni JSX bilan yozadi.
  *
- * NEGA BU XAVFSIZ. Kod HOST SAHIFADA EMAS, `sandbox="allow-scripts"` li
- * iframe'da bajariladi (`allow-same-origin` ATAYLAB berilmaydi). Natijada
- * unda `fetch`, `localStorage`, cookie va parent DOM YO'Q. Ya'ni kod
- * platformaning huquqlarini MEROS QILIB OLMAYDI — u faqat o'ziga
- * `postMessage` bilan berilgan `data` ni ko'radi.
+ * ⚠️ ISHONCH DARAJASI. Kod HOST React daraxtida ishlaydi, ya'ni
+ * platformaning huquqi bilan (avval sandbox iframe'da edi — `AiKorinish.tsx`
+ * boshidagi izoh nega o'zgarganini tushuntiradi). Bu `states` qatlami bilan
+ * bir xil daraja va bir xil ongli qaror.
  *
- * Bu chegara muhim, chunki kod zanjiri ishonchsiz manbadan boshlanadi:
- * begona GitHub repo'sidagi skill → AI → shu kod (`skill-yuklash.ts`
- * boshidagi izohga q.). Iframe bo'lmasa, o'sha zanjir platforma
- * sessiyasini egallardi.
+ * Chegara `view-qurish.ts` da: `import` va `fetch` taqiqlangan, ya'ni kod
+ * ixtiyoriy tarmoq chiqishi qila olmaydi. Yozish faqat platforma bergan
+ * `ui.saqla` / `ui.amal` orqali va faqat O'Z ilovasiga
+ * (`AiKorinish.tsx` da app id closure'ga qulflangan).
+ *
+ * Xato izolyatsiyasi saqlanadi: `KorinishChegarasi` render xatosini ushlaydi
+ * va faqat shu blok o'chadi.
  */
 export interface AppView {
   /**
@@ -573,6 +575,148 @@ export interface AppState {
   interval?: number
 }
 
+// ---------------------------------------------------------------------------
+// Boshqaruv qatlami — sozlamalar (forma) va amallar (tugma)
+// ---------------------------------------------------------------------------
+//
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ HAQIQAT MANBAI — SERVER, PLATFORMA EMAS.                             │
+// │                                                                      │
+// │ Ilova (masalan telegram bot) serverda MUSTAQIL ishlaydi va tokenni   │
+// │ o'z konfiguratsiyasidan (`/opt/bot/.env`) o'qiydi. Foydalanuvchi      │
+// │ tokenni platformada kiritganda u SHU YERGA yoziladi, platformaning    │
+// │ o'z bazasiga EMAS.                                                    │
+// │                                                                      │
+// │     brauzer → platforma → SSH → server:/opt/bot/.env → restart       │
+// │                                                                      │
+// │ Sirlar TESKARI yo'nalishda oqmaydi: platforma sir maydon uchun faqat │
+// │ "o'rnatilgan / o'rnatilmagan" ni biladi, qiymatini o'qimaydi.         │
+// │                                                                      │
+// │ NEGA `mcp-kredensial.ts` DAN FARQLI. MCP serverni platformaning       │
+// │ O'ZI ishga tushiradi — token unga KERAK, shuning uchun saqlanadi.     │
+// │ Ilova esa serverda o'zi ishlaydi — token platformaga kerak emas,      │
+// │ ya'ni uni saqlash faqat qo'shimcha xavf bo'lardi.                     │
+// └──────────────────────────────────────────────────────────────────────┘
+
+/**
+ * Sozlama maydonining turi — UI qanday kiritish elementi chizishini belgilaydi.
+ *
+ * `sir` alohida toifada: u UI'da yashiriladi, joriy qiymati HECH QACHON
+ * qaytarilmaydi va bo'sh qoldirilsa "o'zgartirmadim" degani
+ * (`McpSozlamaMaydoni.maxfiy` bilan bir xil qaror).
+ */
+export type SozlamaTuri = 'matn' | 'sir' | 'raqam' | 'tanlov' | 'kalit' | 'kopMatn'
+
+export interface SozlamaMaydoni {
+  /**
+   * Sozlama kaliti — serverdagi konfiguratsiyada shu nom bilan yoziladi.
+   *
+   * Faqat `[a-z][a-z0-9_]*`: u `.env` kaliti bo'lib chiqadi (yuqori registrga
+   * aylantirilib) va JSON kaliti bo'lishi mumkin. Qat'iy naqsh injection
+   * yo'llarini yopadi — `manifest-tekshir.ts` majburlaydi.
+   */
+  kalit: string
+  turi: SozlamaTuri
+  yorliq: string
+  izoh?: string
+  majburiy?: boolean
+  /** Boshlang'ich qiymat — `sir` uchun ISHLATILMAYDI */
+  standart?: string
+  /** `turi: 'tanlov'` uchun variantlar ro'yxati */
+  variantlar?: string[]
+  /**
+   * Validatsiya regexi (satr shaklida, `RegExp` konstruktoriga beriladi).
+   *
+   * ┌────────────────────────────────────────────────────────────────────┐
+   * │ BU — INJECTION HIMOYASINING UCHINCHI QATLAMI.                      │
+   * │                                                                    │
+   * │ `states` qatlamida foydalanuvchi kirishi YO'Q edi, bu yerda BOR.   │
+   * │ Birinchi ikki qatlam kirishni shell'dan butunlay ajratadi          │
+   * │ (argv massivi + stdin), naqsh esa qiymatning O'ZINI cheklaydi —    │
+   * │ masalan bot tokeni `^\d+:[A-Za-z0-9_-]+$` shaklidan chiqmasin.     │
+   * └────────────────────────────────────────────────────────────────────┘
+   */
+  naqsh?: string
+  /** Naqsh buzilganda foydalanuvchiga ko'rsatiladigan matn */
+  naqshIzohi?: string
+}
+
+/**
+ * Ilova sozlamalari — forma sxemasi va uni serverga yozadigan kod.
+ *
+ * Sxema (`maydonlar`) va kod (`yoz`) ATAYLAB ajratilgan: sxema bashoratli va
+ * UI uni o'zi render qiladi (`widgets` falsafasi), kod esa har ilova uchun
+ * boshqacha bo'ladigan qismni oladi — qaysi faylga, qaysi formatda, qanday
+ * restart bilan.
+ */
+export interface AppSozlamalari {
+  maydonlar: SozlamaMaydoni[]
+  /**
+   * Qiymatlarni SERVERGA yozadigan kod.
+   *
+   * `module.exports = async function ({ qiymatlar, ssh, appId }) { ... }`
+   *
+   * `ssh.envYoz()` va `ssh.buyruq()` platforma tomonidan beriladi — AI shell
+   * satri yozmaydi (`amal-bajar.ts` dagi izohga q.).
+   */
+  yoz: string
+  /**
+   * Joriy qiymatlarni SERVERDAN o'qiydigan kod (ixtiyoriy).
+   *
+   * ⚠️ SIR QAYTARMASLIGI KERAK. Sir kalit qaytarilsa u tashlanadi va
+   * ogohlantirish yoziladi — token server → platforma → brauzer yo'lini
+   * bosib o'tmasligi kerak.
+   *
+   * Berilmasa forma bo'sh ochiladi (faqat `standart` qiymatlar bilan).
+   */
+  oqi?: string
+}
+
+/**
+ * Foydalanuvchi bosadigan amal — restart, stop, keshni tozalash.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────┐
+ * │ ⚠️ ISHONCH DARAJASI — `states` BILAN BIR XIL.                        │
+ * │                                                                      │
+ * │ Amal kodi server jarayonida, platformaning to'liq huquqi bilan       │
+ * │ ishlaydi. Farqi: `states` AVTOMATIK takrorlanadi, amal esa           │
+ * │ foydalanuvchi BOSGANDA bir marta ishlaydi va auditga tushadi.        │
+ * │                                                                      │
+ * │ Ruxsat qatlamidan O'TMAYDI (`bash` tool'idan farqli) — bu ongli      │
+ * │ vaqtinchalik qaror. Klassifikator ulanish nuqtasi:                   │
+ * │ `platform-server/src/amal-bajar.ts` → `kodniTekshir()`.              │
+ * └──────────────────────────────────────────────────────────────────────┘
+ */
+export interface AppAmali {
+  /**
+   * Amal nomi — URL yo'liga tushadi (`POST /api/apps/:id/amal/:nom`).
+   *
+   * `AppState.nom` bilan bir xil naqsh va bir xil sabab: yo'l chiqishini
+   * (`../`) va kodlash muammolarini butunlay yopadi.
+   */
+  nom: string
+  yorliq: string
+  izoh?: string
+  /** Audit darajasi — berilmasa `'o'zgartirish'` */
+  xavf?: AuditLevel
+  /**
+   * `true` — UI bosishdan oldin tasdiq so'raydi.
+   *
+   * ⚠️ Bu TASODIFIY bosishga qarshi, HUJUMGA qarshi emas: tekshiruv UI
+   * tomonda va API'ni to'g'ridan chaqirgan kod uni o'tkazib yuboradi.
+   */
+  tasdiq?: boolean
+  /** `module.exports = async function ({ ssh, sozlama, appId }) { ... }` */
+  kod: string
+  /**
+   * Amal tugagandan keyin MAJBURIY yangilanadigan state nomlari.
+   *
+   * Restart bosilganda status darhol yangilanishi kerak — keshdagi eski
+   * qiymat interval tugashini kutib turmasin.
+   */
+  yangila?: string[]
+}
+
 export interface AppManifest {
   id: string
   icon: string
@@ -601,6 +745,15 @@ export interface AppManifest {
   states?: AppState[]
   /** Bo'lmasa — `widgets` render qilinadi. Ikkalasi ham bo'lishi mumkin. */
   view?: AppView
+  /**
+   * Sozlamalar formasi — bo'lmasa forma ko'rsatilmaydi.
+   *
+   * Qiymatlar SERVERDAGI ilovaga yoziladi, platformaga emas (yuqoridagi
+   * qatlam izohiga q.).
+   */
+  sozlamalar?: AppSozlamalari
+  /** Foydalanuvchi bosadigan amallar — bo'lmasa tugmalar ko'rsatilmaydi */
+  amallar?: AppAmali[]
 }
 
 // ---------------------------------------------------------------------------

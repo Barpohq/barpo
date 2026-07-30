@@ -78,8 +78,44 @@ export default function View({ data }) {
 | Taqiqlangan | Nima uchun | O'rniga |
 |---|---|---|
 | `import` / `require` | Kod bundle qilinmaydi | React, hooklar, `ui` allaqachon berilgan |
-| `fetch`, `WebSocket` | Ko'rinish faqat **chizadi** | `states` qo'shing — quyida |
+| `fetch`, `WebSocket` | Ixtiyoriy tarmoq chiqishi yo'q | o'qish uchun `states`, yozish uchun `ui.amal` / `ui.saqla` |
 | `localStorage`, cookie | Ko'rinish holatsiz bo'lsin | `useState` |
+
+## Yozish — `ui.amal` va `ui.saqla`
+
+Ilovada `sozlamalar` yoki `amallar` bo'lsa, ko'rinish ularni chaqira oladi:
+
+```jsx
+export default function View({ data, ui }) {
+  const [ketmoqda, setKetmoqda] = useState(false)
+
+  async function restart() {
+    setKetmoqda(true)
+    const javob = await ui.amal('restart')     // amallar[].nom
+    setKetmoqda(false)
+  }
+
+  return (
+    <ui.Card className="p-5">
+      <button onClick={restart} disabled={ketmoqda}>
+        {ketmoqda ? 'Bajarilmoqda…' : 'Restart'}
+      </button>
+    </ui.Card>
+  )
+}
+```
+
+`ui.saqla({ token: '...' })` — sozlama qiymatlarini yozadi.
+`ui.sozlama` — joriy sirsiz qiymatlar (sirlar bu yerda **yo'q**).
+
+Bu ikki funksiya **faqat shu ilovaning** marshrutlariga boradi — boshqa
+ilovaga murojaat qilib bo'lmaydi. Shuning uchun `fetch` taqiqi buzilmaydi.
+
+**Avval sxemani ko'rib chiqing.** `sozlamalar.maydonlar` bilan forma
+platforma tomonidan render qilinadi va validatsiya, sir maskalash,
+"bo'sh sir = o'zgartirmadim" qoidasi unda tayyor. `ui.saqla` ni faqat
+sxema sig'maydigan holatda ishlating — tafsilotlar `dashboard-boshqaruv`
+skillida.
 
 ## Jonli ma'lumot — `states`
 
@@ -175,7 +211,8 @@ Shuning uchun `view` bilan birga `widgets` ham berish yaxshi odat.
 | Xato | To'g'ri yo'l |
 |---|---|
 | `import React from 'react'` | Import kerak emas — hammasi berilgan |
-| `fetch('/api/...')` | `states` qo'shing |
+| `fetch('/api/...')` — o'qish uchun | `states` qo'shing |
+| `fetch('/api/...')` — yozish uchun | `ui.amal(nom)` / `ui.saqla({...})` |
 | `export function View()` | `export default function View()` |
 | `data.cpu.foiz` (himoyasiz) | `data.cpu?.foiz` — birinchi renderda bo'sh |
 | `<Card>` | `<ui.Card>` — komponentlar `ui` ichida |

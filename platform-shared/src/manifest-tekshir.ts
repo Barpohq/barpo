@@ -25,7 +25,18 @@
 // etilmaydi — buzuq VIDJET tashlanadi, qolgani ko'rsatiladi. 8 ta vidjetdan
 // bittasi xato bo'lgani uchun 7 tasini yo'qotish foydalanuvchiga zarar.
 
-import type { AppManifest, AppState, AppView, StatItem, Widget } from './types.ts'
+import type {
+  AppAmali,
+  AppManifest,
+  AppSozlamalari,
+  AppState,
+  AppView,
+  AuditLevel,
+  SozlamaMaydoni,
+  SozlamaTuri,
+  StatItem,
+  Widget,
+} from './types.ts'
 
 /**
  * `data` snapshotining maksimal hajmi (JSON belgilarida).
@@ -395,6 +406,312 @@ export function viewniTekshir(xom: unknown, xatolar: string[]): AppView | null {
   return { kod, xash: satrmi(xom.xash) ? xom.xash : '' }
 }
 
+// ---------------------------------------------------------------------------
+// Boshqaruv qatlami — sozlamalar va amallar
+// ---------------------------------------------------------------------------
+
+/**
+ * Sozlama kaliti — serverdagi konfiguratsiyaga yoziladi.
+ *
+ * `STATE_NOMI_NAQSHI` bilan bir xil shakl, lekin uzunroq (64): `.env`
+ * kalitlari uzun bo'lishi mumkin (`TELEGRAM_WEBHOOK_SECRET`).
+ *
+ * Naqsh qat'iy, chunki kalit `.env` fayliga KALIT bo'lib tushadi: `=`, bo'shliq
+ * yoki yangi qator kalitda bo'lsa fayl strukturasi buzilardi.
+ */
+export const SOZLAMA_KALITI_NAQSHI = /^[a-z][a-z0-9_]{0,63}$/
+
+/** Amal nomi — URL yo'liga tushadi (`STATE_NOMI_NAQSHI` bilan bir xil sabab) */
+export const AMAL_NOMI_NAQSHI = /^[a-z][a-z0-9_]{0,31}$/
+
+/** Bitta manifestdagi maksimal sozlama maydoni */
+export const SOZLAMA_SONI_CHEGARASI = 30
+
+/** Bitta manifestdagi maksimal amal */
+export const AMAL_SONI_CHEGARASI = 20
+
+/** `tanlov` turidagi maydondagi maksimal variant */
+export const VARIANT_CHEGARASI = 50
+
+const SOZLAMA_TURLARI = ['matn', 'sir', 'raqam', 'tanlov', 'kalit', 'kopMatn'] as const
+
+const AUDIT_DARAJALARI = ["o'qish", "o'zgartirish", 'xavfli'] as const
+
+/**
+ * Naqsh satrini tekshiradi — u `RegExp` ga aylanishi SHART.
+ *
+ * Yaroqsiz naqsh TASHLANADI (maydon qoladi): validatsiyasiz maydon
+ * ishlaydi, lekin `new RegExp` xatosi butun formani yiqitardi.
+ *
+ * ReDoS xavfini ham chegaralaymiz — juda uzun naqsh qabul qilinmaydi.
+ */
+function naqshniTekshir(xom: unknown, ogohlantirishlar: string[], kalit: string): string | null {
+  if (xom === undefined || xom === null) return null
+  if (!satrmi(xom) || xom.trim().length === 0) return null
+
+  if (xom.length > 500) {
+    ogohlantirishlar.push(`Sozlama "${kalit}": \`naqsh\` juda uzun — tashlandi`)
+    return null
+  }
+
+  try {
+    new RegExp(xom)
+  } catch {
+    ogohlantirishlar.push(`Sozlama "${kalit}": \`naqsh\` yaroqsiz regex — tashlandi`)
+    return null
+  }
+
+  return xom
+}
+
+/**
+ * Sozlama maydonlarini tekshiradi va tozalaydi.
+ *
+ * Yaroqsiz maydon TASHLANADI (butun forma emas) — `statelarniTekshir` bilan
+ * bir xil qaror. Lekin kalit TAKRORLANSA forma rad etiladi: qaysi qiymat
+ * yozilishi tasodifga bog'liq bo'lardi.
+ */
+export function sozlamaMaydonlariniTekshir(
+  xom: unknown,
+  xatolar: string[],
+  ogohlantirishlar: string[],
+): SozlamaMaydoni[] | null {
+  if (!Array.isArray(xom)) {
+    xatolar.push('`sozlamalar.maydonlar` massiv bo\'lishi kerak')
+    return null
+  }
+
+  if (xom.length > SOZLAMA_SONI_CHEGARASI) {
+    ogohlantirishlar.push(
+      `${xom.length} ta sozlama berildi, birinchi ${SOZLAMA_SONI_CHEGARASI} tasi olindi`,
+    )
+  }
+
+  const natija: SozlamaMaydoni[] = []
+  const korilganKalitlar = new Set<string>()
+
+  for (const el of xom.slice(0, SOZLAMA_SONI_CHEGARASI)) {
+    if (!obyektmi(el)) {
+      ogohlantirishlar.push('Sozlama maydoni obyekt emas — tashlandi')
+      continue
+    }
+
+    const kalit = matnga(el.kalit).trim()
+    if (!SOZLAMA_KALITI_NAQSHI.test(kalit)) {
+      ogohlantirishlar.push(
+        `Sozlama kaliti yaroqsiz: ${JSON.stringify(el.kalit)} — kichik harf bilan ` +
+          'boshlanib, `a-z0-9_` dan iborat bo\'lishi kerak (u konfiguratsiya kaliti bo\'ladi)',
+      )
+      continue
+    }
+
+    if (korilganKalitlar.has(kalit)) {
+      xatolar.push(`Sozlama kaliti takrorlangan: "${kalit}"`)
+      continue
+    }
+    korilganKalitlar.add(kalit)
+
+    const turi = SOZLAMA_TURLARI.includes(el.turi as (typeof SOZLAMA_TURLARI)[number])
+      ? (el.turi as SozlamaTuri)
+      : 'matn'
+    if (el.turi !== undefined && turi !== el.turi) {
+      ogohlantirishlar.push(
+        `Sozlama "${kalit}": turi ${JSON.stringify(el.turi)} tanilmadi — \`matn\` deb olindi`,
+      )
+    }
+
+    // Yorliq bo'lmasa kalitning o'zi ishlatiladi: forma yorliqsiz maydon
+    // bilan ham ishlaydi, rad etish ortiqcha qattiqlik bo'lardi.
+    const yorliq = matnga(el.yorliq).trim() || kalit
+
+    // `tanlov` variantsiz ma'nosiz — bo'sh select foydalanuvchini qamalda
+    // qoldirardi, shuning uchun oddiy matnga tushiriladi.
+    let variantlar: string[] | undefined
+    if (turi === 'tanlov') {
+      const xomVariantlar = Array.isArray(el.variantlar)
+        ? el.variantlar.map((v) => matnga(v)).filter((v) => v.length > 0)
+        : []
+      if (xomVariantlar.length === 0) {
+        ogohlantirishlar.push(
+          `Sozlama "${kalit}": \`tanlov\` uchun variant berilmagan — \`matn\` deb olindi`,
+        )
+      } else {
+        variantlar = xomVariantlar.slice(0, VARIANT_CHEGARASI)
+      }
+    }
+
+    const naqsh = naqshniTekshir(el.naqsh, ogohlantirishlar, kalit)
+
+    // `sir` uchun `standart` ATAYLAB tashlanadi: standart qiymat manifestda
+    // ochiq turadi va bazaga yoziladi — sir uchun bu qarama-qarshilik.
+    const standart = satrmi(el.standart) && turi !== 'sir' ? el.standart : undefined
+    if (satrmi(el.standart) && turi === 'sir') {
+      ogohlantirishlar.push(
+        `Sozlama "${kalit}": \`sir\` maydonda \`standart\` bo'lmaydi — tashlandi`,
+      )
+    }
+
+    natija.push({
+      kalit,
+      turi: variantlar === undefined && turi === 'tanlov' ? 'matn' : turi,
+      yorliq,
+      ...(matnga(el.izoh).trim() ? { izoh: matnga(el.izoh).trim() } : {}),
+      ...(el.majburiy === true ? { majburiy: true } : {}),
+      ...(standart !== undefined ? { standart } : {}),
+      ...(variantlar ? { variantlar } : {}),
+      ...(naqsh ? { naqsh } : {}),
+      ...(naqsh && matnga(el.naqshIzohi).trim()
+        ? { naqshIzohi: matnga(el.naqshIzohi).trim() }
+        : {}),
+    })
+  }
+
+  return natija.length > 0 ? natija : null
+}
+
+/**
+ * `sozlamalar` blokini tekshiradi.
+ *
+ * RAD ETADI (butun manifestni): `yoz` kodi yo'q yoki bo'sh. Sabab — sxema
+ * bo'lib kodi yo'q forma foydalanuvchini ALDAYDI: u qiymat kiritadi,
+ * "Saqlash" bosadi va hech narsa bo'lmaydi. Ko'rsatmaslik yaxshiroq.
+ */
+export function sozlamalarniTekshir(
+  xom: unknown,
+  xatolar: string[],
+  ogohlantirishlar: string[],
+): AppSozlamalari | null {
+  if (xom === undefined || xom === null) return null
+  if (!obyektmi(xom)) {
+    xatolar.push('`sozlamalar` obyekt bo\'lishi kerak')
+    return null
+  }
+
+  const maydonlar = sozlamaMaydonlariniTekshir(xom.maydonlar, xatolar, ogohlantirishlar)
+  if (!maydonlar) {
+    // Xato allaqachon yozilgan (massiv emas) yoki hammasi tashlangan.
+    if (Array.isArray(xom.maydonlar)) {
+      xatolar.push('`sozlamalar.maydonlar` ichida yaroqli maydon qolmadi')
+    }
+    return null
+  }
+
+  const yoz = xom.yoz
+  if (!satrmi(yoz) || yoz.trim().length === 0) {
+    xatolar.push(
+      '`sozlamalar.yoz` majburiy: qiymatlarni serverga yozadigan kod bo\'lmasa ' +
+        'forma foydalanuvchini aldaydi (kiritadi, lekin hech narsa bo\'lmaydi)',
+    )
+    return null
+  }
+  if (yoz.length > STATE_KOD_CHEGARASI) {
+    xatolar.push(
+      `\`sozlamalar.yoz\` juda uzun: ${yoz.length} belgi, chegara ${STATE_KOD_CHEGARASI}`,
+    )
+    return null
+  }
+
+  // `oqi` IXTIYORIY va yaroqsizi TASHLANADI: u bo'lmasa forma bo'sh
+  // ochiladi, bu ishlaydigan holat.
+  let oqi: string | undefined
+  if (xom.oqi !== undefined && xom.oqi !== null) {
+    if (!satrmi(xom.oqi) || xom.oqi.trim().length === 0) {
+      ogohlantirishlar.push('`sozlamalar.oqi` satr emas — tashlandi')
+    } else if (xom.oqi.length > STATE_KOD_CHEGARASI) {
+      ogohlantirishlar.push('`sozlamalar.oqi` juda uzun — tashlandi')
+    } else {
+      oqi = xom.oqi
+    }
+  }
+
+  return { maydonlar, yoz, ...(oqi ? { oqi } : {}) }
+}
+
+/**
+ * Amallarni tekshiradi va tozalaydi.
+ *
+ * Yaroqsiz amal TASHLANADI, nom takrorlansa manifest rad etiladi (URL yo'li
+ * bitta — qaysi kod ishlashi noaniq bo'lardi).
+ */
+export function amallarniTekshir(
+  xom: unknown,
+  xatolar: string[],
+  ogohlantirishlar: string[],
+): AppAmali[] | null {
+  if (xom === undefined || xom === null) return null
+  if (!Array.isArray(xom)) {
+    ogohlantirishlar.push('`amallar` massiv emas — e\'tiborsiz qoldirildi')
+    return null
+  }
+
+  if (xom.length > AMAL_SONI_CHEGARASI) {
+    ogohlantirishlar.push(
+      `${xom.length} ta amal berildi, birinchi ${AMAL_SONI_CHEGARASI} tasi olindi`,
+    )
+  }
+
+  const natija: AppAmali[] = []
+  const korilganNomlar = new Set<string>()
+
+  for (const el of xom.slice(0, AMAL_SONI_CHEGARASI)) {
+    if (!obyektmi(el)) {
+      ogohlantirishlar.push('Amal obyekt emas — tashlandi')
+      continue
+    }
+
+    const nom = matnga(el.nom).trim()
+    if (!AMAL_NOMI_NAQSHI.test(nom)) {
+      ogohlantirishlar.push(
+        `Amal nomi yaroqsiz: ${JSON.stringify(el.nom)} — kichik harf bilan boshlanib, ` +
+          '`a-z0-9_` dan iborat bo\'lishi kerak (u URL yo\'liga tushadi)',
+      )
+      continue
+    }
+
+    if (korilganNomlar.has(nom)) {
+      xatolar.push(`Amal nomi takrorlangan: "${nom}"`)
+      continue
+    }
+    korilganNomlar.add(nom)
+
+    const kod = el.kod
+    if (!satrmi(kod) || kod.trim().length === 0) {
+      ogohlantirishlar.push(`Amal "${nom}": kod bo'sh — tashlandi`)
+      continue
+    }
+    if (kod.length > STATE_KOD_CHEGARASI) {
+      ogohlantirishlar.push(`Amal "${nom}": kod juda uzun (${kod.length} belgi) — tashlandi`)
+      continue
+    }
+
+    // Xavf darajasi tanilmasa `o'zgartirish` — ENG XAVFSIZ standart.
+    // `o'qish` deb olsak, holat o'zgartiradigan amal auditda past darajada
+    // ko'rinardi; `xavfli` deb olsak har tugma ogohlantirish bilan chiqardi.
+    const xavf = AUDIT_DARAJALARI.includes(el.xavf as (typeof AUDIT_DARAJALARI)[number])
+      ? (el.xavf as AuditLevel)
+      : "o'zgartirish"
+
+    const yangila = Array.isArray(el.yangila)
+      ? el.yangila
+          .map((n) => matnga(n).trim())
+          .filter((n) => STATE_NOMI_NAQSHI.test(n))
+          .slice(0, STATE_SONI_CHEGARASI)
+      : []
+
+    natija.push({
+      nom,
+      yorliq: matnga(el.yorliq).trim() || nom,
+      ...(matnga(el.izoh).trim() ? { izoh: matnga(el.izoh).trim() } : {}),
+      xavf,
+      ...(el.tasdiq === true ? { tasdiq: true } : {}),
+      kod,
+      ...(yangila.length > 0 ? { yangila } : {}),
+    })
+  }
+
+  return natija.length > 0 ? natija : null
+}
+
 /**
  * To'liq manifestni tekshiradi va tozalaydi.
  *
@@ -453,14 +770,37 @@ export function manifestniTekshir(xom: unknown): TekshiruvNatijasi<AppManifest> 
   const data = dataniTekshir(xom.data, xatolar)
   const view = viewniTekshir(xom.view, xatolar)
   const states = statelarniTekshir(xom.states, xatolar, ogohlantirishlar)
+  const sozlamalar = sozlamalarniTekshir(xom.sozlamalar, xatolar, ogohlantirishlar)
+  const amallar = amallarniTekshir(xom.amallar, xatolar, ogohlantirishlar)
 
   // Ko'rsatadigan HECH NARSA yo'q bo'lsa — bu ilova emas. Bu holat
   // odatda AI natijani noto'g'ri shaklda yuborganini bildiradi, shuning
   // uchun xato matni unga aniq yo'l ko'rsatadi.
-  if (widgets.length === 0 && !view) {
+  //
+  // Sozlamalar va amallar ham HISOBGA olinadi: faqat boshqaruv paneli
+  // (forma + restart tugmasi) — to'liq ma'noli ilova, unga vidjet
+  // majburlash ortiqcha qattiqlik bo'lardi.
+  if (widgets.length === 0 && !view && !sozlamalar && !amallar) {
     xatolar.push(
-      'Manifestda ko\'rsatadigan narsa yo\'q: `widgets` bo\'sh va `view` ham berilmagan',
+      'Manifestda ko\'rsatadigan narsa yo\'q: `widgets`, `view`, `sozlamalar` va ' +
+        '`amallar` — hammasi bo\'sh',
     )
+  }
+
+  // `amallar[].yangila` mavjud state'ga ishora qilishi kerak — aks holda
+  // amaldan keyin "yangilash" jimgina hech narsa qilmasdi.
+  if (amallar) {
+    const stateNomlari = new Set((states ?? []).map((s) => s.nom))
+    for (const amal of amallar) {
+      const yoq = (amal.yangila ?? []).filter((n) => !stateNomlari.has(n))
+      if (yoq.length > 0) {
+        ogohlantirishlar.push(
+          `Amal "${amal.nom}": \`yangila\` da mavjud bo'lmagan state bor: ${yoq.join(', ')}`,
+        )
+        amal.yangila = (amal.yangila ?? []).filter((n) => stateNomlari.has(n))
+        if (amal.yangila.length === 0) delete amal.yangila
+      }
+    }
   }
 
   if (xatolar.length > 0) return { ok: false, qiymat: null, xatolar, ogohlantirishlar }
@@ -479,6 +819,8 @@ export function manifestniTekshir(xom: unknown): TekshiruvNatijasi<AppManifest> 
       ...(data ? { data } : {}),
       ...(states ? { states } : {}),
       ...(view ? { view } : {}),
+      ...(sozlamalar ? { sozlamalar } : {}),
+      ...(amallar ? { amallar } : {}),
     },
     xatolar,
     ogohlantirishlar,
