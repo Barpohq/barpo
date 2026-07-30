@@ -36,7 +36,8 @@ export interface StateHolati {
 
 export type StatelarXaritasi = Record<string, StateHolati>
 
-interface StateJavobi {
+/** Bitta state so'rovining natijasi — server shu shaklda qaytaradi */
+export interface StateNatijaJavobi {
   ok: boolean
   qiymat?: unknown
   xato?: string
@@ -49,10 +50,19 @@ interface StateJavobi {
  * `statelar` — manifestdagi ta'riflar. Har biri uchun alohida taymer
  * quriladi (`interval` soniyada).
  */
+export interface IlovaStatelari {
+  qiymatlar: Record<string, unknown>
+  holatlar: StatelarXaritasi
+  /** Hamma stateni majburan qayta o'qiydi */
+  yangila: () => void
+  /** Tashqaridan kelgan natijalarni qo'yadi — qayta so'rovsiz */
+  natijalarniQoy: (natijalar: Record<string, StateNatijaJavobi>) => void
+}
+
 export function useIlovaStatelari(
   appId: string,
   statelar: AppState[] | undefined,
-): { qiymatlar: Record<string, unknown>; holatlar: StatelarXaritasi; yangila: () => void } {
+): IlovaStatelari {
   const [holatlar, setHolatlar] = useState<StatelarXaritasi>({})
 
   // Statelar ro'yxatini barqaror kalitga aylantiramiz: manifest har
@@ -76,7 +86,7 @@ export function useIlovaStatelari(
             (majburiy ? '?majburiy=1' : ''),
         )
         if (!javob.ok) throw new Error(`HTTP ${javob.status}`)
-        const n = (await javob.json()) as StateJavobi
+        const n = (await javob.json()) as StateNatijaJavobi
 
         setHolatlar((o) => ({
           ...o,
@@ -154,10 +164,35 @@ export function useIlovaStatelari(
     for (const s of statelarRef.current ?? []) void oqi(s.nom, true)
   }, [oqi])
 
+  /**
+   * Tashqaridan kelgan natijalarni qo'yadi — QAYTA SO'ROVSIZ.
+   *
+   * Amal bajarilganda server `yangila` da ko'rsatilgan statelarni allaqachon
+   * qayta hisoblab javobda qaytaradi (`routes/apps.ts`). Ularni shu yerga
+   * berish ikkinchi HTTP so'rovni butunlay chetlab o'tadi — ya'ni restart
+   * bosilgandan keyin status DARHOL yangilanadi va `ssh` ikki marta
+   * chaqirilmaydi.
+   */
+  const natijalarniQoy = useCallback(
+    (natijalar: Record<string, StateNatijaJavobi>) => {
+      setHolatlar((o) => {
+        const yangi = { ...o }
+        for (const [nom, n] of Object.entries(natijalar)) {
+          yangi[nom] = n.ok
+            ? { qiymat: n.qiymat, yuklanmoqda: false, vaqt: n.vaqt }
+            : // Polling bilan bir xil qoida: xatoda eski qiymat saqlanadi.
+              { ...o[nom], xato: n.xato, yuklanmoqda: false }
+        }
+        return yangi
+      })
+    },
+    [],
+  )
+
   const qiymatlar: Record<string, unknown> = {}
   for (const [nom, h] of Object.entries(holatlar)) {
     if (h.qiymat !== undefined) qiymatlar[nom] = h.qiymat
   }
 
-  return { qiymatlar, holatlar, yangila }
+  return { qiymatlar, holatlar, yangila, natijalarniQoy }
 }

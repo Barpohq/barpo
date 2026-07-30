@@ -124,13 +124,37 @@ describe('tafsilotlar (UI tool kartasi uchun)', () => {
       widgets: [{ type: 'note', text: 'a' }, { type: 'note', text: 'b' }],
       view: 'export default () => null',
     })
-    expect(n.details).toEqual({ appId: 'test-ilova', ok: true, vidjetlar: 2, kodBor: true })
+    expect(n.details).toEqual({
+      appId: 'test-ilova',
+      ok: true,
+      vidjetlar: 2,
+      kodBor: true,
+      sozlamalar: 0,
+      amallar: 0,
+    })
   })
 
   test('vidjetsiz chaqiruvda ham yiqilmaydi', async () => {
     const n = await toolniChaqir(() => ({ ok: true }), { id: 'a', name: 'A' })
     expect(n.details?.vidjetlar).toBe(0)
     expect(n.details?.kodBor).toBe(false)
+  })
+
+  test('boshqaruv qatlami sanaladi', async () => {
+    const n = await toolniChaqir(() => ({ ok: true }), {
+      ...kirish,
+      sozlamalar: {
+        maydonlar: [
+          { kalit: 'token', turi: 'sir', yorliq: 'Token' },
+          { kalit: 'rejim', turi: 'matn', yorliq: 'Rejim' },
+        ],
+        yoz: 'module.exports = async () => {}',
+      },
+      amallar: [{ nom: 'restart', yorliq: 'Restart', kod: 'module.exports = async () => {}' }],
+    })
+
+    expect(n.details?.sozlamalar).toBe(2)
+    expect(n.details?.amallar).toBe(1)
   })
 })
 

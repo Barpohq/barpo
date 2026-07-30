@@ -19,11 +19,11 @@ import {
 let papka: string
 
 /** Soxta bajaruvchi chaqiruvlari — har test tekshiradi */
-let chaqiruvlar: { argv: string[]; env?: Record<string, string> }[]
+let chaqiruvlar: { argv: string[]; env?: Record<string, string>; stdin?: string }[]
 
 function soxtaBajaruvchi(javob: (argv: string[]) => BuyruqNatija) {
-  bajaruvchiOrnat(async (argv, env) => {
-    chaqiruvlar.push({ argv, env })
+  bajaruvchiOrnat(async (argv, imkoniyat) => {
+    chaqiruvlar.push({ argv, env: imkoniyat?.env, stdin: imkoniyat?.stdin })
     return javob(argv)
   })
 }
