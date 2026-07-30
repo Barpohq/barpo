@@ -6,9 +6,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
 import type { ChatSession } from '@platforma/shared'
+import { keshniOrnat, keshniTozala } from '@platforma/ai'
 import { app } from '../src/app.ts'
 import { bazaOch, dbOrnat } from '../src/db.ts'
 import {
+  biriktirmaYoz,
   sessiyaModelniOzgart,
   sessiyaModelQulfla,
   sessiyaOqi,
@@ -266,5 +268,227 @@ describe('GET /api/chat/sessions/:id — URL dan tiklash', () => {
   test("id o'rniga axlat kelsa ham 500 emas, 404", async () => {
     const javob = await app.request('/api/chat/sessions/uuid-emas')
     expect(javob.status).toBe(404)
+  })
+})
+
+// Biriktirmalar `/chat/send` da ID bo'yicha bog'lanadi. Vision qorovuli ham
+// shu yerda — bu yagona nuqta, chunki model AYNAN bu yerda qulflanadi.
+describe('POST /api/chat/send — biriktirmalar', () => {
+  /** Bog'lanmagan biriktirma yozuvi (fayl tizimiga tegilmaydi) */
+  function biriktirma(sessionId: string, tur: 'rasm' | 'fayl' = 'fayl') {
+    return biriktirmaYoz(
+      {
+        sessionId,
+        tur,
+        nom: 'a.png',
+        aslNom: 'a.png',
+        yol: 'fayllar/a.png',
+        mime: tur === 'rasm' ? 'image/png' : 'application/octet-stream',
+        hajm: 100,
+      },
+      db,
+    )
+  }
+
+  test('biriktirma xabarga bog\'lanadi', async () => {
+    const s = sessiyaYarat('sinov', db)
+    const b = biriktirma(s.id)
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: 'buni tekshir',
+      model: { provider: 'ollama', model: 'x' },
+      biriktirmalar: [b.id],
+    })
+
+    expect(status).toBe(202)
+    const xabarlar = xabarlarOqi(s.id, db)
+    expect(xabarlar[0]?.biriktirmalar).toHaveLength(1)
+  })
+
+  // Foydalanuvchi rasm tashlab hech narsa yozmasligi tabiiy holat
+  test('biriktirma bo\'lsa bo\'sh matn ham o\'tadi', async () => {
+    const s = sessiyaYarat('sinov', db)
+    const b = biriktirma(s.id)
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: '',
+      model: { provider: 'ollama', model: 'x' },
+      biriktirmalar: [b.id],
+    })
+
+    expect(status).toBe(202)
+  })
+
+  test('biriktirmasiz bo\'sh matn baribir 400', async () => {
+    const s = sessiyaYarat('sinov', db)
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: '  ',
+      model: { provider: 'ollama', model: 'x' },
+    })
+
+    expect(status).toBe(400)
+  })
+
+  // XAVFSIZLIK: mijoz ixtiyoriy id yuborishi mumkin
+  test('boshqa sessiyaning biriktirma id\'si — 404', async () => {
+    const bir = sessiyaYarat('bir', db)
+    const ikki = sessiyaYarat('ikki', db)
+    const begona = biriktirma(ikki.id)
+
+    const { status, body } = await yubor({
+      sessionId: bir.id,
+      text: 'salom',
+      model: { provider: 'ollama', model: 'x' },
+      biriktirmalar: [begona.id],
+    })
+
+    expect(status).toBe(404)
+    expect(body.error).toContain('Biriktirma')
+    // Xabar YOZILMASLIGI kerak — bazada yetim user xabari qolmasin
+    expect(xabarlarOqi(bir.id, db)).toHaveLength(0)
+  })
+
+  test('yo\'q biriktirma id\'si — 404', async () => {
+    const s = sessiyaYarat('sinov', db)
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: 'salom',
+      model: { provider: 'ollama', model: 'x' },
+      biriktirmalar: ['yo-q-id'],
+    })
+
+    expect(status).toBe(404)
+  })
+
+  test('biriktirmalar massiv bo\'lmasa — 400', async () => {
+    const s = sessiyaYarat('sinov', db)
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: 'salom',
+      model: { provider: 'ollama', model: 'x' },
+      biriktirmalar: 'massiv emas',
+    })
+
+    expect(status).toBe(400)
+  })
+
+  test('bo\'sh biriktirmalar massivi muammosiz o\'tadi', async () => {
+    const s = sessiyaYarat('sinov', db)
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: 'salom',
+      model: { provider: 'ollama', model: 'x' },
+      biriktirmalar: [],
+    })
+
+    expect(status).toBe(202)
+  })
+})
+
+// Vision qorovuli model KESHIGA tayanadi. Kesh bo'sh bo'lsa qorovul
+// o'tkazib yuboradi (noaniqlikda taqiqlamaymiz) — shuning uchun testlar
+// keshni o'zi to'ldiradi.
+describe('POST /api/chat/send — vision qorovuli', () => {
+  function biriktirma(sessionId: string, tur: 'rasm' | 'fayl') {
+    return biriktirmaYoz(
+      {
+        sessionId,
+        tur,
+        nom: 'a',
+        aslNom: 'a',
+        yol: 'fayllar/a',
+        mime: tur === 'rasm' ? 'image/png' : 'application/octet-stream',
+        hajm: 10,
+      },
+      db,
+    )
+  }
+
+  /** Kesh: bitta provider, ikki model — biri vision'li, biri emas */
+  function keshniToldir() {
+    keshniOrnat({
+      models: [
+        { provider: 'ollama', providerName: 'Ollama', id: 'ko-radigan', name: 'Ko\'radigan', contextWindow: 8000, reasoning: false, vision: true, cost: { input: 0, output: 0 }, manba: 'test', manbaTuri: 'mahalliy' },
+        { provider: 'ollama', providerName: 'Ollama', id: 'ko-rmaydigan', name: 'Ko\'rmaydigan', contextWindow: 8000, reasoning: false, vision: false, cost: { input: 0, output: 0 }, manba: 'test', manbaTuri: 'mahalliy' },
+      ],
+      providers: [],
+      ogohlantirishlar: [],
+      vaqt: new Date().toISOString(),
+    })
+  }
+
+  afterEach(() => {
+    keshniTozala()
+  })
+
+  test('vision\'siz modelga rasm — 400, xabar YOZILMAYDI', async () => {
+    keshniToldir()
+    const s = sessiyaYarat('sinov', db)
+    const b = biriktirma(s.id, 'rasm')
+
+    const { status, body } = await yubor({
+      sessionId: s.id,
+      text: 'bu nima?',
+      model: { provider: 'ollama', model: 'ko-rmaydigan' },
+      biriktirmalar: [b.id],
+    })
+
+    expect(status).toBe(400)
+    expect(body.error).toContain('rasm')
+    expect(body.detail).toContain("Ko'rmaydigan")
+    // Rad etilgan xabar bazada qolmasligi kerak
+    expect(xabarlarOqi(s.id, db)).toHaveLength(0)
+  })
+
+  test('vision\'siz modelga FAYL — o\'tadi', async () => {
+    keshniToldir()
+    const s = sessiyaYarat('sinov', db)
+    const b = biriktirma(s.id, 'fayl')
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: 'tekshir',
+      model: { provider: 'ollama', model: 'ko-rmaydigan' },
+      biriktirmalar: [b.id],
+    })
+
+    expect(status).toBe(202)
+  })
+
+  test('vision\'li modelga rasm — o\'tadi', async () => {
+    keshniToldir()
+    const s = sessiyaYarat('sinov', db)
+    const b = biriktirma(s.id, 'rasm')
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: 'bu nima?',
+      model: { provider: 'ollama', model: 'ko-radigan' },
+      biriktirmalar: [b.id],
+    })
+
+    expect(status).toBe(202)
+  })
+
+  // Noaniqlikda taqiqlamaymiz: kesh bo'sh bo'lsa provider o'z xatosini beradi
+  test('kesh bo\'sh — qorovul o\'tkazib yuboradi', async () => {
+    const s = sessiyaYarat('sinov', db)
+    const b = biriktirma(s.id, 'rasm')
+
+    const { status } = await yubor({
+      sessionId: s.id,
+      text: 'bu nima?',
+      model: { provider: 'ollama', model: 'nomalum' },
+      biriktirmalar: [b.id],
+    })
+
+    expect(status).toBe(202)
   })
 })

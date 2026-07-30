@@ -8,6 +8,7 @@ import type {
   AppRecord,
   BuildSession,
   BuildSessionStatus,
+  ChatBiriktirma,
   ChatMessage,
   ChatSession,
   McpKatalogManbaTuri,
@@ -1085,13 +1086,41 @@ export function xabarlarOqi(sessionId: string, baza?: Database): ChatMessage[] {
     else chaqiruvlar.set(q.message_id, [toolQatordan(q)])
   }
 
-  if (chaqiruvlar.size === 0) return xabarlar
+  // Biriktirmalar — xuddi shu naqsh, lekin ikki FARQ bilan.
+  //
+  //   1) `message_id IS NOT NULL` sharti. NULL — yuklangan, lekin hali
+  //      yuborilmagan fayl; u tarixda ko'rinmasligi kerak (chip UI'da,
+  //      mahalliy state'da turadi).
+  //   2) Yetim uchun sun'iy xabar QURILMAYDI. Tool chaqiruvida yetim
+  //      "yo'qolgan ma'lumot" belgisi edi; bu yerda esa NULL — normal
+  //      oraliq holat va uni xabar qilib ko'rsatish yolg'on bo'lardi.
+  const biriktirmalar = new Map<string, ChatBiriktirma[]>()
+  for (const q of d
+    .query<BiriktirmaQator, [string]>(
+      `SELECT * FROM chat_biriktirmalar
+       WHERE session_id = ? AND message_id IS NOT NULL
+       ORDER BY created_at, rowid`,
+    )
+    .all(sessionId)) {
+    // `message_id` NULL emasligi SQL'da tekshirilgan, tip esa buni bilmaydi
+    const kalit = q.message_id!
+    const royxat = biriktirmalar.get(kalit)
+    if (royxat) royxat.push(biriktirmaQatordan(q))
+    else biriktirmalar.set(kalit, [biriktirmaQatordan(q)])
+  }
+
+  if (chaqiruvlar.size === 0 && biriktirmalar.size === 0) return xabarlar
 
   const natija = xabarlar.map((x) => {
-    const bazadagi = chaqiruvlar.get(x.id)
-    if (!bazadagi) return x
+    const kartalar = chaqiruvlar.get(x.id)
+    const fayllar = biriktirmalar.get(x.id)
+    if (!kartalar && !fayllar) return x
     chaqiruvlar.delete(x.id)
-    return { ...x, toolCards: bazadagi }
+    return {
+      ...x,
+      ...(kartalar ? { toolCards: kartalar } : {}),
+      ...(fayllar ? { biriktirmalar: fayllar } : {}),
+    }
   })
 
   // YETIM CHAQIRUVLAR — xabari yozilmay qolgan javob.
@@ -1287,6 +1316,232 @@ export function sessiyaToolChaqiruvlariOqi(sessionId: string, baza?: Database): 
     )
     .all(sessionId)
     .map(toolQatordan)
+}
+
+// ---------------------------------------------------------------------------
+// Biriktirmalar — chatga yuklangan fayl va rasmlar
+// ---------------------------------------------------------------------------
+//
+// `tool_chaqiruvlar` bilan bir xil naqsh: alohida jadval, `xabarlarOqi()`
+// yozuvlarni xabarga ulab beradi. Farqi — `message_id` NULL bo'lishi mumkin
+// (yuklandi, lekin hali yuborilmadi) va bu NORMAL oraliq holat, ya'ni yetim
+// uchun sun'iy xabar QURILMAYDI.
+//
+// Bu qatlam FAYL TIZIMIGA TEGMAYDI (`loyihaYarat` dagi bilan bir xil
+// qoida): diskka yozish va o'chirish chaqiruvchining ishi. `yetimlarniOchir`
+// shu sababli o'chirilgan yozuvlar ro'yxatini qaytaradi — chaqiruvchi
+// fayllarni o'zi tozalaydi.
+
+interface BiriktirmaQator {
+  id: string
+  session_id: string
+  message_id: string | null
+  tur: ChatBiriktirma['tur']
+  nom: string
+  asl_nom: string
+  yol: string
+  mime: string
+  hajm: number
+  created_at: string
+}
+
+function biriktirmaQatordan(q: BiriktirmaQator): ChatBiriktirma {
+  return {
+    id: q.id,
+    sessionId: q.session_id,
+    tur: q.tur,
+    aslNom: q.asl_nom,
+    yol: q.yol,
+    mime: q.mime,
+    hajm: q.hajm,
+    createdAt: q.created_at,
+  }
+}
+
+/**
+ * Yangi biriktirma yozuvi. `messageId` berilmasa NULL bo'ladi — fayl
+ * yuklandi, lekin xabar hali yuborilmagan.
+ *
+ * `nom` (diskdagi tozalangan nom) tashqi tipda YO'Q: u faqat serverga
+ * kerak — yo'lni qurish uchun. Mijoz `aslNom` va `yol` ni ko'radi.
+ */
+export function biriktirmaYoz(
+  biriktirma: Omit<ChatBiriktirma, 'id' | 'createdAt'> & {
+    id?: string
+    createdAt?: string
+    nom: string
+    messageId?: string | null
+  },
+  baza?: Database,
+): ChatBiriktirma {
+  const d = baza ?? globalDb()
+  const toliq: ChatBiriktirma = {
+    id: biriktirma.id ?? crypto.randomUUID(),
+    sessionId: biriktirma.sessionId,
+    tur: biriktirma.tur,
+    aslNom: biriktirma.aslNom,
+    yol: biriktirma.yol,
+    mime: biriktirma.mime,
+    hajm: biriktirma.hajm,
+    createdAt: biriktirma.createdAt ?? new Date().toISOString(),
+  }
+
+  d.prepare(
+    `INSERT INTO chat_biriktirmalar
+       (id, session_id, message_id, tur, nom, asl_nom, yol, mime, hajm, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    toliq.id,
+    toliq.sessionId,
+    biriktirma.messageId ?? null,
+    toliq.tur,
+    biriktirma.nom,
+    toliq.aslNom,
+    toliq.yol,
+    toliq.mime,
+    toliq.hajm,
+    toliq.createdAt,
+  )
+
+  return toliq
+}
+
+export function biriktirmaOqi(id: string, baza?: Database): ChatBiriktirma | null {
+  const d = baza ?? globalDb()
+  const q = d
+    .query<BiriktirmaQator, [string]>('SELECT * FROM chat_biriktirmalar WHERE id = ?')
+    .get(id)
+  return q ? biriktirmaQatordan(q) : null
+}
+
+/**
+ * Berilgan id'lar bo'yicha biriktirmalarni oladi — FAQAT shu sessiyaga
+ * tegishlilarini.
+ *
+ * Sessiya filtri XAVFSIZLIK CHEGARASI, qulaylik emas: mijoz `chat.send` da
+ * ixtiyoriy id yuborishi mumkin va usiz boshqa suhbatning faylini o'z
+ * xabariga bog'lab olardi.
+ *
+ * Qaytgan ro'yxat SO'RALGAN TARTIBDA bo'ladi — foydalanuvchi fayllarni
+ * qanday tanlagan bo'lsa, promptda ham shunday ko'rinadi. Topilmagan id
+ * jimgina tashlanmaydi: chaqiruvchi soni bo'yicha tekshirib xato beradi.
+ */
+export function biriktirmalarniOl(
+  sessionId: string,
+  idlar: string[],
+  baza?: Database,
+): ChatBiriktirma[] {
+  if (idlar.length === 0) return []
+  const d = baza ?? globalDb()
+  const orinlar = idlar.map(() => '?').join(', ')
+  const topilgan = d
+    .query<BiriktirmaQator, string[]>(
+      `SELECT * FROM chat_biriktirmalar WHERE session_id = ? AND id IN (${orinlar})`,
+    )
+    .all(sessionId, ...idlar)
+    .map(biriktirmaQatordan)
+
+  const xarita = new Map(topilgan.map((b) => [b.id, b]))
+  return idlar.map((id) => xarita.get(id)).filter((b): b is ChatBiriktirma => b !== undefined)
+}
+
+/** Sessiyadagi hamma biriktirma — papkani tozalash va diagnostika uchun */
+export function sessiyaBiriktirmalari(sessionId: string, baza?: Database): ChatBiriktirma[] {
+  const d = baza ?? globalDb()
+  return d
+    .query<BiriktirmaQator, [string]>(
+      'SELECT * FROM chat_biriktirmalar WHERE session_id = ? ORDER BY created_at, rowid',
+    )
+    .all(sessionId)
+    .map(biriktirmaQatordan)
+}
+
+/**
+ * Biriktirmalarni xabarga bog'laydi — xabar yozilgandan keyin chaqiriladi.
+ *
+ * Faqat SHU SESSIYAGA tegishli va hali bog'lanmagan (`message_id IS NULL`)
+ * yozuvlar o'zgaradi. Ikkinchi shart takroriy yuborishdan himoya qiladi:
+ * allaqachon bir xabarga tegishli fayl ikkinchisiga ko'chib ketmasin.
+ *
+ * O'zgargan yozuvlar sonini qaytaradi.
+ */
+export function biriktirmalarniXabargaBogla(
+  sessionId: string,
+  messageId: string,
+  idlar: string[],
+  baza?: Database,
+): number {
+  if (idlar.length === 0) return 0
+  const d = baza ?? globalDb()
+  const orinlar = idlar.map(() => '?').join(', ')
+  const natija = d
+    .prepare(
+      `UPDATE chat_biriktirmalar SET message_id = ?
+       WHERE session_id = ? AND message_id IS NULL AND id IN (${orinlar})`,
+    )
+    .run(messageId, sessionId, ...idlar)
+  return natija.changes
+}
+
+/**
+ * Biriktirma xabarga bog'langanmi.
+ *
+ * `ChatBiriktirma` da `messageId` ATAYLAB yo'q: u mijozga kerak emas va
+ * tashqi tipni ichki holat bilan to'ldirmaymiz. Lekin server bir joyda
+ * bilishi kerak — yuborilgan biriktirmani o'chirishga ruxsat bermaslik uchun.
+ */
+export function biriktirmaBoglanganmi(id: string, baza?: Database): boolean {
+  const d = baza ?? globalDb()
+  const q = d
+    .query<{ message_id: string | null }, [string]>(
+      'SELECT message_id FROM chat_biriktirmalar WHERE id = ?',
+    )
+    .get(id)
+  return q?.message_id !== null && q?.message_id !== undefined
+}
+
+/** Bitta biriktirmani o'chiradi. Fayl chaqiruvchi tomonidan o'chiriladi. */
+export function biriktirmaOchir(id: string, baza?: Database): boolean {
+  const d = baza ?? globalDb()
+  return d.prepare('DELETE FROM chat_biriktirmalar WHERE id = ?').run(id).changes > 0
+}
+
+/**
+ * Xabarga bog'lanmagan va eskirgan biriktirmalarni o'chiradi.
+ *
+ * NEGA KERAK: foydalanuvchi fayl yuklab, keyin fikridan qaytishi oddiy
+ * holat. Yozuv `message_id IS NULL` bo'lib qolib ketadi va fayl diskda
+ * yotadi. Cron kerak emas — `javobOqizi` boshida shu sessiya uchun
+ * chaqiriladi (`orchestrator.ts`), ya'ni tozalash tabiiy ravishda
+ * foydalanish paytida bo'ladi.
+ *
+ * Muddat KATTA (standart 24 soat) ataylab: foydalanuvchi chip ko'rib
+ * turgan bo'lsa-yu fayli o'chib ketsa, yuborish payti xato bo'lardi.
+ *
+ * O'chirilgan yozuvlarni QAYTARADI — chaqiruvchi fayllarni tozalaydi.
+ */
+export function yetimBiriktirmalarniOchir(
+  sessionId: string,
+  soatOldin = 24,
+  baza?: Database,
+): ChatBiriktirma[] {
+  const d = baza ?? globalDb()
+  const chegara = new Date(Date.now() - soatOldin * 60 * 60 * 1000).toISOString()
+  const yetimlar = d
+    .query<BiriktirmaQator, [string, string]>(
+      `SELECT * FROM chat_biriktirmalar
+       WHERE session_id = ? AND message_id IS NULL AND created_at < ?`,
+    )
+    .all(sessionId, chegara)
+    .map(biriktirmaQatordan)
+
+  if (yetimlar.length === 0) return []
+
+  const orinlar = yetimlar.map(() => '?').join(', ')
+  d.prepare(`DELETE FROM chat_biriktirmalar WHERE id IN (${orinlar})`).run(
+    ...yetimlar.map((b) => b.id),
+  )
+  return yetimlar
 }
 
 // ---------------------------------------------------------------------------

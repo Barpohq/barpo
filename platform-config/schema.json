@@ -195,6 +195,32 @@
         }
       },
       "additionalProperties": false
+    },
+    "chat": {
+      "type": "object",
+      "properties": {
+        "biriktirma": {
+          "type": "object",
+          "properties": {
+            "maksFaylMb": {
+              "description": "Chatga biriktiriladigan bitta faylning eng katta hajmi (MB).",
+              "default": 20,
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "maksSoni": {
+              "description": "Bitta xabarga biriktiriladigan eng ko'p fayl soni.",
+              "default": 10,
+              "type": "number",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "type": "object",

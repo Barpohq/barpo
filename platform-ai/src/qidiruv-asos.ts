@@ -64,6 +64,24 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
  */
 export const TASHLANADIGAN_PAPKALAR = [
   '.git',
+  // Platformaning o'z hududi: skilllar, xotira va sessiya yuklamalari.
+  //
+  // NEGA TASHLANADI. Loyihaga ulangan suhbatlar bitta papkani bo'lishadi
+  // (`ish-papkasi.ts`), yuklamalar esa `.platforma/sessiyalar/<sid>/` da
+  // yashaydi. Tashlanmasa agent `grep` qilganda BOSHQA suhbatlarning
+  // biriktirilgan fayllaridan natija chiqardi — shovqin va suhbatlar
+  // orasida ma'lumot sizishi.
+  //
+  // ONGLI YON TA'SIR: skilllar (`.platforma/skills`) va xotira
+  // (`.platforma/memory`) ham qidiruvdan chiqadi. Ular promptga baribir
+  // to'liq tushadi (`skill-yuklash.ts`, `xotira.ts`), ya'ni agent ularni
+  // ko'radi — faqat `grep` bilan izlay olmaydi. Almashtirish ataylab:
+  // begona suhbat fayllarining ko'rinmasligi muhimroq.
+  //
+  // Aniq yo'l berilsa ro'yxat baribir chetlab o'tiladi (yuqoridagi izoh),
+  // ya'ni agent `read('.platforma/sessiyalar/…/fayllar/rasm.png')` ni
+  // bemalol o'qiydi — biriktirma oqimi shunga tayanadi.
+  '.platforma',
   'node_modules',
   '.svn',
   '.hg',

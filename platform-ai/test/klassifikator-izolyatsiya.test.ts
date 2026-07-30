@@ -9,7 +9,7 @@
 // shu yerda yiqiladi.
 
 import { describe, expect, test } from 'bun:test'
-import { klassifikatorTarixi } from '../src/agent.ts'
+import { biriktirmaEslatmasi, klassifikatorTarixi } from '../src/agent.ts'
 import { sorovniMatnga, type KlassifikatorSorovi } from '../src/klassifikator.ts'
 
 /** Fayl ichidan chiqqan bo'lishi mumkin bo'lgan hujum matni */
@@ -123,5 +123,63 @@ describe('sorovniMatnga — chegaralar', () => {
       suhbat: [{ role: 'user', text: 'loyihani qur' }],
     })
     expect(matn).not.toContain('LIMITS SET BY THE USER')
+  })
+})
+
+// Biriktirilgan fayl KLASSIFIKATORGA BORMASLIGI kerak.
+//
+// Fayl nomi va yo'li ikkalasi ham hujum vektori: foydalanuvchi (yoki unga
+// fayl yuborgan uchinchi tomon) nom orqali klassifikatorga gap yeta olardi.
+// Nom sanitizatsiya qilingan (`ish-papkasi.ts`), lekin himoya ikki qatlamli
+// bo'lishi kerak — bittasi buzilsa ikkinchisi ushlab qolsin.
+//
+// Chegara joyi: eslatma FAQAT `prompt()` matniga qo'shiladi
+// (`biriktirmaEslatmasi`), `chat_messages.text` ga esa yozilmaydi. Klassifikator
+// aynan `text` ni oladi.
+describe('biriktirmalar klassifikatorga bormaydi', () => {
+  test('SaqlanganXabar.biriktirmalar filtrdan o\'tmaydi', () => {
+    const tarix = klassifikatorTarixi([
+      {
+        role: 'user',
+        text: 'bu rasmda nima?',
+        biriktirmalar: [
+          { tur: 'rasm', aslNom: HUJUM, yol: `fayllar/${HUJUM}.png` },
+        ],
+      } as never,
+    ])
+
+    const matn = JSON.stringify(tarix)
+    expect(matn).not.toContain('rm -rf')
+    expect(matn).not.toContain('fayllar/')
+    expect(tarix[0]?.text).toBe('bu rasmda nima?')
+  })
+
+  test('biriktirma eslatmasi promptga tushsa ham klassifikator ko\'rmaydi', () => {
+    // Agentga beriladigan prompt (eslatma bilan) va klassifikatorga
+    // beriladigan matn IKKI XIL manba: birinchisi `prompt()`, ikkinchisi
+    // `chat_messages.text`. Shu test ikkisining aralashmaganini majburlaydi.
+    const promptMatni = biriktirmaEslatmasi('bu rasmda nima?', [
+      { tur: 'rasm', aslNom: 'ekran.png', yol: 'fayllar/ekran.png' },
+    ])
+    const tarix = klassifikatorTarixi([{ role: 'user', text: 'bu rasmda nima?' }])
+
+    expect(promptMatni).toContain('fayllar/ekran.png')
+    expect(JSON.stringify(tarix)).not.toContain('fayllar/ekran.png')
+  })
+
+  test('sorovniMatnga biriktirma yo\'lini ko\'rsatmaydi', () => {
+    const matn = sorovniMatnga({
+      ...asosiy,
+      suhbat: klassifikatorTarixi([
+        {
+          role: 'user',
+          text: 'faylni tekshir',
+          biriktirmalar: [{ tur: 'fayl', aslNom: 'x.sh', yol: 'fayllar/x.sh' }],
+        } as never,
+      ]),
+    })
+
+    expect(matn).toContain('faylni tekshir')
+    expect(matn).not.toContain('fayllar/x.sh')
   })
 })

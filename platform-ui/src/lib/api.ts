@@ -10,6 +10,7 @@
 import type {
   AniqlashOgohlantirish,
   AppManifest,
+  ChatBiriktirma,
   ChatMessage,
   ChatSession,
   McpManba,
@@ -167,16 +168,64 @@ export interface YuborishJavobi {
   model: { provider: string; model: string }
 }
 
+/**
+ * Xabar yuboradi. `biriktirmalar` — `biriktirmaYukla()` qaytargan ID'lar.
+ *
+ * Faqat ID yuboriladi: yo'l va turni server bazadan oladi (mijoz ularni
+ * bersa ish papkasidan tashqariga ko'rsatishi yoki vision qorovulini
+ * aldab o'tishi mumkin bo'lardi).
+ */
 export function xabarYubor(
   sessionId: string,
   text: string,
   model: { provider: string; model: string },
+  biriktirmalar?: string[],
 ): Promise<YuborishJavobi> {
   return sorov<YuborishJavobi>('/api/chat/send', {
     method: 'POST',
     headers: jsonSarlavha,
-    body: JSON.stringify({ sessionId, text, model }),
+    body: JSON.stringify({ sessionId, text, model, biriktirmalar }),
   })
+}
+
+/**
+ * Chatga fayl yoki rasm biriktiradi.
+ *
+ * `content-type` ATAYLAB QO'YILMAYDI: FormData uchun brauzer uni
+ * `multipart/form-data; boundary=...` bilan o'zi qo'yadi. Qo'lda qo'yilsa
+ * boundary yo'qoladi va server tanani o'qiy olmaydi.
+ *
+ * `sessionId` majburiy — fayl darhol sessiya papkasiga tushadi. Chat sahifasi
+ * shu sababli fayl tanlangan payt sessiyani yaratadi.
+ */
+export async function biriktirmaYukla(
+  sessionId: string,
+  fayllar: File[],
+): Promise<ChatBiriktirma[]> {
+  const tana = new FormData()
+  tana.set('sessionId', sessionId)
+  for (const f of fayllar) tana.append('fayl', f)
+
+  const javob = await sorov<{ biriktirmalar: ChatBiriktirma[] }>('/api/chat/biriktirma', {
+    method: 'POST',
+    body: tana,
+  })
+  return javob.biriktirmalar
+}
+
+/**
+ * Biriktirmani olib tashlaydi (chipdagi `×`).
+ *
+ * Xabarga allaqachon bog'langan biriktirma uchun server 409 beradi: u
+ * suhbat tarixining qismi va agent uni ko'rgan.
+ */
+export function biriktirmaOchir(id: string): Promise<{ ochirildi: boolean }> {
+  return sorov<{ ochirildi: boolean }>(`/api/chat/biriktirma/${id}`, { method: 'DELETE' })
+}
+
+/** Biriktirma mazmuni manzili — `<img src>` va yuklab olish uchun */
+export function biriktirmaManzili(id: string): string {
+  return `/api/chat/biriktirma/${id}`
 }
 
 export function ruxsatJavobiYubor(

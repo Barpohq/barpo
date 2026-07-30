@@ -225,3 +225,67 @@ describe('token hisobi', () => {
     expect(kontekstTokenlari(katta)).toBeGreaterThan(kontekstTokenlari(kichik))
   })
 })
+
+// Rasm kontekstga `read` tool'i orqali keladi (biriktirilgan rasm faylini
+// o'qiganda). Uning token hajmi base64 UZUNLIGI bo'yicha hisoblanmasligi
+// kerak — aks holda 5 MB rasm ~1.7 million "token" bo'lib chiqadi va
+// siqish mantiqi butunlay buziladi.
+describe('rasmli kontekst', () => {
+  /** ~1 MB base64 — haqiqiy rasm hajmi tartibida */
+  const KATTA_BASE64 = 'A'.repeat(1_000_000)
+
+  function rasmNatijasi(base64: string): AgentMessage {
+    return {
+      role: 'toolResult',
+      toolCallId: 'tc-rasm',
+      toolName: 'read',
+      content: [
+        { type: 'text', text: 'Read image file [image/png]' },
+        { type: 'image', data: base64, mimeType: 'image/png' },
+      ],
+      isError: false,
+      timestamp: 1,
+    } as unknown as AgentMessage
+  }
+
+  test('rasm base64 uzunligi bo\'yicha sanalmaydi', () => {
+    const tokenlar = kontekstTokenlari([rasmNatijasi(KATTA_BASE64)])
+
+    // `JSON.stringify(...).length / 4` bo'lsa ~250 000 chiqardi.
+    // pi rasmni fiksirlangan ~1200 token deb hisoblaydi.
+    expect(tokenlar).toBeLessThan(5000)
+  })
+
+  test('rasm hajmi ikki barobar oshsa token oshmaydi', () => {
+    const bir = kontekstTokenlari([rasmNatijasi(KATTA_BASE64)])
+    const ikki = kontekstTokenlari([rasmNatijasi(KATTA_BASE64.repeat(2))])
+
+    expect(ikki).toBe(bir)
+  })
+
+  // ENG MUHIM REGRESSIYA: `kesishNuqtasi` bitta rasmli xabarni ham
+  // `saqlanadiganTokenlar` ga sig'dirmasa, siqishda YAQIN TARIX butunlay
+  // xulosaga ketardi va agent hozirgi ishini yo'qotardi.
+  test('rasmli xabar kesish nuqtasini buzmaydi', () => {
+    const xabarlar = [
+      user('eski so\'rov'),
+      assistant('eski javob'),
+      user('bu rasmda nima?'),
+      assistant('o\'qiyman'),
+      rasmNatijasi(KATTA_BASE64),
+    ]
+
+    const nuqta = kesishNuqtasi(xabarlar, 20_000)
+
+    // Yaqin tarix saqlanishi kerak — hammasi kesilib ketmasin
+    expect(nuqta).toBeLessThan(xabarlar.length)
+    expect(nuqta).toBe(0)
+  })
+
+  test('rasm siqish qarorini o\'z-o\'zidan qo\'zg\'atmaydi', () => {
+    const sozlama = { yoqilgan: true, zaxiraTokenlar: 16_384, saqlanadiganTokenlar: 20_000 }
+
+    // 200k context window — bitta rasm uni to'ldirmasligi kerak
+    expect(siqishKerakmi([rasmNatijasi(KATTA_BASE64)], 200_000, sozlama)).toBe(false)
+  })
+})

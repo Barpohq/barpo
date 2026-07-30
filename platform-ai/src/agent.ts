@@ -20,7 +20,7 @@
 
 import { Agent, createBashTool, createEditTool, createReadTool, createWriteTool } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
-import type { Api, Model, Models } from '@earendil-works/pi-ai'
+import type { Api, ImageContent, Model, Models } from '@earendil-works/pi-ai'
 import type { Config } from '@platforma/config'
 import { standartConfig } from '@platforma/config'
 import type { ModelTanlovi, RuxsatQarori, RuxsatRejimi, RuxsatSorovi } from '@platforma/shared'
@@ -42,6 +42,7 @@ import {
   siqishKerakmi,
   toolNatijalariniQisqart,
   type SaqlanganXabar,
+  type XabarBiriktirmasi,
 } from './kontekst.ts'
 import { kontekstniPromptga, loyihaKontekstiniOqi } from './loyiha-konteksti.ts'
 import { skilllarniOqi, skilllarniPromptga } from './skill-yuklash.ts'
@@ -527,7 +528,10 @@ export async function* agentOqimi(
         qoy({ tur: 'xato', xabar: "Yuboriladigan foydalanuvchi xabari topilmadi" })
         return
       }
-      const prompt = xabarlar[oxirgiUser]!.text
+      const prompt = biriktirmaEslatmasi(
+        xabarlar[oxirgiUser]!.text,
+        xabarlar[oxirgiUser]!.biriktirmalar,
+      )
 
       // Oxirgi user xabari `prompt()` ga beriladi — tarixda takrorlanmasin.
       // Undan KEYINGI xabarlar (bekor qilingan javob) tarixda qoladi.
@@ -658,8 +662,23 @@ export async function* agentOqimi(
             xatomi: isError,
           })
           if (yangi.natija === xom && yangi.xatomi === isError) return undefined
+          // MATN bloklari almashtiriladi, QOLGANLARI SAQLANADI.
+          //
+          // Ilgari `content` butunlay `[{type:'text'}]` bilan almashtirilardi
+          // va bu RASMNI YO'Q QILARDI: `read` tool'i rasm faylini o'qiganda
+          // `[{type:'text'}, {type:'image'}]` qaytaradi, hook'lar esa
+          // (`uzunlikHooki`, `maxfiyniYashirHooki`) deyarli har natijadan
+          // o'tadi. Natijada model rasmni hech qachon ko'rmasdi — jimgina,
+          // xato xabarisiz. Biriktirilgan rasm aynan shu yo'ldan keladi.
+          //
+          // Hook'lar faqat MATN bilan ishlaydi (`hooklar.ts`: `natija: string`),
+          // shuning uchun ular o'zgartirgan narsani matn blokiga qaytarish
+          // to'g'ri — rasm ularning qarshisiga tushmagan.
           return {
-            content: [{ type: 'text', text: yangi.natija }],
+            content: [
+              { type: 'text', text: yangi.natija },
+              ...matnsizBloklar(result),
+            ],
             isError: yangi.xatomi,
           }
         },
@@ -832,6 +851,54 @@ function toollarniTayyorla(
 }
 
 /**
+ * Biriktirilgan fayllar haqidagi eslatmani prompt matniga qo'shadi.
+ *
+ * ┌───────────────────────────────────────────────────────────────────────┐
+ * │ NEGA ESLATMA `chat_messages.text` GA YOZILMAYDI. Klassifikator aynan  │
+ * │ `text` ni oladi (`orchestrator.ts`: `klassifikatorTarixiniTayyorla`). │
+ * │ Fayl nomi u yerga tushsa, u ruxsat qaroriga ta'sir qiladigan          │
+ * │ INJECTION VEKTORI bo'lardi: foydalanuvchi (yoki uchinchi tomon        │
+ * │ yuborgan fayl) nomi orqali klassifikatorga gap yeta olardi.           │
+ * │                                                                       │
+ * │ Nom allaqachon sanitizatsiya qilingan (`ish-papkasi.ts`:              │
+ * │ `yuklamaNomi`), lekin bu qatlam ikki qatlamli himoya qoidasiga        │
+ * │ rioya qiladi: bitta himoya buzilsa ikkinchisi ushlab qolsin.          │
+ * └───────────────────────────────────────────────────────────────────────┘
+ *
+ * Eslatma `agent.state.messages` ga tushadi, ya'ni `agentMessages` bo'lib
+ * bazaga yoziladi va keyingi turn'da agent faylni eslaydi. Klassifikator esa
+ * `agentMessages` ni hech qachon ko'rmaydi — chegara joyida qoladi.
+ *
+ * RASM HAM FAYL: base64 bo'lib uzatilmaydi, agent uni `read` bilan o'zi
+ * o'qiydi va o'shanda ko'radi. Bu pi'ning interaktiv rejimidagi yo'l va u
+ * ikki foyda beradi: fayl bilan bitta kod yo'li, va rasm kontekstga faqat
+ * agent xohlaganda kiradi.
+ */
+export function biriktirmaEslatmasi(
+  matn: string,
+  biriktirmalar?: XabarBiriktirmasi[],
+): string {
+  if (!biriktirmalar?.length) return matn
+
+  const rasmBor = biriktirmalar.some((b) => b.tur === 'rasm')
+  const qatorlar = biriktirmalar.map((b) => `- ${b.yol}`)
+
+  const bosh =
+    biriktirmalar.length === 1
+      ? `The user attached one ${biriktirmalar[0]!.tur === 'rasm' ? 'image' : 'file'} to this message:`
+      : 'The user attached these files to this message:'
+
+  // Ko'rsatma INGLIZCHA — system prompt ham shunday (`AGENT_SISTEM_PROMPT`).
+  // Javob tili foydalanuvchi tilidan aniqlanadi, ko'rsatmalar esa modelga
+  // ingliz tilida beriladi.
+  const izoh = rasmBor
+    ? 'Use the `read` tool on a path above when you need its contents. Reading an image path shows you the image itself.'
+    : 'Use the `read` tool on a path above when you need its contents.'
+
+  return `${matn}\n\n<attachments>\n${bosh}\n${qatorlar.join('\n')}\n\n${izoh}\n</attachments>`
+}
+
+/**
  * Oxirgi `user` xabarining indeksi, topilmasa -1.
  *
  * `prompt()` ga aynan shu xabar beriladi. Oddiy holatda u massivning oxirgi
@@ -888,6 +955,25 @@ function argsMatni(nom: string, args: unknown): string {
     return a.path
   }
   return JSON.stringify(args).slice(0, 200)
+}
+
+/**
+ * Tool natijasidagi MATNSIZ bloklar (hozircha faqat `image`).
+ *
+ * Hook zanjiri matn bilan ishlaydi, lekin natijada boshqa bloklar ham
+ * bo'lishi mumkin — ular hook'dan keyin ham joyida qolishi kerak
+ * (`afterToolCall` izohiga q.).
+ */
+export function matnsizBloklar(natija: unknown): ImageContent[] {
+  if (!natija || typeof natija !== 'object') return []
+  const mazmun = (natija as { content?: unknown }).content
+  if (!Array.isArray(mazmun)) return []
+  // `image` blokini ANIQ tanlaymiz, "matn emas" deb inkor bilan emas:
+  // pi kelajakda yangi blok turi qo'shsa, u tekshirilmagan holda
+  // providerga o'tib ketmasligi kerak.
+  return mazmun.filter(
+    (b): b is ImageContent => (b as { type?: string } | null)?.type === 'image',
+  )
 }
 
 function natijaMatni(natija: unknown): string {

@@ -45,6 +45,18 @@ export interface ChatSendEvent {
    * server rad etadi (chat.error).
    */
   model?: ModelTanlovi
+  /**
+   * Xabarga biriktirilgan fayllarning ID'lari (`POST /api/chat/biriktirma`
+   * qaytargan).
+   *
+   * FAQAT ID — obyekt emas. Yo'l, tur va mime SERVERDA bazadan olinadi:
+   * mijoz `yol` bergan bo'lsa u ish papkasidan tashqariga ko'rsata olardi,
+   * `tur` bergan bo'lsa vision qorovulini aldab o'tardi.
+   *
+   * Biriktirma bo'lsa `text` bo'sh bo'lishi mumkin — foydalanuvchi rasm
+   * tashlab hech narsa yozmasligi tabiiy holat.
+   */
+  biriktirmalar?: string[]
 }
 
 /** Qurilish oqimidagi tanlov (masalan "domen" yoki "port preview") */

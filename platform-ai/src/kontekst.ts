@@ -23,10 +23,20 @@ import {
   COMPACTION_SUMMARY_PREFIX,
   COMPACTION_SUMMARY_SUFFIX,
   estimateContextTokens,
+  estimateTokens,
   generateSummary,
 } from '@earendil-works/pi-agent-core/node'
 import type { AgentMessage } from '@earendil-works/pi-agent-core/node'
 import type { Api, Model, Models } from '@earendil-works/pi-ai'
+
+/** Xabarga biriktirilgan fayl — agentga faqat yo'li ko'rsatiladi */
+export interface XabarBiriktirmasi {
+  tur: 'rasm' | 'fayl'
+  /** Foydalanuvchi bergan nom — eslatmada shu ko'rinadi */
+  aslNom: string
+  /** Ish papkasiga nisbatan yo'l — agent `read` ga shuni beradi */
+  yol: string
+}
 
 /** Bitta saqlangan xabar — bazadan kelgan shaklda */
 export interface SaqlanganXabar {
@@ -35,6 +45,15 @@ export interface SaqlanganXabar {
   text: string
   /** LLM ko'radigan to'liq kontekst; eski xabarlarda yo'q */
   agentMessages?: unknown[]
+  /**
+   * Shu xabarga biriktirilgan fayllar.
+   *
+   * Kontekstga TUSHMAYDI (`kontekstniQur` ularni ko'rmaydi) — faqat
+   * `prompt()` matniga eslatma bo'lib qo'shiladi (`agent.ts`:
+   * `biriktirmaEslatmasi`). Sabab: eslatma `chat_messages.text` ga
+   * yozilmasligi kerak, aks holda fayl nomi klassifikator tarixiga tushardi.
+   */
+  biriktirmalar?: XabarBiriktirmasi[]
 }
 
 export interface SiqishSozlamalari {
@@ -211,10 +230,24 @@ export function kesishNuqtasi(xabarlar: AgentMessage[], saqlanadiganTokenlar: nu
   return Math.max(0, nuqta)
 }
 
-/** Bitta xabarning taxminiy token hajmi (4 belgi ≈ 1 token) */
+/**
+ * Bitta xabarning taxminiy token hajmi.
+ *
+ * `pi-agent-core` ning hisoblagichi ishlatiladi, `JSON.stringify(...).length / 4`
+ * EMAS. Farq rasmli xabarda halokatli: `JSON.stringify` base64 ni to'liq
+ * sanaydi, ya'ni 5 MB rasm ~1.7 million "token" bo'lib chiqardi. U holda
+ * `kesishNuqtasi` bitta rasmli xabarni ham `saqlanadiganTokenlar` ga
+ * sig'dirmay, siqishda YAQIN TARIX butunlay xulosaga ketardi.
+ *
+ * pi esa rasmni fiksirlangan ~1200 token deb hisoblaydi
+ * (`ESTIMATED_IMAGE_CHARS = 4800`) — bu haqiqatga yaqin, chunki provider
+ * ham rasmni piksel o'lchamiga qarab sanaydi, base64 uzunligiga emas.
+ *
+ * Rasm bu yerga `read` tool'i orqali keladi (biriktirilgan rasm faylini
+ * o'qiganda), ya'ni holat nazariy emas.
+ */
 function taxminiyTokenlar(xabar: AgentMessage): number {
-  const matn = JSON.stringify(xabar) ?? ''
-  return Math.ceil(matn.length / 4)
+  return estimateTokens(xabar)
 }
 
 // ---------------------------------------------------------------------------

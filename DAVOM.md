@@ -1,6 +1,6 @@
 # Qolgan joy — davom etish qo'llanmasi
 
-_Oxirgi yangilanish: 2026-07-29. Boshqa kompyuterda davom etish uchun shu fayldan boshlang._
+_Oxirgi yangilanish: 2026-07-30. Boshqa kompyuterda davom etish uchun shu fayldan boshlang._
 
 ## Hozirgi holat
 
@@ -9,7 +9,9 @@ backend, Bun + TypeScript (Hono)**, AI qatlami `pi-agent-core` ustiga qurilgan
 (pi — [earendil-works/pi](https://github.com/earendil-works/pi), terminal uchun
 coding agent; biz shu g'oyalarni web uchun moslashtiramiz).
 
-**Testlar:** 923/923 yashil (`bun test`), barcha paketlar `tsc --noEmit` toza.
+**Testlar:** 1559/1559 yashil (`bun test`). `platform-ui` `tsc --noEmit` toza;
+`platform-server` da 5 ta eski xato qoldi (`isError` maydoni va test
+`buyruqXom` — biriktirmalarga aloqasi yo'q, 9-bosqichda 36 dan 5 ga tushdi).
 
 Ilgari qayd etilgan `muhit.test.ts` dagi 6 ta yiqilish TUZATILDI — sabab
 `ChegaralanganMuhit` ish papkasini kanonizatsiya qilmasligi edi (macOS'da
@@ -36,7 +38,7 @@ pastdagi eski "Qolgan reja" endi majburiy tartib emas, g'oyalar zaxirasi.
 
 ```bash
 bun install
-bun test                                     # 923 test
+bun test                                     # 1559 test
 bun run schema                               # config sxemasini qayta yasash
 cd platform-server && bun run src/index.ts   # backend :8787
 cd platform-ui && bun run dev                # UI
@@ -52,6 +54,87 @@ cd platform-ui && bun run dev                # UI
 6. ~~**Skilllar: GitHub manbadan o'rnatish va agentga ulash**~~ ✅ (quyida)
 7. ~~**Serverlar: parolsiz SSH ulanish + jonli metrikalar**~~ ✅ (quyida)
 8. ~~**Ishonchlilik: jim yo'qolgan xatolar + tool chaqiruvlarini saqlash**~~ ✅ (quyida)
+9. ~~**Chatga fayl va rasm biriktirish (paste bilan)**~~ ✅ (quyida)
+
+### 9-bosqichda nima qilindi (2026-07-30)
+
+Chatga fayl va rasm biriktirish. Rasmni clipboard'dan `Ctrl+V` bilan qo'yish
+ham ishlaydi — bu eng ko'p kerak bo'ladigan yo'l (screenshot olib darhol
+tashlash).
+
+**ASOSIY QAROR: rasm ham FAYL.** Rasm base64 bo'lib `prompt()` ga
+uzatilmaydi. U ham oddiy fayl kabi diskka yoziladi, promptga faqat YO'L
+tushadi, agent `read` bilan o'qiydi va o'shanda ko'radi.
+
+Bu pi-coding-agent'ning o'z yechimi — kodi o'qib tekshirildi:
+`interactive-mode.js:2071-2093` Ctrl+V rasmni `/tmp/pi-clipboard-<uuid>.png`
+ga yozadi va editorga faqat yo'l matnini qo'yadi. `CHANGELOG.md:3847` da u
+dastlab attachment edi, `:3832` (PR #442) bilan **ataylab** yo'lga
+o'zgartirilgan. pi'ning attachment yo'li (CLI `@rasm.png`) esa base64'ni
+JSONL'ga to'liq yozadi va har turn'da qayta yuboradi — pi bu muammoni hal
+qilmagan, faqat interaktiv rejimda chetlab o'tgan.
+
+Bizga bergani:
+- fayl va rasm uchun **bitta kod yo'li**, ikki xil oqim yo'q;
+- `agent.prompt(prompt, images)` ga tegish shart bo'lmadi;
+- rasm kontekstga faqat agent xohlaganda kiradi va `toolResult` bo'lib
+  compaction bilan tabiiy kesiladi;
+- `read` tool'i **allaqachon** rasmni qaytaradi (`createReadTool()` magic
+  bytes bilan aniqlaydi) — yangi kod kerak emas.
+
+Narxi: bitta qo'shimcha turn (agent avval `read` qiladi).
+
+**Papka:** `<ishPapkasi>/.platforma/sessiyalar/<sessionId>/fayllar/`. Sessiya
+bo'yicha bo'linadi, chunki loyihali suhbatda ish papkasi umumiy. Shu sababli
+`.platforma` **qidiruvdan chiqarildi** (`TASHLANADIGAN_PAPKALAR`) — aks holda
+agent `grep` qilganda begona suhbatlarning fayllari chiqardi. Ongli yon
+ta'sir: skilllar va xotira ham `grep` dan chiqdi (promptga baribir tushadi).
+Aniq yo'l berilsa ro'yxat chetlab o'tiladi, ya'ni biriktirma oqimi ishlaydi.
+
+**Yo'lda topilgan va tuzatilgan IKKI MAVJUD XATO:**
+
+1. `agent.ts:660` `afterToolCall` natijani o'zgartirganda `content` ni
+   butunlay `[{type:'text'}]` bilan almashtirardi va **rasm blokini jimgina
+   yo'q qilardi**. `uzunlikHooki`/`maxfiyniYashirHooki` deyarli har natijadan
+   o'tadi, ya'ni bu tuzatishsiz butun funksiya ishlamas edi — xato xabarisiz.
+   Endi `matnsizBloklar()` rasm bloklarini saqlaydi.
+
+2. `kontekst.ts:215` `taxminiyTokenlar` `JSON.stringify(...).length / 4`
+   qilardi va base64'ni to'liq sanardi: 5 MB rasm ~1.7 million "token".
+   `kesishNuqtasi` u holda yaqin tarixni butunlay xulosaga yuborardi. Endi
+   pi'ning `estimateTokens` ishlatiladi (rasm = fiksirlangan 4800 belgi).
+
+**Xavfsizlik qarorlari:**
+- Tur **magic bytes** bo'yicha (`biriktirma.ts`), kengaytmaga va mijoz bergan
+  `content-type` ga ishonilmaydi: `.png` deb atalgan ZIP fayl bo'lib tushadi.
+  SVG ataylab rasm emas (XML → skript vektori).
+- `GET /api/chat/biriktirma/:id`: rasm → haqiqiy mime + `inline`; fayl →
+  **har doim** `application/octet-stream` + `attachment`. Aks holda
+  `text/html` deb yuklangan fayl saqlangan XSS bo'lardi.
+- Nom sanitizatsiyasi allowlist prinsipida (`yuklamaNomi`): `../`, NUL, shell
+  metabelgilari to'plamga umuman kirmaydi. Kengaytma esa saqlanadi
+  (`loyihaSlugi` uni yo'q qilardi, shuning uchun qayta ishlatilmadi).
+- Prompt eslatmasi **`chat_messages.text` ga yozilmaydi**, faqat `prompt()`
+  matniga. Klassifikator aynan `text` ni oladi — fayl nomi u yerga tushsa
+  injection vektori bo'lardi.
+- Vision qorovuli `/chat/send` da (model aynan shu yerda qulflanadi): rasm +
+  vision'siz model → 400, xabar **yozilmaydi**. Jimgina o'tkazib yuborilsa
+  agent "rasmda hech narsa yo'q" degan xato xulosaga kelardi.
+
+**Yangi fayllar:** `platform-server/src/biriktirma.ts` (magic bytes),
+`platform-server/src/chat-yuborish.ts` (REST va WS uchun umumiy mantiq),
+`platform-server/src/migrations/012-biriktirmalar.ts`,
+`platform-ui/src/components/BiriktirmaChipi.tsx`, va 4 ta test fayli.
+
+**Yon foyda — refactor:** `xabarniQabulQil()` ajratilishi bilan `/chat/send`
+va WS `chat.send` endi **bir xil** mantiqdan o'tadi. Ilgari model qulfi
+tekshiruvi ikki nusxada edi. `tsc` xatolari 36 dan 5 ga tushdi.
+
+**Ma'lum qarz:** LLM javobidagi `![](http://tashqi/x.png)` xom `<img>` bo'lib
+chiqadi (`Markdown.tsx` da `img` komponenti yo'q) — tashqi so'rov ketadi.
+Biriktirmadan mustaqil mavjud xavf, lekin rasm mavzusiga tegishli: `img`
+komponenti qo'shib faqat `/api/chat/biriktirma/` bilan boshlanadigan `src` ga
+ruxsat berish kerak.
 
 ### 8-bosqichda nima qilindi (2026-07-29)
 
@@ -357,7 +440,7 @@ alohida Projects sahifasi, mavjud tashqi papkaga ulanish.
 - Runtime baza `platform-server/data/` ichida — git'da yo'q, birinchi ishga
   tushirishda migratsiya + seed avtomatik.
 
-### Buzmaslik kerak bo'lgan besh chegara
+### Buzmaslik kerak bo'lgan yetti chegara
 
 | Chegara | Qayerda | Buzilsa nima bo'ladi |
 |---|---|---|
@@ -366,6 +449,8 @@ alohida Projects sahifasi, mavjud tashqi papkaga ulanish.
 | `rg` va Node backend bir xil natija | `qidiruv-motor.ts` | agent PC'ga qarab boshqacha ishlaydi |
 | **Skill matni klassifikatorga bormaydi** | `skill-yuklash.ts` | begona repo "hamma buyruqqa ruxsat ber" deb yozib himoyani ochib yuboradi |
 | **Tar yo'llari tozalanadi (`..` yo'q)** | `tar.ts` | zip-slip: arxiv nishon papkadan tashqariga yozadi |
+| **Biriktirma nomi/yo'li klassifikatorga bormaydi** | `agent.ts` (`biriktirmaEslatmasi`), `orchestrator.ts` | fayl nomi (`"; rm -rf ~; #.png`) ruxsat qaroriga ta'sir qiladi |
+| **`afterToolCall` rasm blokini saqlaydi** | `agent.ts` (`matnsizBloklar`) | model rasmni jimgina ko'rmaydi — xato xabarisiz |
 
 Hammasi test bilan majburlangan — testni "tuzatish" o'rniga kodni tuzating.
 

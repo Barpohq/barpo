@@ -27,7 +27,7 @@ import {
   type SuhbatXabari,
 } from '@platforma/ai'
 import { config } from '@platforma/config'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   ModelTanlovi,
@@ -51,6 +51,7 @@ import {
   toolChaqiruvYoz,
   xabarlarOqi,
   xabarYoz,
+  yetimBiriktirmalarniOchir,
 } from './repo.ts'
 import { loyihagaSinxronla } from './skill-ombor.ts'
 import { hub } from './ws/hub.ts'
@@ -112,6 +113,34 @@ function xotiraniTayyorla(papka: string): void {
     mkdirSync(join(papka, XOTIRA_PAPKASI), { recursive: true })
   } catch {
     // jim o'tamiz — xotirasiz ham suhbat to'liq ishlaydi
+  }
+}
+
+/**
+ * Xabarga bog'lanmagan eski biriktirmalarni bazadan va diskdan o'chiradi.
+ *
+ * NEGA SHU YERDA, cron'da emas: tozalash foydalanish paytida tabiiy ravishda
+ * bo'ladi va alohida jadval kuzatuvchisi kerak emas. Har oqim boshida bitta
+ * indeksli SELECT — arzon.
+ *
+ * Baza yozuvi AVVAL o'chiriladi (`yetimBiriktirmalarniOchir` ichida), keyin
+ * fayl. Teskari tartibda "bazada bor, diskda yo'q" holati paydo bo'lardi va
+ * agent mavjud bo'lmagan faylni o'qishga urinardi.
+ *
+ * XATO TASHLAMAYDI — `skilllarniTayyorla`/`xotiraniTayyorla` bilan bir xil
+ * qoida: bu qatlam qulaylik uchun, uning nosozligi suhbatni yiqitmasligi kerak.
+ */
+function yetimlarniTozala(sessionId: string, papka: string): void {
+  try {
+    for (const yetim of yetimBiriktirmalarniOchir(sessionId)) {
+      try {
+        unlinkSync(join(papka, yetim.yol))
+      } catch {
+        // Fayl allaqachon yo'q — yozuv baribir tozalandi
+      }
+    }
+  } catch {
+    // jim o'tamiz — sabab yuqoridagi izohda
   }
 }
 
@@ -214,6 +243,10 @@ export async function javobOqizi(
   // Xotira papkasi — agent o'z yozuvlarini shu yerga qo'yadi. Sinxronlash
   // yo'q, faqat papka mavjudligi kafolatlanadi (`xotiraniTayyorla` ga q.).
   xotiraniTayyorla(papka)
+
+  // Tashlab ketilgan yuklamalarni tozalaymiz — foydalanuvchi fayl biriktirib,
+  // keyin fikridan qaytishi oddiy holat.
+  yetimlarniTozala(sessionId, papka)
 
   const tarix = tarixniTayyorla(sessionId)
   const toolKartalari = new Map<string, ToolChaqiruv>()
@@ -718,9 +751,30 @@ export function oqimBormi(sessionId: string): boolean {
  * har safar faylni qayta o'qishga majbur bo'lardi.
  */
 function tarixniTayyorla(sessionId: string): SaqlanganXabar[] {
-  return xabarlarOqi(sessionId)
-    .filter((x) => x.text.trim().length > 0 || (x.agentMessages?.length ?? 0) > 0)
-    .map((x) => ({ role: x.role, text: x.text, agentMessages: x.agentMessages }))
+  return (
+    xabarlarOqi(sessionId)
+      // Biriktirmasi bor xabar matnsiz ham o'tadi: foydalanuvchi faqat fayl
+      // yuborib, hech narsa yozmasligi mumkin — u holda ham agent faylni
+      // ko'rishi kerak.
+      .filter(
+        (x) =>
+          x.text.trim().length > 0 ||
+          (x.agentMessages?.length ?? 0) > 0 ||
+          (x.biriktirmalar?.length ?? 0) > 0,
+      )
+      .map((x) => ({
+        role: x.role,
+        text: x.text,
+        agentMessages: x.agentMessages,
+        // Faqat agentga kerak maydonlar — `id`, `mime`, `hajm` unga
+        // hech narsa bermaydi va promptni shovqin bilan to'ldirardi
+        biriktirmalar: x.biriktirmalar?.map((b) => ({
+          tur: b.tur,
+          aslNom: b.aslNom,
+          yol: b.yol,
+        })),
+      }))
+  )
 }
 
 /**

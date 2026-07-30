@@ -5,7 +5,20 @@
 // (chat.delta → chat.done yoki chat.error). Shuning uchun 202 qaytadi:
 // so'rov qabul qilindi, natija keyinroq.
 
+import { config } from '@platforma/config'
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { rasmKengaytmasi, rasmTuri, SIGNATURA_BAYTLARI } from '../biriktirma.ts'
+import { xabarniQabulQil } from '../chat-yuborish.ts'
+import {
+  bandsizNom,
+  SESSIYA_PAPKASI,
+  sessiyaFayllarPapkasi,
+  sessiyaIshPapkasi,
+  yuklamaNomi,
+} from '../ish-papkasi.ts'
 import {
   ishlayotganSessiyalar,
   javobOqizi,
@@ -17,16 +30,19 @@ import {
   ruxsatJavobi,
 } from '../orchestrator.ts'
 import {
+  biriktirmaBoglanganmi,
+  biriktirmaOchir,
+  biriktirmaOqi,
+  biriktirmaYoz,
   loyihaOqi,
-  sessiyaModelniOzgart,
-  sessiyaModelQulfla,
+  sessiyaBiriktirmalari,
+  sessiyaLoyihaPapkasi,
   sessiyaOchir,
   sessiyaOqi,
   sessiyaSarlavhaOzgart,
   sessiyaYarat,
   sessiyalarOqi,
   xabarlarOqi,
-  xabarYoz,
 } from '../repo.ts'
 
 export const chatRoutes = new Hono()
@@ -148,6 +164,27 @@ chatRoutes.delete('/chat/sessions/:id', (c) => {
   if (!sessiyaOqi(id)) return c.json({ error: 'Sessiya topilmadi' }, 404)
 
   const oqimToxtatildi = oqimBormi(id) ? oqimniToxtat(id) : false
+
+  // Biriktirilgan fayllar diskdan ham ketadi. Yozuvlarni CASCADE oladi,
+  // fayllarni esa hech kim olmaydi — ular sessiyaning O'Z papkasida
+  // (`.platforma/sessiyalar/<id>/`), ya'ni loyihali suhbatda ham begona
+  // narsaga tegilmaydi.
+  //
+  // `sessiyaOchir` dan OLDIN: keyin bo'lsa loyiha papkasini bilish uchun
+  // sessiya yozuvi kerak bo'lardi, u esa allaqachon o'chirilgan bo'lardi.
+  //
+  // Xato yutiladi: papka tozalanmagani sessiyani o'chirmaslik uchun asos
+  // emas (`xotiraniTayyorla` dagi bilan bir xil qoida).
+  try {
+    const papka = sessiyaIshPapkasi(id, sessiyaLoyihaPapkasi(id))
+    const xavfsizId = id.replace(/[^a-zA-Z0-9_-]/g, '')
+    if (xavfsizId) {
+      rmSync(join(papka, SESSIYA_PAPKASI, xavfsizId), { recursive: true, force: true })
+    }
+  } catch {
+    // jim o'tamiz — sabab yuqoridagi izohda
+  }
+
   sessiyaOchir(id)
   return c.json({ ochirildi: true, oqimToxtatildi })
 })
@@ -156,8 +193,16 @@ interface YuborishTanasi {
   sessionId?: unknown
   text?: unknown
   model?: { provider?: unknown; model?: unknown }
+  biriktirmalar?: unknown
 }
 
+/**
+ * Xabar yuborish. Tekshiruv va yozish mantiqi `chat-yuborish.ts` da —
+ * WS yo'li ham AYNAN shu funksiyani chaqiradi, ya'ni ikki yo'l bir xil
+ * qoidalar bo'yicha ishlaydi.
+ *
+ * 202 qaytadi: so'rov qabul qilindi, javob esa WS orqali oqadi.
+ */
 chatRoutes.post('/chat/send', async (c) => {
   let tana: YuborishTanasi
   try {
@@ -169,63 +214,31 @@ chatRoutes.post('/chat/send', async (c) => {
   if (typeof tana.sessionId !== 'string' || tana.sessionId.length === 0) {
     return c.json({ error: 'sessionId majburiy' }, 400)
   }
-  if (typeof tana.text !== 'string' || tana.text.trim().length === 0) {
-    return c.json({ error: "Xabar matni bo'sh bo'lmasligi kerak" }, 400)
+  if (typeof tana.text !== 'string') {
+    return c.json({ error: 'text majburiy' }, 400)
+  }
+  if (tana.biriktirmalar !== undefined && !idRoyxatimi(tana.biriktirmalar)) {
+    return c.json({ error: "biriktirmalar id satrlari massivi bo'lishi kerak" }, 400)
   }
 
-  const sessionId = tana.sessionId
-  const matn = tana.text.trim()
-  const sessiya = sessiyaOqi(sessionId)
-  if (!sessiya) return c.json({ error: 'Sessiya topilmadi' }, 404)
+  const natija = xabarniQabulQil({
+    sessionId: tana.sessionId,
+    matn: tana.text,
+    tanlangan:
+      matnMi(tana.model?.provider) && matnMi(tana.model?.model)
+        ? { provider: tana.model!.provider as string, model: tana.model!.model as string }
+        : undefined,
+    biriktirmalar: tana.biriktirmalar,
+  })
 
-  if (oqimBormi(sessionId)) {
-    return c.json({ error: 'Bu sessiyada javob hali oqmoqda', detail: 'Avval kutib turing yoki to\'xtating' }, 409)
+  if (!natija.ok) {
+    return c.json({ error: natija.xato, detail: natija.tafsilot }, natija.status)
   }
-
-  // --- Model tanlovi va provider qulfi ---
-  const sorovProvider = matnMi(tana.model?.provider)
-  const sorovModel = matnMi(tana.model?.model)
-
-  if (!sessiya.provider) {
-    // Birinchi xabar — model tanlangan bo'lishi shart
-    if (!sorovProvider || !sorovModel) {
-      return c.json(
-        {
-          error: 'Model tanlanmagan',
-          detail: "Sessiyaning birinchi xabarida model: { provider, model } yuborilishi kerak",
-        },
-        400,
-      )
-    }
-    sessiyaModelQulfla(sessionId, sorovProvider, sorovModel)
-  } else if (sorovProvider && sorovProvider !== sessiya.provider) {
-    return c.json(
-      {
-        error: "Sessiya provideri o'zgartirib bo'lmaydi",
-        detail: `Sessiya "${sessiya.provider}" provideriga bog'langan. Boshqa provider uchun yangi suhbat boshlang.`,
-      },
-      409,
-    )
-  } else if (sorovModel && sorovModel !== sessiya.model) {
-    // Bir provider ichida modelni almashtirish mumkin
-    sessiyaModelniOzgart(sessionId, sorovModel)
-  }
-
-  const yangilangan = sessiyaOqi(sessionId)
-  if (!yangilangan?.provider || !yangilangan.model) {
-    return c.json({ error: 'Sessiya modeli aniqlanmadi' }, 500)
-  }
-
-  // Foydalanuvchi xabarini saqlaymiz — javob oqimi tarixdan shu xabarni oladi
-  xabarYoz({ sessionId, role: 'user', text: matn })
-
-  const messageId = crypto.randomUUID()
-  const tanlov = { provider: yangilangan.provider, model: yangilangan.model }
 
   // Fonda oqizamiz — javobni kutmaymiz, u WS orqali boradi
-  void javobOqizi(sessionId, messageId, tanlov)
+  void javobOqizi(tana.sessionId, natija.messageId, natija.tanlov)
 
-  return c.json({ messageId, model: tanlov }, 202)
+  return c.json({ messageId: natija.messageId, model: natija.tanlov }, 202)
 })
 
 /**
@@ -303,6 +316,248 @@ chatRoutes.post('/chat/sessions/:id/rejim', async (c) => {
   return c.json({ holat: await rejimOrnat(id, rejim) })
 })
 
+// ---------------------------------------------------------------------------
+// Biriktirmalar — chatga yuklangan fayl va rasmlar
+// ---------------------------------------------------------------------------
+//
+// NEGA `/chat/send` DAN AJRATILGAN. Fayl yuklash sekin (megabaytlar), xabar
+// yuborish tez. Bir so'rovda bo'lsa foydalanuvchi fayl yuklanguncha matn
+// yozib ham o'tira olmasdi va progress ko'rsatib bo'lmasdi. Endi: fayl
+// tanlanadi → yuklanadi → chip ko'rinadi → matn yoziladi → `send` faqat
+// id'larni yuboradi (kichik JSON).
+//
+// Yon foyda: WS `chat.send` ham id'lar bilan ishlaydi, ya'ni ikki yo'l
+// (REST va WS) bir xil qoladi — binary WS'da umuman yo'q.
+
+/**
+ * Tananing qattiq yuqori shifti — DoS'ga qarshi.
+ *
+ * Config'dagi haqiqiy chegara (`chat.biriktirma.maksFaylMb`) handler ICHIDA
+ * qo'llanadi. Nega ikki qatlam: middleware modul yuklanganda quriladi, config
+ * esa sessiyaning ish papkasiga bog'liq (`config({ ishPapkasi })`) va u
+ * so'rov paytida ma'lum bo'ladi. Ya'ni bu yerdagi son "hech qanday holatda
+ * bundan oshmaydi", handler'dagi son esa "foydalanuvchi sozlagani".
+ */
+const TANA_YUQORI_SHIFT = 256 * 1024 * 1024
+
+/** Rasm nomi bo'sh kelganda ishlatiladigan asos (Windows paste'da shunday bo'ladi) */
+const RASM_ZAXIRA_NOMI = 'rasm'
+
+/**
+ * Fayl yoki rasm biriktirish (multipart).
+ *
+ * `sessionId` MAJBURIY: fayl darhol sessiyaning papkasiga tushadi. UI
+ * sessiyani fayl tanlangan payt yaratadi — bo'sh sessiya qolishi platformada
+ * normal holat (`ChatSession.xabarlarSoni` izohiga q.).
+ *
+ * TARTIB: avval diskka, keyin bazaga (`routes/projects.ts` dagi papka→yozuv
+ * tartibi bilan bir xil sabab). Baza yozuvi yiqilsa fayl yetim qoladi —
+ * agent uni ko'radi, zarari yo'q; teskarisi (bazada bor, diskda yo'q) esa
+ * o'qishda xato berardi.
+ */
+chatRoutes.post(
+  '/chat/biriktirma',
+  bodyLimit({
+    maxSize: TANA_YUQORI_SHIFT,
+    onError: (c) => c.json({ error: "So'rov tanasi juda katta" }, 413),
+  }),
+  async (c) => {
+    let forma: FormData
+    try {
+      forma = await c.req.formData()
+    } catch {
+      return c.json({ error: "So'rov multipart/form-data bo'lishi kerak" }, 400)
+    }
+
+    const sessionId = matnMi(forma.get('sessionId'))
+    if (!sessionId) return c.json({ error: 'sessionId majburiy' }, 400)
+
+    const sessiya = sessiyaOqi(sessionId)
+    if (!sessiya) return c.json({ error: 'Sessiya topilmadi' }, 404)
+
+    // `File` dan boshqasi (matn maydoni) tashlanadi — mijoz xato yuborgan
+    const fayllar = forma.getAll('fayl').filter((f): f is File => f instanceof File)
+    if (fayllar.length === 0) {
+      return c.json({ error: 'Fayl yuborilmadi', detail: "`fayl` maydoni bo'sh" }, 400)
+    }
+
+    const papka = sessiyaIshPapkasi(sessionId, sessiyaLoyihaPapkasi(sessionId))
+    const { config: sozlamalar } = config({ ishPapkasi: papka })
+    const maksBayt = sozlamalar.chat.biriktirma.maksFaylMb * 1024 * 1024
+    const maksSoni = sozlamalar.chat.biriktirma.maksSoni
+
+    // Mavjudlar bilan birga chegaradan oshmasin. Bog'lanmaganlar ham
+    // sanaladi: foydalanuvchi ularni hali yuborishi mumkin.
+    const mavjudSoni = sessiyaBiriktirmalari(sessionId).length
+    if (mavjudSoni + fayllar.length > maksSoni) {
+      return c.json(
+        {
+          error: "Biriktirmalar soni chegarasidan oshdi",
+          detail: `Eng ko'pi ${maksSoni} ta (hozir ${mavjudSoni} ta bor)`,
+        },
+        400,
+      )
+    }
+
+    for (const fayl of fayllar) {
+      if (fayl.size === 0) {
+        return c.json({ error: "Bo'sh fayl biriktirilmaydi", detail: fayl.name }, 400)
+      }
+      if (fayl.size > maksBayt) {
+        return c.json(
+          {
+            error: 'Fayl juda katta',
+            detail: `${fayl.name} — ${(fayl.size / 1024 / 1024).toFixed(1)} MB, chegara ${sozlamalar.chat.biriktirma.maksFaylMb} MB`,
+          },
+          413,
+        )
+      }
+    }
+
+    const { toliq, nisbiy } = sessiyaFayllarPapkasi(papka, sessionId)
+    const natija = []
+
+    for (const fayl of fayllar) {
+      const bayt = new Uint8Array(await fayl.arrayBuffer())
+
+      // TUR MAZMUNDAN aniqlanadi, `fayl.type` dan emas: mijoz uni
+      // soxtalashtira oladi va u `GET` javobining `content-type` iga
+      // aylanardi (`biriktirma.ts` izohiga q.).
+      const rasm = rasmTuri(bayt.subarray(0, SIGNATURA_BAYTLARI))
+
+      // Nom bo'sh yoki butunlay tashlanadigan belgilardan iborat bo'lsa
+      // zaxira nom. Rasm paste'ida `File.name` ko'pincha bo'sh keladi.
+      const tozaNom =
+        yuklamaNomi(fayl.name) ??
+        (rasm ? `${RASM_ZAXIRA_NOMI}.${rasmKengaytmasi(rasm)}` : 'fayl')
+      const nom = bandsizNom(toliq, tozaNom)
+
+      // `wx` — fayl allaqachon bo'lsa xato beradi. `bandsizNom` va yozish
+      // orasida poyga bor (ikki so'rov bir vaqtda), shu bayroq uni ushlaydi.
+      try {
+        writeFileSync(join(toliq, nom), bayt, { flag: 'wx' })
+      } catch {
+        // Poyga: nomni qayta so'rab bir marta urinamiz. Yana bo'lsa xato —
+        // uchinchi urinish ehtimoli shunchalik kichik va cheksiz halqa
+        // qilishdan ko'ra tushunarli xato yaxshi.
+        const ikkinchi = bandsizNom(toliq, tozaNom)
+        try {
+          writeFileSync(join(toliq, ikkinchi), bayt, { flag: 'wx' })
+          natija.push(
+            biriktirmaYoz({
+              sessionId,
+              tur: rasm ? 'rasm' : 'fayl',
+              nom: ikkinchi,
+              aslNom: fayl.name || tozaNom,
+              yol: join(nisbiy, ikkinchi),
+              mime: rasm ?? 'application/octet-stream',
+              hajm: bayt.byteLength,
+            }),
+          )
+          continue
+        } catch {
+          return c.json({ error: "Faylni saqlab bo'lmadi", detail: fayl.name }, 500)
+        }
+      }
+
+      // MIME faqat rasm uchun haqiqiy. Fayl uchun `application/octet-stream`
+      // ATAYLAB: `fayl.type` mijozdan keladi va `text/html` deb yozilsa
+      // `GET` javobida saqlangan XSS bo'lardi.
+      natija.push(
+        biriktirmaYoz({
+          sessionId,
+          tur: rasm ? 'rasm' : 'fayl',
+          nom,
+          aslNom: fayl.name || tozaNom,
+          yol: join(nisbiy, nom),
+          mime: rasm ?? 'application/octet-stream',
+          hajm: bayt.byteLength,
+        }),
+      )
+    }
+
+    return c.json({ biriktirmalar: natija }, 201)
+  },
+)
+
+/**
+ * Biriktirilgan faylni berish — UI rasm ko'rsatishi va yuklab olish uchun.
+ *
+ * Loyihada BIRINCHI binary qaytaradigan marshrut.
+ *
+ * XAVFSIZLIK. Ikki qat'iy qoida:
+ *   1) Yo'l SERVERDA quriladi (`sessiyaIshPapkasi` + bazadagi nisbiy yo'l).
+ *      Mijoz faqat `id` beradi. Shundan keyin ham chegara QAYTA tekshiriladi
+ *      — bazaga qandaydir yo'l bilan buzuq yozuv tushsa ham papkadan
+ *      chiqib ketmaslik kerak.
+ *   2) `content-type` FAQAT rasm uchun haqiqiy va `inline`. Qolgan hamma
+ *      narsa `application/octet-stream` + `attachment`, ya'ni brauzer uni
+ *      hech qachon sahifa sifatida ochmaydi (saqlangan XSS yo'li yopiladi).
+ */
+chatRoutes.get('/chat/biriktirma/:id', (c) => {
+  const biriktirma = biriktirmaOqi(c.req.param('id'))
+  if (!biriktirma) return c.json({ error: 'Biriktirma topilmadi' }, 404)
+
+  const papka = sessiyaIshPapkasi(biriktirma.sessionId, sessiyaLoyihaPapkasi(biriktirma.sessionId))
+  const toliq = join(papka, biriktirma.yol)
+  if (!toliq.startsWith(`${papka}/`)) {
+    return c.json({ error: "Yaroqsiz yo'l" }, 400)
+  }
+
+  const fayl = Bun.file(toliq)
+  const rasmmi = biriktirma.tur === 'rasm'
+  // Nom sarlavhaga tushadi — ASCII bo'lmagan belgi va qo'shtirnoq sarlavhani
+  // buzadi, shuning uchun kodlanadi
+  const nom = encodeURIComponent(biriktirma.aslNom)
+
+  return new Response(fayl, {
+    headers: {
+      'content-type': rasmmi ? biriktirma.mime : 'application/octet-stream',
+      'content-disposition': `${rasmmi ? 'inline' : 'attachment'}; filename*=UTF-8''${nom}`,
+      // Brauzer mime turini o'zi "taxmin qilib" HTML deb ochmasin
+      'x-content-type-options': 'nosniff',
+      // Mazmun o'zgarmaydi (id noyob), lekin `private` — javob umumiy
+      // keshga tushmasligi kerak
+      'cache-control': 'private, max-age=31536000, immutable',
+    },
+  })
+})
+
+/**
+ * Biriktirmani olib tashlash — foydalanuvchi chipdagi `×` ni bosdi.
+ *
+ * Xabarga BOG'LANGAN biriktirma o'chirilmaydi: u allaqachon suhbat tarixining
+ * bir qismi va agent uni ko'rgan. Tarixni orqaga o'zgartirish yolg'on
+ * kontekst yaratardi — o'chirish faqat yuborishdan OLDIN mumkin.
+ */
+chatRoutes.delete('/chat/biriktirma/:id', (c) => {
+  const id = c.req.param('id')
+  const biriktirma = biriktirmaOqi(id)
+  if (!biriktirma) return c.json({ error: 'Biriktirma topilmadi' }, 404)
+
+  if (biriktirmaBoglanganmi(id)) {
+    return c.json(
+      {
+        error: "Yuborilgan biriktirma o'chirilmaydi",
+        detail: 'U suhbat tarixining qismi — agent uni allaqachon ko\'rgan',
+      },
+      409,
+    )
+  }
+
+  const papka = sessiyaIshPapkasi(biriktirma.sessionId, sessiyaLoyihaPapkasi(biriktirma.sessionId))
+  // Fayl AVVAL o'chiriladi, keyin yozuv: teskari tartibda fayl yetim
+  // qolardi (yozuvsiz fayl uni topish yo'lini ham yo'qotadi)
+  try {
+    unlinkSync(join(papka, biriktirma.yol))
+  } catch {
+    // Fayl allaqachon yo'q bo'lishi mumkin — yozuvni baribir tozalaymiz
+  }
+  biriktirmaOchir(id)
+
+  return c.json({ ochirildi: true })
+})
+
 /** Javob oqimini to'xtatish */
 chatRoutes.post('/chat/stop', async (c) => {
   let sessionId: string | undefined
@@ -318,4 +573,9 @@ chatRoutes.post('/chat/stop', async (c) => {
 
 function matnMi(qiymat: unknown): string | undefined {
   return typeof qiymat === 'string' && qiymat.length > 0 ? qiymat : undefined
+}
+
+/** Biriktirma id'lari massivimi — bo'sh massiv ham to'g'ri */
+function idRoyxatimi(qiymat: unknown): qiymat is string[] {
+  return Array.isArray(qiymat) && qiymat.every((q) => typeof q === 'string' && q.length > 0)
 }

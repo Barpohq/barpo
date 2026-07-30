@@ -34,6 +34,7 @@ import { migratsiya as m007 } from './007-serverlar-haqiqiy.ts'
 import { migratsiya as m009 } from './009-tool-chaqiruvlar.ts'
 import { migratsiya as m010 } from './010-standart-manba.ts'
 import { migratsiya as m011 } from './011-mcp-serverlar.ts'
+import { migratsiya as m012 } from './012-biriktirmalar.ts'
 
 export const migratsiyalar: Migratsiya[] = [
   m001,
@@ -46,4 +47,5 @@ export const migratsiyalar: Migratsiya[] = [
   m009,
   m010,
   m011,
+  m012,
 ]

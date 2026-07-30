@@ -10,6 +10,7 @@
 
 export {
   keshdagiNatija,
+  keshniOrnat,
   keshniTozala,
   modellarniAniqla,
   modelsKolleksiyasi,
@@ -53,7 +54,9 @@ export {
 export {
   AGENT_SISTEM_PROMPT,
   agentOqimi,
+  biriktirmaEslatmasi,
   klassifikatorTarixi,
+  matnsizBloklar,
   oxirgiUserIndeksi,
   type AgentHodisasi,
   type AgentSozlamalari,
@@ -128,6 +131,7 @@ export {
   type SiqishNatijasi,
   type SiqishSozlamalari,
   type TarixSozlamalari,
+  type XabarBiriktirmasi,
 } from './kontekst.ts'
 
 // --- Tool hook'lari ---

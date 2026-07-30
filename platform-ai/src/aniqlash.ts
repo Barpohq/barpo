@@ -108,6 +108,18 @@ export function keshniTozala(): void {
   _ishlayotgan = null
 }
 
+/**
+ * Testlar uchun: keshga tayyor natija qo'yish.
+ *
+ * `_models` (pi-ai kolleksiyasi) TEGILMAYDI — u haqiqiy provider ulanishini
+ * talab qiladi. Ya'ni bu funksiya faqat `keshdagiNatija()` ga tayanadigan
+ * kodni sinash uchun: model ro'yxati, `vision` bayrog'i, narxlar. LLM
+ * chaqiruvi baribir ishlamaydi va bu ataylab — test tarmoqqa chiqmasligi kerak.
+ */
+export function keshniOrnat(natija: AniqlashNatijasi | null): void {
+  _kesh = natija
+}
+
 export async function modellarniAniqla(sozlama?: AniqlashSozlamalari): Promise<AniqlashNatijasi> {
   if (_kesh && !sozlama?.majburiy) return _kesh
   // Bir vaqtda ikkita so'rov kelsa — bittasi aniqlaydi, ikkinchisi kutadi

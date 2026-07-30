@@ -891,6 +891,39 @@ export interface Project {
   chatlarSoni?: number
 }
 
+/**
+ * Chatga biriktirilgan fayl yoki rasm.
+ *
+ * Rasm ham, oddiy fayl ham DISKDA yashaydi (sessiyaning yuklama papkasida)
+ * va agent ularni mavjud `read`/`grep`/`bash` tool'lari bilan o'zi o'qiydi.
+ * LLM'ga base64 bo'lib uzatilmaydi — promptga faqat yo'l va qisqa eslatma
+ * tushadi. Shu sababli fayl va rasm uchun yagona oqim bor.
+ */
+export interface ChatBiriktirma {
+  id: string
+  sessionId: string
+  /**
+   * `rasm` — agent `read` bilan o'qiganda LLM uni ko'radi (model vision
+   * qo'llashi shart); `fayl` — oddiy fayl, mazmuni matn sifatida o'qiladi.
+   *
+   * Tur MAGIC BYTES bo'yicha aniqlanadi: kengaytmaga ham, mijoz bergan
+   * `content-type` ga ham ishonilmaydi (`.png` deb atalgan ZIP — fayl).
+   */
+  tur: 'rasm' | 'fayl'
+  /** Foydalanuvchi bergan nom — UI shuni ko'rsatadi */
+  aslNom: string
+  /**
+   * Ish papkasiga NISBATAN yo'l — agent shu bo'yicha o'qiydi.
+   *
+   * Absolut yo'l ATAYLAB berilmaydi: loyiha papkasi ko'chirilsa yozuv
+   * buzilmaydi va mijoz serverning fayl tuzilmasini ko'rmaydi.
+   */
+  yol: string
+  mime: string
+  hajm: number
+  createdAt: string
+}
+
 export interface ChatMessage {
   id: string
   sessionId: string
@@ -920,6 +953,13 @@ export interface ChatMessage {
    * tayanadi — butun tarixni qayta hisoblash o'rniga aniq raqam.
    */
   contextTokens?: number
+  /**
+   * Shu xabarga biriktirilgan fayllar (faqat `role: 'user'` da bo'ladi).
+   *
+   * `toolCards` bilan bir xil naqsh: alohida jadvalda saqlanadi va
+   * `xabarlarOqi()` ularni xabarga ulab beradi.
+   */
+  biriktirmalar?: ChatBiriktirma[]
   createdAt: string
 }
 

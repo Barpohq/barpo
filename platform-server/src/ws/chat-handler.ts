@@ -1,13 +1,15 @@
 // WS orqali kelgan `chat.send` eventini orchestratorga uzatadi.
 //
-// REST `POST /api/chat/send` bilan bir xil ish qiladi, farqi — javob HTTP
-// status emas, `chat.error` eventi bo'lib qaytadi (WS'da status kodi yo'q).
-// Validatsiya mantig'i takrorlanmasin uchun ikkalasi ham repo va orchestrator
-// funksiyalarini chaqiradi.
+// REST `POST /api/chat/send` bilan AYNAN bir xil mantiqdan o'tadi
+// (`chat-yuborish.ts`: `xabarniQabulQil`) — farqi faqat xatoni qanday
+// ifodalashda: HTTP status kodi o'rniga `chat.error` eventi.
+//
+// Ilgari bu fayl model qulfi tekshiruvini o'zi takrorlardi va ikki nusxa
+// bir-biridan uzoqlashishi mumkin edi. Endi qoidalar bitta joyda.
 
 import type { ClientEvent } from '@platforma/shared'
-import { javobOqizi, oqimBormi, rejimOrnat, ruxsatJavobi } from '../orchestrator.ts'
-import { sessiyaModelniOzgart, sessiyaModelQulfla, sessiyaOqi, xabarYoz } from '../repo.ts'
+import { xabarniQabulQil } from '../chat-yuborish.ts'
+import { javobOqizi, rejimOrnat, ruxsatJavobi } from '../orchestrator.ts'
 import { hub, type PlatformaWS } from './hub.ts'
 
 export function chatSendHandleri(event: ClientEvent, ws: PlatformaWS): void {
@@ -20,46 +22,35 @@ export function chatSendHandleri(event: ClientEvent, ws: PlatformaWS): void {
     return
   }
   if (event.type !== 'chat.send') return
-  void chatSendniBajar(event.sessionId, event.text, event.model, ws)
+  void chatSendniBajar(event, ws)
 }
 
 async function chatSendniBajar(
-  sessionId: string,
-  xomMatn: string,
-  tanlangan: { provider: string; model: string } | undefined,
+  event: Extract<ClientEvent, { type: 'chat.send' }>,
   ws: PlatformaWS,
 ): Promise<void> {
-  const messageId = crypto.randomUUID()
-  const xato = (xabar: string) =>
-    hub.yubor(ws, { type: 'chat.error', sessionId, messageId, error: xabar })
+  const natija = xabarniQabulQil({
+    sessionId: event.sessionId,
+    matn: event.text ?? '',
+    tanlangan: event.model,
+    biriktirmalar: event.biriktirmalar,
+  })
 
-  const matn = xomMatn?.trim()
-  if (!matn) return xato("Xabar matni bo'sh")
-
-  const sessiya = sessiyaOqi(sessionId)
-  if (!sessiya) return xato('Sessiya topilmadi')
-
-  if (oqimBormi(sessionId)) return xato('Bu sessiyada javob hali oqmoqda')
-
-  if (!sessiya.provider) {
-    if (!tanlangan?.provider || !tanlangan.model) {
-      return xato("Sessiyaning birinchi xabarida model tanlanishi kerak")
-    }
-    sessiyaModelQulfla(sessionId, tanlangan.provider, tanlangan.model)
-  } else if (tanlangan?.provider && tanlangan.provider !== sessiya.provider) {
-    return xato(
-      `Sessiya provideri o'zgartirib bo'lmaydi (hozirgi: ${sessiya.provider}). Yangi suhbat boshlang.`,
-    )
-  } else if (tanlangan?.model && tanlangan.model !== sessiya.model) {
-    sessiyaModelniOzgart(sessionId, tanlangan.model)
+  if (!natija.ok) {
+    // `messageId` shu yerda yaratiladi: rad etilgan xabarga ham id kerak,
+    // aks holda mijoz xatoni qaysi yuborishga bog'lashni bilmaydi.
+    const xabar = natija.tafsilot ? `${natija.xato} — ${natija.tafsilot}` : natija.xato
+    hub.yubor(ws, {
+      type: 'chat.error',
+      sessionId: event.sessionId,
+      messageId: crypto.randomUUID(),
+      error: xabar,
+    })
+    return
   }
 
-  const yangilangan = sessiyaOqi(sessionId)
-  if (!yangilangan?.provider || !yangilangan.model) return xato('Sessiya modeli aniqlanmadi')
-
-  xabarYoz({ sessionId, role: 'user', text: matn })
-  await javobOqizi(sessionId, messageId, {
-    provider: yangilangan.provider,
-    model: yangilangan.model,
-  })
+  // REST'dan FARQ: bu yerda kutamiz. WS ulanishi ochiq turadi va oqim
+  // tugashini kutish hech kimni bloklamaydi (`javobOqizi` o'zi WS orqali
+  // tarqatadi). REST esa 202 qaytarish uchun kutmaydi.
+  await javobOqizi(event.sessionId, natija.messageId, natija.tanlov)
 }

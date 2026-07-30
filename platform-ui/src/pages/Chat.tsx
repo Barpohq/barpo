@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AppManifest,
+  ChatBiriktirma,
   ChatMessage,
   ModelInfo,
   Project,
@@ -22,6 +23,7 @@ import type {
   RuxsatSorovi,
   ToolChaqiruv,
 } from '@platforma/shared'
+import BiriktirmaChipi from '../components/BiriktirmaChipi'
 import LoyihaTanlagich from '../components/LoyihaTanlagich'
 import Markdown from '../components/Markdown'
 import ModelTanlagich from '../components/ModelTanlagich'
@@ -31,6 +33,8 @@ import RuxsatKartasi from '../components/RuxsatKartasi'
 import ToolKartasi from '../components/ToolKartasi'
 import {
   ApiXatosi,
+  biriktirmaOchir as biriktirmaOchirSorov,
+  biriktirmaYukla,
   loyihalarOl,
   loyihaYarat as loyihaYaratSorov,
   modellarOl,
@@ -55,8 +59,24 @@ interface Msg {
   text: string
   /** Agent shu javob davomida bajargan tool chaqiruvlari, tartib bo'yicha */
   toolCards?: ToolChaqiruv[]
+  /** Shu xabarga biriktirilgan fayllar (faqat `user` da bo'ladi) */
+  biriktirmalar?: ChatBiriktirma[]
   /** Javob oqimi tugadimi — false bo'lsa kursor miltillaydi */
   oqmoqda?: boolean
+  xato?: string
+}
+
+/**
+ * Kiritish maydonidagi biriktirma — yuklanish holati bilan.
+ *
+ * Server yozuvi (`yozuv`) faqat yuklash tugagach paydo bo'ladi, chip esa
+ * darhol ko'rinishi kerak — shuning uchun mahalliy id.
+ */
+interface KiritishBiriktirmasi {
+  mahalliyId: string
+  nom: string
+  /** Yuklandi — server yozuvi. `undefined` va `xato` yo'q bo'lsa: yuklanmoqda. */
+  yozuv?: ChatBiriktirma
   xato?: string
 }
 
@@ -73,7 +93,17 @@ function xabarniMoslash(x: ChatMessage): Msg {
     role: x.role,
     text: x.text,
     toolCards: x.toolCards,
+    biriktirmalar: x.biriktirmalar,
   }
+}
+
+/** Clipboard yoki `input` dan kelgan fayllarni yuklanish holatiga o'raydi */
+function kiritishgaOra(fayllar: File[]): KiritishBiriktirmasi[] {
+  return fayllar.map((f) => ({
+    mahalliyId: crypto.randomUUID(),
+    // Clipboard'dan kelgan rasm nomsiz bo'lishi mumkin (Windows'da odatiy)
+    nom: f.name || 'rasm',
+  }))
 }
 
 /** Kiritish maydoni shundan oshmaydi — ~8 qator, keyin ichida aylanadi */
@@ -164,6 +194,13 @@ export default function Chat({
   const loyihalarRef = useRef<Project[]>([])
   loyihalarRef.current = loyihalar
   /**
+   * Tanlangan loyihaning ref nusxasi — `sessiyaniTaminla` uchun.
+   *
+   * `rejimRef` bilan bir xil sabab: helper bog'liqliksiz bo'lishi kerak.
+   */
+  const loyihaRef = useRef<Project | null>(null)
+  loyihaRef.current = loyiha
+  /**
    * Tiklanayotgan sessiyaning loyiha id'si.
    *
    * Ref, chunki loyihalar ro'yxati effektdan KEYIN kelishi mumkin — o'shanda
@@ -184,8 +221,28 @@ export default function Chat({
   /** Javob kutayotgan ruxsat so'rovlari — javob berilgani darhol chiqib ketadi */
   const [ruxsatlar, setRuxsatlar] = useState<RuxsatSorovi[]>([])
   const [rejim, setRejim] = useState<RejimHolati>({ rejim: 'tasdiq' })
+  /**
+   * `rejim` ning ref nusxasi — `sessiyaniTaminla` uchun.
+   *
+   * Helper `useCallback([])` bilan barqaror bo'lishi kerak: u `send` ning
+   * bog'liqligi va har renderda qayta yaratilsa `send` ham qayta quriladi.
+   * Ref bu bog'liqlikni uzadi.
+   */
+  const rejimRef = useRef<RuxsatRejimi>(rejim.rejim)
+  rejimRef.current = rejim.rejim
+  /** Kiritish maydonidagi biriktirmalar — yuborilgach tozalanadi */
+  const [biriktirmalar, setBiriktirmalar] = useState<KiritishBiriktirmasi[]>([])
+  /**
+   * Ketayotgan sessiya yaratish promise'i.
+   *
+   * Ikki chaqiruvchi bor (`send` va `biriktir`) va ikkalasi bir vaqtda
+   * kelishi mumkin — bo'sh chatda fayl tanlanib, darhol Enter bosilsa.
+   * Usiz ikkita sessiya yaratilardi va biri yo'qolib qolardi.
+   */
+  const yaratilmoqda = useRef<Promise<string> | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const kiritishRef = useRef<HTMLTextAreaElement>(null)
+  const faylTanlagichRef = useRef<HTMLInputElement>(null)
   // Hozir javob kutilayotgan xabar id'si — WS eventlari shu bo'yicha topiladi
   const kutilayotgan = useRef<string | null>(null)
   /**
@@ -234,6 +291,9 @@ export default function Chat({
     // boshqa suhbatning javob kutayotgan kartasi bu yerda ko'rinib qolardi.
     setMsgs([])
     setRuxsatlar([])
+    // Biriktirmalar ham: chiplar OLDINGI suhbatga tegishli edi va bu
+    // suhbatda ularni yuborib bo'lmaydi (server sessiya bo'yicha rad etadi)
+    setBiriktirmalar([])
     kutilayotgan.current = null
     setBusy(false)
     setToxtatilmoqda(false)
@@ -534,67 +594,130 @@ export default function Chat({
     if (!serverdaIshlamoqda) setToxtatilmoqda(false)
   }, [serverdaIshlamoqda, sessionId])
 
+  /**
+   * Sessiya borligini kafolatlaydi — yo'q bo'lsa yaratadi va id'sini qaytaradi.
+   *
+   * IKKI CHAQIRUVCHI BOR: xabar yuborish va fayl biriktirish. Ikkinchisi
+   * sababli ajratilgan — biriktirma darhol sessiyaning papkasiga tushadi,
+   * ya'ni sessiya matn yozilishidan OLDIN kerak bo'lishi mumkin.
+   *
+   * QO'LDA TAKRORLASH XAVFLI: pastdagi ketma-ketlik (ref darhol, keyin
+   * `sessiyaniKuzat`, keyin `sessiyaXabarchi`) izohlarda yozilgan poygalarga
+   * qarshi qurilgan. Ikkinchi nusxada bitta qator tushib qolsa, javob
+   * jimgina yo'qoladi.
+   *
+   * `yaratilmoqda` ref'i BIR VAQTDA IKKI SESSIYA yaratilishini to'sadi:
+   * foydalanuvchi bo'sh chatda ikki faylni ketma-ket tanlasa (yoki paste +
+   * yuborish bir vaqtda tushsa), ikkita `POST /chat/sessions` ketardi va
+   * biri yo'qolib qolardi.
+   */
+  const sessiyaniTaminla = useCallback(
+    async (sarlavha: string): Promise<string> => {
+      const mavjud = sessionIdRef.current
+      if (mavjud) return mavjud
+      // Boshlangan yaratish bo'lsa — shuni kutamiz, ikkinchisini boshlamaymiz
+      if (yaratilmoqda.current) return yaratilmoqda.current
+
+      const ish = (async () => {
+        // Loyiha shu yerda BIR MARTA bog'lanadi — keyin sessiya ish
+        // papkasi bilan birga qulflanadi
+        const sessiya = await sessiyaYarat(sarlavha.slice(0, 60), loyihaRef.current?.id)
+        const sid = sessiya.id
+        setSessionId(sid)
+        // Ref DARHOL yangilanadi — pastdagi effektni kutmasdan.
+        //
+        // Nega shart: `sessiyaXabarchi` App'dagi `ochiqSessiya` ni o'zgartiradi,
+        // ya'ni tiklash effekti (yuqorida) ishga tushadi. Uning "biz yaratgan
+        // sessiya" qorovuli aynan shu ref'ga qaraydi, ref'ni yangilaydigan
+        // effekt esa e'lon tartibi bo'yicha KEYIN ishlaydi. Natijada qorovul
+        // eski `null` ni ko'rib o'tkazib yuborardi va endigina qo'shilgan bo'sh
+        // javob xabari `setMsgs([])` bilan o'chib ketardi — keyin kelgan
+        // `chat.delta` yopishadigan xabarni topolmay, javob faqat sahifa
+        // yangilangach (bazadan) ko'rinardi.
+        sessionIdRef.current = sid
+        // Filtr ham darhol o'rnatiladi — `xabarYubor` dan OLDIN. Aks holda
+        // server javob oqizishni boshlagach, filtrsiz ulanish uchun kelgan
+        // birinchi deltalar effekt ishlagunga qadar yo'lda qolardi.
+        // `sessiyaniKuzat` takrorlanishdan o'zi himoyalangan (bir xil id —
+        // darhol qaytadi), shuning uchun pastdagi effekt ortiqcha ish qilmaydi.
+        ws.sessiyaniKuzat(sid)
+        // URL'ga yozamiz — endi sahifa yangilansa suhbat tiklanadi
+        sessiyaXabarchi.current?.(sid)
+        // Sessiyagacha tanlangan rejimni serverga yetkazamiz.
+        //
+        // IKKALA qiymat ham yuboriladi, faqat `auto` emas. Serverning
+        // standarti ham `tasdiq`, ya'ni jimgina o'tib ketish "ishlab
+        // turgandek" ko'rinardi — lekin u holda UI ko'rsatgan rejim va
+        // server haqiqatan qo'llayotgan rejim HECH QACHON solishtirilmasdi.
+        // Endi javob holatni tasdiqlaydi (yoki tuzatadi).
+        try {
+          setRejim(await rejimOrnatSorov(sid, rejimRef.current))
+        } catch {
+          // Rejim o'rnatilmasa server standarti (tasdiq) kuchda qoladi —
+          // xavfsiz tomon. Almashtirgich shu holatni ko'rsatadi.
+          setRejim({ rejim: 'tasdiq' })
+        }
+        return sid
+      })()
+
+      // Promise SAQLANADI, natija emas: shu payt kelgan ikkinchi chaqiruv
+      // xuddi shu promise'ni kutadi va ikkinchi sessiya yaratilmaydi.
+      yaratilmoqda.current = ish
+      try {
+        return await ish
+      } finally {
+        // Xatoda ham tozalanadi — keyingi urinish qaytadan boshlansin
+        yaratilmoqda.current = null
+      }
+    },
+    [],
+  )
+
   const send = useCallback(
     async (xom?: string) => {
       const text = (xom ?? input).trim()
+      // Biriktirma bo'lsa matnsiz ham yuboriladi: rasm tashlab hech narsa
+      // yozmaslik tabiiy holat (server ham shunga ruxsat beradi).
+      const tayyorlar = biriktirmalar.filter((b) => b.yozuv)
+      if (!text && tayyorlar.length === 0) return
       // `serverdaIshlamoqda` ham to'sadi: refresh'dan keyin `busy` false
       // bo'ladi, oqim esa fonda davom etadi. Usiz yuborilgan yangi xabar
       // serverda eski oqimni jimgina abort qilardi (`javobOqizi` boshida) —
       // foydalanuvchi nima uchun javob yarim qolganini tushunmasdi.
-      if (!text || busy || serverdaIshlamoqda || !tanlangan) return
+      if (busy || serverdaIshlamoqda || !tanlangan) return
+      // Hali yuklanayotgan fayl bo'lsa kutamiz: aks holda foydalanuvchi
+      // "fayl biriktirdim" deb o'ylab, u yuborilmay qolardi.
+      if (biriktirmalar.some((b) => !b.yozuv && !b.xato)) return
 
-      setInput('')
       setBusy(true)
-      setMsgs((m) => [...m, { id: `u-${crypto.randomUUID()}`, role: 'user', text }])
+      setMsgs((m) => [
+        ...m,
+        {
+          id: `u-${crypto.randomUUID()}`,
+          role: 'user',
+          text,
+          biriktirmalar: tayyorlar.map((b) => b.yozuv!),
+        },
+      ])
 
       try {
-        // Sessiya hali yo'q bo'lsa — birinchi xabarda yaratamiz
-        let sid = sessionId
-        if (!sid) {
-          // Loyiha shu yerda BIR MARTA bog'lanadi — keyin sessiya ish
-          // papkasi bilan birga qulflanadi
-          const sessiya = await sessiyaYarat(text.slice(0, 60), loyiha?.id)
-          sid = sessiya.id
-          setSessionId(sid)
-          // Ref DARHOL yangilanadi — pastdagi effektni kutmasdan.
-          //
-          // Nega shart: `sessiyaXabarchi` App'dagi `ochiqSessiya` ni o'zgartiradi,
-          // ya'ni tiklash effekti (yuqorida) ishga tushadi. Uning "biz yaratgan
-          // sessiya" qorovuli aynan shu ref'ga qaraydi, ref'ni yangilaydigan
-          // effekt esa e'lon tartibi bo'yicha KEYIN ishlaydi. Natijada qorovul
-          // eski `null` ni ko'rib o'tkazib yuborardi va endigina qo'shilgan bo'sh
-          // javob xabari `setMsgs([])` bilan o'chib ketardi — keyin kelgan
-          // `chat.delta` yopishadigan xabarni topolmay, javob faqat sahifa
-          // yangilangach (bazadan) ko'rinardi.
-          sessionIdRef.current = sid
-          // Filtr ham darhol o'rnatiladi — `xabarYubor` dan OLDIN. Aks holda
-          // server javob oqizishni boshlagach, filtrsiz ulanish uchun kelgan
-          // birinchi deltalar effekt ishlagunga qadar yo'lda qolardi.
-          // `sessiyaniKuzat` takrorlanishdan o'zi himoyalangan (bir xil id —
-          // darhol qaytadi), shuning uchun pastdagi effekt ortiqcha ish qilmaydi.
-          ws.sessiyaniKuzat(sid)
-          // URL'ga yozamiz — endi sahifa yangilansa suhbat tiklanadi
-          sessiyaXabarchi.current?.(sid)
-          // Sessiyagacha tanlangan rejimni serverga yetkazamiz.
-          //
-          // IKKALA qiymat ham yuboriladi, faqat `auto` emas. Serverning
-          // standarti ham `tasdiq`, ya'ni jimgina o'tib ketish "ishlab
-          // turgandek" ko'rinardi — lekin u holda UI ko'rsatgan rejim va
-          // server haqiqatan qo'llayotgan rejim HECH QACHON solishtirilmasdi.
-          // Endi javob holatni tasdiqlaydi (yoki tuzatadi).
-          try {
-            setRejim(await rejimOrnatSorov(sid, rejim.rejim))
-          } catch {
-            // Rejim o'rnatilmasa server standarti (tasdiq) kuchda qoladi —
-            // xavfsiz tomon. Almashtirgich shu holatni ko'rsatadi.
-            setRejim({ rejim: 'tasdiq' })
-          }
-        }
+        // Sessiya hali yo'q bo'lsa — birinchi xabarda yaratamiz. Fayl
+        // biriktirilgan bo'lsa u allaqachon yaratilgan (biriktirish uchun
+        // sessiya shart) va bu chaqiruv darhol qaytadi.
+        const sid = await sessiyaniTaminla(text || (tayyorlar[0]?.nom ?? 'yangi suhbat'))
 
-        const javob = await xabarYubor(sid, text, {
-          provider: tanlangan.provider,
-          model: tanlangan.id,
-        })
+        const javob = await xabarYubor(
+          sid,
+          text,
+          { provider: tanlangan.provider, model: tanlangan.id },
+          tayyorlar.map((b) => b.yozuv!.id),
+        )
+
+        // Muvaffaqiyatdan KEYIN tozalanadi. Ilgari `setInput('')` so'rovdan
+        // oldin turardi va har 400'da (masalan vision qorovuli) foydalanuvchi
+        // matnini yo'qotardi — u qayta yozishga majbur bo'lardi.
+        setInput('')
+        setBiriktirmalar([])
 
         kutilayotgan.current = javob.messageId
         setMsgs((m) => [
@@ -610,15 +733,130 @@ export default function Chat({
             : xato instanceof Error
               ? xato.message
               : "Noma'lum xato"
+        // Optimistik user xabarini olib tashlaymiz: xabar serverga
+        // YETMAGAN, ya'ni chatda turishi yolg'on bo'lardi (sahifa
+        // yangilangach u baribir yo'qolardi). Matn maydonga qaytadi.
         setMsgs((m) => [
-          ...m,
+          ...m.slice(0, -1),
           { id: `x-${crypto.randomUUID()}`, role: 'assistant', text: '', xato: xabar },
         ])
+        setInput(text)
         setBusy(false)
       }
     },
-    [busy, input, loyiha?.id, rejim.rejim, serverdaIshlamoqda, sessionId, tanlangan],
+    [biriktirmalar, busy, input, serverdaIshlamoqda, sessiyaniTaminla, tanlangan],
   )
+
+  /**
+   * Fayllarni biriktiradi: chiplarni darhol ko'rsatadi, keyin yuklaydi.
+   *
+   * SESSIYA SHU YERDA YARATILADI (yo'q bo'lsa): fayl darhol sessiyaning
+   * papkasiga tushadi, ya'ni matn yozilishini kutib bo'lmaydi. Bo'sh sessiya
+   * qolishi platformada normal holat — Suhbatlar ro'yxati `xabarlarSoni: 0`
+   * bo'yicha ularni ajratadi.
+   *
+   * Xato TASHLAMAYDI: har fayl o'z chipida xatosini ko'rsatadi va
+   * foydalanuvchi uni olib tashlab qayta urina oladi. Bittasining xatosi
+   * qolganlarini to'xtatmaydi.
+   */
+  const biriktir = useCallback(
+    async (fayllar: File[]) => {
+      if (fayllar.length === 0) return
+
+      // Vision qorovuli — SERVER ham tekshiradi (`/chat/send`), bu faqat
+      // oldindan ogohlantirish: foydalanuvchi rasm yuklab, keyin yuborishda
+      // 400 olishdan ko'ra darhol bilsin.
+      if (tanlangan && !tanlangan.vision && fayllar.some((f) => f.type.startsWith('image/'))) {
+        toast(
+          `${tanlangan.name} rasmni ko'rmaydi — vision qo'llaydigan model tanlang`,
+          'error',
+        )
+        return
+      }
+
+      const yangilar = kiritishgaOra(fayllar)
+      setBiriktirmalar((b) => [...b, ...yangilar])
+
+      let sid: string
+      try {
+        sid = await sessiyaniTaminla(fayllar[0]!.name || 'biriktirma')
+      } catch {
+        setBiriktirmalar((b) =>
+          b.map((x) =>
+            yangilar.some((y) => y.mahalliyId === x.mahalliyId)
+              ? { ...x, xato: "sessiya yaratilmadi" }
+              : x,
+          ),
+        )
+        return
+      }
+
+      // Fayllar BIRGA yuboriladi (bitta so'rov): server soni chegarasini
+      // birgalikda tekshirsin va tarmoq navbati kamaysin.
+      try {
+        const yozuvlar = await biriktirmaYukla(sid, fayllar)
+        setBiriktirmalar((b) =>
+          b.map((x) => {
+            const indeks = yangilar.findIndex((y) => y.mahalliyId === x.mahalliyId)
+            const yozuv = indeks >= 0 ? yozuvlar[indeks] : undefined
+            // Server nechta yuborilsa shunchasini qaytaradi va TARTIBI bir
+            // xil — shu bog'lanish shunga tayanadi
+            return yozuv ? { ...x, yozuv, nom: yozuv.aslNom } : x
+          }),
+        )
+      } catch (xato) {
+        const xabar =
+          xato instanceof ApiXatosi
+            ? xato.detail
+              ? `${xato.message} — ${xato.detail}`
+              : xato.message
+            : 'yuklanmadi'
+        setBiriktirmalar((b) =>
+          b.map((x) =>
+            yangilar.some((y) => y.mahalliyId === x.mahalliyId) ? { ...x, xato: xabar } : x,
+          ),
+        )
+      }
+    },
+    [sessiyaniTaminla, tanlangan, toast],
+  )
+
+  /**
+   * Chipni olib tashlaydi.
+   *
+   * Server yozuvi bo'lsa u ham o'chiriladi (fayl bilan birga). Yuklanmagan
+   * yoki xatoli chip esa faqat mahalliy — serverga so'rov ketmaydi.
+   */
+  const biriktirmaniOlibTashla = useCallback((chip: KiritishBiriktirmasi) => {
+    setBiriktirmalar((b) => b.filter((x) => x.mahalliyId !== chip.mahalliyId))
+    if (!chip.yozuv) return
+    // Natijani kutmaymiz: chip allaqachon yo'qoldi va yozuv qolib ketsa
+    // yetim tozalash uni 24 soatdan keyin oladi (`orchestrator.ts`).
+    void biriktirmaOchirSorov(chip.yozuv.id).catch(() => undefined)
+  }, [])
+
+  /**
+   * Clipboard'dan kelgan fayllarni ushlaydi (Ctrl+V).
+   *
+   * `document` DA EMAS, textarea'da: `document` darajasidagi tinglovchi butun
+   * sahifadan (Terminal, Skills, ModelTanlagich qidiruvi) rasmni ushlab,
+   * chatga biriktirib qo'yardi. Textarea aniq niyat bildiradi.
+   */
+  function paste(hodisa: React.ClipboardEvent<HTMLTextAreaElement>) {
+    // `kind !== 'file'` tekshiruvi SHART: oddiy matn nusxalanganda ham
+    // `items` bo'sh bo'lmaydi (string turlar keladi). Usiz matn paste'i
+    // ham to'sib qolinardi.
+    const fayllar: File[] = []
+    for (const element of hodisa.clipboardData.items) {
+      if (element.kind !== 'file') continue
+      const fayl = element.getAsFile()
+      if (fayl) fayllar.push(fayl)
+    }
+    // Fayl yo'q — brauzer matnni o'zi joylaydi, aralashmaymiz
+    if (fayllar.length === 0) return
+    hodisa.preventDefault()
+    void biriktir(fayllar)
+  }
 
   /**
    * Yangi loyiha yaratadi va ro'yxatga qo'shadi.
@@ -704,6 +942,19 @@ export default function Chat({
    */
   const toxtatilishiMumkin = (busy || serverdaIshlamoqda) && !toxtatilmoqda
 
+  /** Hech bo'lmasa bitta fayl hali yuklanmoqda */
+  const yuklanmoqda = biriktirmalar.some((b) => !b.yozuv && !b.xato)
+
+  /**
+   * Yuborish tugmasi ishlasinmi.
+   *
+   * Matn YOKI tayyor biriktirma bo'lishi kifoya (server ham shunday:
+   * `chat-yuborish.ts` biriktirma bo'lsa bo'sh matnni qabul qiladi).
+   * Yuklanish tugamaguncha esa to'siladi.
+   */
+  const yuborishMumkin =
+    !yuklanmoqda && (input.trim().length > 0 || biriktirmalar.some((b) => b.yozuv))
+
   /**
    * Oynani yangi suhbatga tayyorlaydi.
    *
@@ -727,6 +978,11 @@ export default function Chat({
     // kech kelsa foydalanuvchi endigina o'zgartirgan tanlovni bosib ketardi.
     tiklanganLoyiha.current = null
     kutilayotgan.current = null
+    // Biriktirmalar OLD sessiyaga tegishli — chiplar yangi chatda turishi
+    // yolg'on bo'lardi (ular hozirgina yaratilgan sessiyaga bog'lanmaydi).
+    // Yozuvlar serverda qoladi va yetim tozalash ularni oladi.
+    setBiriktirmalar([])
+    yaratilmoqda.current = null
     setBusy(false)
     setToxtatilmoqda(false)
   }
@@ -766,10 +1022,22 @@ export default function Chat({
         <div className="mx-auto max-w-3xl space-y-5">
           {msgs.map((m) =>
             m.role === 'user' ? (
-              <div key={m.id} className="rise-in flex justify-end">
-                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-panel2 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-                  {m.text}
-                </div>
+              <div key={m.id} className="rise-in flex flex-col items-end gap-1.5">
+                {/* Biriktirmalar matn USTIDA — foydalanuvchi ularni avval
+                    tanlagan, keyin yozgan. Chip o'chirish tugmasisiz:
+                    yuborilgan fayl suhbat tarixining qismi. */}
+                {m.biriktirmalar && m.biriktirmalar.length > 0 && (
+                  <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                    {m.biriktirmalar.map((b) => (
+                      <BiriktirmaChipi key={b.id} biriktirma={b} nom={b.aslNom} />
+                    ))}
+                  </div>
+                )}
+                {m.text && (
+                  <div className="max-w-[85%] rounded-2xl rounded-br-md bg-panel2 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+                    {m.text}
+                  </div>
+                )}
               </div>
             ) : (
               <div key={m.id} className="rise-in">
@@ -838,6 +1106,22 @@ export default function Chat({
             </div>
           )}
 
+          {/* Biriktirilgan fayllar — form USTIDA, kiritish maydonini
+              siqib qo'ymasin */}
+          {biriktirmalar.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {biriktirmalar.map((b) => (
+                <BiriktirmaChipi
+                  key={b.mahalliyId}
+                  biriktirma={b.yozuv}
+                  nom={b.nom}
+                  xato={b.xato}
+                  onOchir={() => biriktirmaniOlibTashla(b)}
+                />
+              ))}
+            </div>
+          )}
+
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -845,10 +1129,37 @@ export default function Chat({
             }}
             className="flex items-end gap-2 rounded-2xl border border-line bg-panel px-4 py-2 transition focus-within:border-lazur-dim"
           >
+            {/* Fayl tanlagich — yashirin, tugma uni ochadi. Biriktirish
+                KIRITISHNING qismi, shuning uchun form ichida; model/rejim/
+                loyiha esa sessiya sozlamalari va pastdagi kapsulada. */}
+            <input
+              ref={faylTanlagichRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const fayllar = [...(e.target.files ?? [])]
+                // Maydon tozalanadi: bir xil faylni ikkinchi marta tanlash
+                // ham `change` bersin (aks holda brauzer jim qoladi)
+                e.target.value = ''
+                void biriktir(fayllar)
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => faylTanlagichRef.current?.click()}
+              disabled={!tanlangan}
+              title="Fayl yoki rasm biriktirish (rasmni Ctrl+V bilan ham qo'yish mumkin)"
+              aria-label="Fayl biriktirish"
+              className="mb-1 shrink-0 text-base text-faint transition enabled:hover:text-lazur disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              📎
+            </button>
             <textarea
               ref={kiritishRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={paste}
               onKeyDown={(e) => {
                 // Enter yuboradi, Shift+Enter yangi qator. IME (masalan xitoycha
                 // klaviatura) hali so'zni tasdiqlamagan bo'lsa aralashmaymiz.
@@ -875,7 +1186,11 @@ export default function Chat({
             ) : (
               <button
                 type="submit"
-                disabled={!input.trim() || !tanlangan}
+                // Biriktirma bo'lsa matnsiz ham yuboriladi. Hali yuklanayotgan
+                // fayl bo'lsa esa to'siladi: aks holda foydalanuvchi "fayl
+                // biriktirdim" deb o'ylab, u yuborilmay qolardi.
+                disabled={!tanlangan || !yuborishMumkin}
+                title={yuklanmoqda ? 'Fayl yuklanmoqda…' : undefined}
                 className="mb-0.5 shrink-0 rounded-xl bg-lazur-dim px-4 py-1.5 text-sm font-semibold text-bg transition enabled:hover:brightness-110 disabled:opacity-40"
               >
                 Yuborish

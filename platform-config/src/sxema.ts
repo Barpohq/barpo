@@ -198,6 +198,27 @@ export const MAYDONLAR = [
     izoh: 'Bitta MCP tool chaqiruvi uchun eng uzun kutish.',
     eng: { kam: 1, kop: 300 },
   },
+
+  // --- Chatga biriktirilgan fayllar ---
+  //
+  // Rasm uchun ALOHIDA chegara yo'q: rasm ham oddiy fayl kabi diskda yotadi
+  // va LLM'ga base64 bo'lib uzatilmaydi — agent uni `read` bilan o'zi
+  // o'qiydi. Ya'ni katta rasm kontekstni to'g'ridan-to'g'ri bosmaydi;
+  // `agent.tarix.toolNatijasiChegarasi` esa uni o'qilgandan keyin tiyadi.
+  {
+    yol: 'chat.biriktirma.maksFaylMb',
+    tur: 'son',
+    standart: 20,
+    izoh: 'Chatga biriktiriladigan bitta faylning eng katta hajmi (MB).',
+    eng: { kam: 1, kop: 200 },
+  },
+  {
+    yol: 'chat.biriktirma.maksSoni',
+    tur: 'son',
+    standart: 10,
+    izoh: "Bitta xabarga biriktiriladigan eng ko'p fayl soni.",
+    eng: { kam: 1, kop: 50 },
+  },
 ] as const satisfies readonly MaydonTarifi[]
 
 // ---------------------------------------------------------------------------
@@ -246,6 +267,12 @@ export interface Config {
   mcp: {
     ulanishTimeoutSekund: number
     chaqiruvTimeoutSekund: number
+  }
+  chat: {
+    biriktirma: {
+      maksFaylMb: number
+      maksSoni: number
+    }
   }
 }
 
