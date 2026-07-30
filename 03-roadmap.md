@@ -170,7 +170,7 @@ Monitor diagnostikasi ~$0.0007/chaqiruv.
 ## Faza 7+ — Ochiq rivojlanish
 
 - Deploy skill'lar to'plami (Python/Django, Rust, Go, Docker...)
-- MCP server integratsiyalari
+- MCP: standart to'plamni to'ldirish (`mcp-serverlar/`), OAuth'li serverlar, `resources`/`prompts` (klient qatlami ✅ tayyor)
 - Hujjatlashtirish + README — boshqalar ham self-host qila olishi uchun
 - Jamiyatdan kelgan hissalar (agar kelsa — bonus, kelmasa ham loyiha men uchun ishlayapti)
 

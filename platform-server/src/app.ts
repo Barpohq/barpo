@@ -12,6 +12,7 @@ import { appsRoutes } from './routes/apps.ts'
 import { auditRoutes } from './routes/audit.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { healthRoutes } from './routes/health.ts'
+import { mcpRoutes } from './routes/mcp.ts'
 import { modelsRoutes } from './routes/models.ts'
 import { projectsRoutes } from './routes/projects.ts'
 import { serversRoutes } from './routes/servers.ts'
@@ -25,6 +26,7 @@ export function appYarat(): Hono {
   api.route('/', appsRoutes)
   api.route('/', serversRoutes)
   api.route('/', skillsRoutes)
+  api.route('/', mcpRoutes)
   api.route('/', auditRoutes)
   api.route('/', chatRoutes)
   api.route('/', modelsRoutes)

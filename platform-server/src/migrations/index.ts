@@ -33,5 +33,17 @@ import { migratsiya as m007 } from './007-serverlar-haqiqiy.ts'
 // 8-raqam ATAYLAB tashlab ketilgan — sababi `009-tool-chaqiruvlar.ts` da.
 import { migratsiya as m009 } from './009-tool-chaqiruvlar.ts'
 import { migratsiya as m010 } from './010-standart-manba.ts'
+import { migratsiya as m011 } from './011-mcp-serverlar.ts'
 
-export const migratsiyalar: Migratsiya[] = [m001, m002, m003, m004, m005, m006, m007, m009, m010]
+export const migratsiyalar: Migratsiya[] = [
+  m001,
+  m002,
+  m003,
+  m004,
+  m005,
+  m006,
+  m007,
+  m009,
+  m010,
+  m011,
+]

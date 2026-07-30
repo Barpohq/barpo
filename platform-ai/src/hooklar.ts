@@ -154,29 +154,57 @@ export async function keyinZanjiri(
  * fayllarni umuman o'qitmaslik.
  */
 export function maxfiyniYashirHooki(): ToolHooki {
+  return {
+    nom: 'maxfiyni-yashir',
+    keyin: ({ natija }) => {
+      const yangi = maxfiyniYashir(natija)
+      return yangi === natija ? undefined : { natija: yangi }
+    },
+  }
+}
+
+/**
+ * Matn ichidagi maxfiy ko'rinishdagi qiymatlarni almashtiradi.
+ *
+ * Hook'dan ALOHIDA eksport qilingan, chunki tool natijasidan boshqa joyda
+ * ham kerak: MCP tool chaqiruvida ARGUMENTLAR ruxsat so'roviga
+ * (`RuxsatSorovi.nishon`) tushadi va UI'da foydalanuvchiga ko'rinadi
+ * (`mcp-boshqaruvchi.ts`). U yerda ham bir xil naqshlar ishlashi kerak —
+ * ikki joyda ikki xil filtr bo'lsa, biri yangilanib ikkinchisi orqada
+ * qolardi.
+ *
+ * CHEKLOV yuqoridagi izohda: bu naqsh asosidagi filtr, kafolat emas.
+ */
+export function maxfiyniYashir(matn: string): string {
   // `KALIT=qiymat` va `"kalit": "qiymat"` shakllari. Kalit nomida
   // key/token/secret/password bo'lsa qiymat yashiriladi.
-  const naqshlar: RegExp[] = [
-    /\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_]*)\s*=\s*(\S+)/gi,
-    /(["']?[\w.-]*(?:key|token|secret|password|credential)[\w.-]*["']?\s*:\s*)(["'])([^"']{4,})\2/gi,
-    // Tanilgan kalit shakllari — nomidan qat'i nazar
+  //
+  // Naqshlar HAR CHAQIRUVDA qaytadan yaratiladi: `g` bayrog'i bilan RegExp
+  // `lastIndex` holatini saqlaydi va bir obyektni bir necha matnga qayta
+  // ishlatish natijani buzardi (hook bitta obyektni umr bo'yi ishlatardi,
+  // lekin `replace` har chaqiruvda `lastIndex` ni nolga tushiradi — bu
+  // funksiya endi tashqaridan ham chaqirilgani uchun bu xavfni umuman
+  // qoldirmaymiz).
+  const kalitQiymat = /\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_]*)\s*=\s*(\S+)/gi
+  const jsonKalit =
+    /(["']?[\w.-]*(?:key|token|secret|password|credential)[\w.-]*["']?\s*:\s*)(["'])([^"']{4,})\2/gi
+  // Tanilgan kalit shakllari — nomidan qat'i nazar
+  const tanilganlar: RegExp[] = [
     /\b(sk-[A-Za-z0-9_-]{16,})/g,
     /\b(ghp_[A-Za-z0-9]{20,})/g,
     /\b(xox[baprs]-[A-Za-z0-9-]{10,})/g,
   ]
 
-  return {
-    nom: 'maxfiyni-yashir',
-    keyin: ({ natija }) => {
-      let yangi = natija
-      yangi = yangi.replace(naqshlar[0]!, (_m, kalit: string) => `${kalit}=‹yashirildi›`)
-      yangi = yangi.replace(naqshlar[1]!, (_m, oldi: string, tirnoq: string) => `${oldi}${tirnoq}‹yashirildi›${tirnoq}`)
-      for (const naqsh of naqshlar.slice(2)) {
-        yangi = yangi.replace(naqsh, '‹yashirildi›')
-      }
-      return yangi === natija ? undefined : { natija: yangi }
-    },
+  let yangi = matn
+  yangi = yangi.replace(kalitQiymat, (_m, kalit: string) => `${kalit}=‹yashirildi›`)
+  yangi = yangi.replace(
+    jsonKalit,
+    (_m, oldi: string, tirnoq: string) => `${oldi}${tirnoq}‹yashirildi›${tirnoq}`,
+  )
+  for (const naqsh of tanilganlar) {
+    yangi = yangi.replace(naqsh, '‹yashirildi›')
   }
+  return yangi
 }
 
 /**

@@ -19,6 +19,7 @@ interface Props {
 const turBelgisi: Record<RuxsatSorovi['tur'], string> = {
   fayl: '📁',
   buyruq: '⌘',
+  mcp: '🔌',
 }
 
 /**

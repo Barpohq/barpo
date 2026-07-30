@@ -131,15 +131,24 @@ export interface TopilganFayl {
 }
 
 /**
- * Repo'dagi hamma `SKILL.md` yo'llarini topadi.
+ * Repo daraxtida naqshga mos fayllarni topadi.
+ *
+ * BITTA CHAQIRUVDA butun daraxt olinadi (`recursive=1`) va mahalliy
+ * filtrlanadi — rate limit (60/soat, autentifikatsiyasiz) sababli har papka
+ * uchun alohida so'rov yuborib bo'lmaydi.
  *
  * `truncated` bayrog'i: juda katta repo'da GitHub daraxtni kesib beradi.
  * Bunda topilganini qaytaramiz va chaqiruvchiga ogohlantirish beramiz —
  * bo'sh natijadan ko'ra qisman natija foydali.
+ *
+ * NAQSH PARAMETR: skilllar `SKILL.md` qidiradi, MCP marketi `server.json`.
+ * Ikkalasi uchun bir xil daraxt so'rovi va bir xil `truncated` mantig'i
+ * kerak, shuning uchun faqat filtr tashqariga chiqarilgan.
  */
-export async function skillFayllariniTop(
+export async function fayllarniTop(
   m: GithubManzil,
   ref: string,
+  naqsh: RegExp,
 ): Promise<{ fayllar: TopilganFayl[]; kesilgan: boolean }> {
   const javob = await soraw(
     `${API}/repos/${m.owner}/${m.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
@@ -152,12 +161,22 @@ export async function skillFayllariniTop(
   const fayllar: TopilganFayl[] = []
   for (const yozuv of malumot.tree ?? []) {
     if (yozuv.type !== 'blob' || !yozuv.path || !yozuv.sha) continue
-    // Faqat `SKILL.md` (katta-kichik harf farqsiz), papka ichida yoki ildizda
-    if (!/(^|\/)SKILL\.md$/i.test(yozuv.path)) continue
+    if (!naqsh.test(yozuv.path)) continue
     fayllar.push({ yol: yozuv.path, sha: yozuv.sha })
   }
 
   return { fayllar, kesilgan: malumot.truncated === true }
+}
+
+/** Papka ichida yoki ildizda joylashgan `SKILL.md` (katta-kichik harf farqsiz) */
+const SKILL_NAQSHI = /(^|\/)SKILL\.md$/i
+
+/** Repo'dagi hamma `SKILL.md` yo'llarini topadi */
+export async function skillFayllariniTop(
+  m: GithubManzil,
+  ref: string,
+): Promise<{ fayllar: TopilganFayl[]; kesilgan: boolean }> {
+  return fayllarniTop(m, ref, SKILL_NAQSHI)
 }
 
 /** Bitta blob mazmuni — katalog skanerlashda `SKILL.md` frontmatter'i uchun */

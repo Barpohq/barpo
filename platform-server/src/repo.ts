@@ -10,6 +10,14 @@ import type {
   BuildSessionStatus,
   ChatMessage,
   ChatSession,
+  McpKatalogManbaTuri,
+  McpKatalogYozuvi,
+  McpManba,
+  McpOrnatish,
+  McpQamrov,
+  McpServer,
+  McpSozlamaMaydoni,
+  McpTransportTuri,
   Project,
   Server,
   Skill,
@@ -347,6 +355,326 @@ export function skillOrnatishniOchir(
       )
       .run(skillId, qamrov, projectId).changes > 0
   )
+}
+
+// ---------------------------------------------------------------------------
+// MCP serverlar
+// ---------------------------------------------------------------------------
+//
+// Yuqoridagi skilllar bo'limi bilan AYNAN BIR XIL uch qatlamli naqsh
+// (manba → katalog → o'rnatish) va bir xil qoidalar:
+//   - `mcpManbaYarat` idempotent (takroriy ulash xato emas);
+//   - `mcpServerlarniSinxronla` UPSERT + diff, id o'zgarmaydi;
+//   - o'rnatish alohida jadvalda, `COALESCE` bilan global/loyiha solishtiriladi.
+//
+// FARQ: `McpOrnatish` da `id` va `sozlamaQiymatlari` bor. `id` kerak, chunki
+// maxfiy kredensiallar shu id bo'yicha alohida faylda saqlanadi
+// (`mcp-kredensial.ts`) — skilllarda saqlanadigan narsa yo'q edi.
+//
+// Batafsil model izohi: migrations/011-mcp-serverlar.ts.
+
+interface McpManbaQator {
+  id: string
+  tur: McpKatalogManbaTuri
+  manba_nomi: string
+  owner: string | null
+  repo: string | null
+  ref: string
+  oxirgi_sinxron: string | null
+  created_at: string
+}
+
+function mcpManbaQatordan(q: McpManbaQator): McpManba {
+  return {
+    id: q.id,
+    tur: q.tur,
+    manbaNomi: q.manba_nomi,
+    owner: q.owner,
+    repo: q.repo,
+    ref: q.ref,
+    oxirgiSinxron: q.oxirgi_sinxron,
+    createdAt: q.created_at,
+  }
+}
+
+export function mcpManbalarOqi(baza?: Database): McpManba[] {
+  const d = baza ?? globalDb()
+  return d
+    .query<McpManbaQator, []>('SELECT * FROM mcp_manbalari ORDER BY created_at')
+    .all()
+    .map(mcpManbaQatordan)
+}
+
+export function mcpManbaOqi(id: string, baza?: Database): McpManba | null {
+  const d = baza ?? globalDb()
+  const q = d.query<McpManbaQator, [string]>('SELECT * FROM mcp_manbalari WHERE id = ?').get(id)
+  return q ? mcpManbaQatordan(q) : null
+}
+
+/**
+ * Manbani yaratadi yoki mavjudini qaytaradi.
+ *
+ * `manbaYarat` (skilllar) bilan bir xil qoida: takroriy ulash XATO EMAS,
+ * chunki natija baribir foydalanuvchi kutgan holat. Faqat yagonalik kaliti
+ * boshqacha — bu yerda `(tur, manba_nomi, ref)`, chunki manba GitHub repo
+ * bo'lishi ham, registry yozuvi yoki qo'lda kiritilgan nom bo'lishi ham
+ * mumkin.
+ */
+export function mcpManbaYarat(
+  m: Omit<McpManba, 'id' | 'oxirgiSinxron' | 'createdAt'>,
+  baza?: Database,
+): McpManba {
+  const d = baza ?? globalDb()
+  const mavjud = d
+    .query<McpManbaQator, [string, string, string]>(
+      'SELECT * FROM mcp_manbalari WHERE tur = ? AND manba_nomi = ? AND ref = ?',
+    )
+    .get(m.tur, m.manbaNomi, m.ref)
+  if (mavjud) return mcpManbaQatordan(mavjud)
+
+  const id = crypto.randomUUID()
+  const hozir = new Date().toISOString()
+  d.prepare(
+    `INSERT INTO mcp_manbalari (id, tur, manba_nomi, owner, repo, ref, oxirgi_sinxron, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+  ).run(id, m.tur, m.manbaNomi, m.owner, m.repo, m.ref, hozir)
+
+  return { ...m, id, oxirgiSinxron: null, createdAt: hozir }
+}
+
+/** Manba, uning serverlari va o'rnatishlari (CASCADE) o'chadi */
+export function mcpManbaOchir(id: string, baza?: Database): boolean {
+  const d = baza ?? globalDb()
+  return d.prepare('DELETE FROM mcp_manbalari WHERE id = ?').run(id).changes > 0
+}
+
+interface McpServerQator {
+  id: string
+  manba_id: string
+  nom: string
+  tavsif: string
+  transport: McpTransportTuri
+  buyruq: string | null
+  argumentlar: string | null
+  url: string | null
+  sozlamalar: string
+}
+
+/**
+ * `mcp_serverlar` + `mcp_ornatish` ni birlashtiradi.
+ *
+ * `skilllarniYig` bilan bir xil sabab bo'yicha JOIN emas: JOIN bir serverni
+ * har o'rnatish uchun takrorlab yuborardi.
+ */
+function mcpServerlarniYig(qatorlar: McpServerQator[], d: Database): McpServer[] {
+  const ornatishlar = new Map<string, McpOrnatish[]>()
+  for (const o of d
+    .query<
+      {
+        id: string
+        server_id: string
+        qamrov: McpQamrov
+        project_id: string | null
+        sozlama_qiymatlari: string
+      },
+      []
+    >('SELECT id, server_id, qamrov, project_id, sozlama_qiymatlari FROM mcp_ornatish')
+    .all()) {
+    const royxat = ornatishlar.get(o.server_id) ?? []
+    royxat.push({
+      id: o.id,
+      qamrov: o.qamrov,
+      projectId: o.project_id ?? undefined,
+      sozlamaQiymatlari: JSON.parse(o.sozlama_qiymatlari) as Record<string, string>,
+    })
+    ornatishlar.set(o.server_id, royxat)
+  }
+
+  return qatorlar.map((q) => ({
+    id: q.id,
+    manbaId: q.manba_id,
+    nom: q.nom,
+    tavsif: q.tavsif,
+    transport: q.transport,
+    buyruq: q.buyruq ?? undefined,
+    argumentlar: q.argumentlar ? (JSON.parse(q.argumentlar) as string[]) : undefined,
+    url: q.url ?? undefined,
+    sozlamalar: JSON.parse(q.sozlamalar) as McpSozlamaMaydoni[],
+    // Katalog yozuvi manbadan keladi va o'z `created_at` ustuni yo'q —
+    // sinxronlashda u qayta yozilishi mumkin, ya'ni "qachon paydo bo'lgani"
+    // manba darajasida ma'noli. UI'da ham manba sanasi ko'rsatiladi.
+    createdAt: '',
+    ornatilgan: ornatishlar.get(q.id) ?? [],
+  }))
+}
+
+/** Butun katalog — o'rnatilgani ham, o'rnatilmagani ham */
+export function mcpServerlarOqi(baza?: Database): McpServer[] {
+  const d = baza ?? globalDb()
+  const qatorlar = d.query<McpServerQator, []>('SELECT * FROM mcp_serverlar ORDER BY nom').all()
+  return mcpServerlarniYig(qatorlar, d)
+}
+
+export function mcpServerOqi(id: string, baza?: Database): McpServer | null {
+  const d = baza ?? globalDb()
+  const q = d.query<McpServerQator, [string]>('SELECT * FROM mcp_serverlar WHERE id = ?').get(id)
+  return q ? (mcpServerlarniYig([q], d)[0] ?? null) : null
+}
+
+/**
+ * Loyihada FAOL MCP serverlar: global o'rnatilganlar + shu loyihaga
+ * o'rnatilganlar. `faolSkilllar` bilan bir xil so'rov.
+ *
+ * Sessiya boshida shu ro'yxatga qarab ulanish amalga oshiriladi
+ * (`orchestrator.ts` → `agentOqimi` → `McpBoshqaruvchi`).
+ */
+export function faolMcpServerlar(projectId: string | null, baza?: Database): McpServer[] {
+  const d = baza ?? globalDb()
+  const qatorlar = d
+    .query<McpServerQator, [string | null]>(
+      `SELECT DISTINCT s.* FROM mcp_serverlar s
+         JOIN mcp_ornatish o ON o.server_id = s.id
+        WHERE o.qamrov = 'global' OR o.project_id = ?
+        ORDER BY s.nom`,
+    )
+    .all(projectId)
+  return mcpServerlarniYig(qatorlar, d)
+}
+
+/**
+ * Skanerlash natijasini bazaga yozadi: topilganlar UPSERT, yo'qolganlar
+ * o'chiriladi.
+ *
+ * `skilllarniSinxronla` bilan bir xil sabab bo'yicha UPSERT: server `id` si
+ * saqlansa, unga bog'langan o'rnatishlar VA kredensiallar (ular o'rnatish
+ * id'siga bog'langan) joyida qoladi. INSERT bo'lsa foydalanuvchi har
+ * sinxrondan keyin tokenni qaytadan kiritishga majbur bo'lardi.
+ */
+export function mcpServerlarniSinxronla(
+  manbaId: string,
+  topilgan: Omit<McpKatalogYozuvi, 'id' | 'manbaId' | 'createdAt'>[],
+  baza?: Database,
+): { qoshildi: number; yangilandi: number; ochirildi: number } {
+  const d = baza ?? globalDb()
+  const natija = { qoshildi: 0, yangilandi: 0, ochirildi: 0 }
+
+  d.transaction(() => {
+    const eskiNomlar = new Set(
+      d
+        .query<{ nom: string }, [string]>('SELECT nom FROM mcp_serverlar WHERE manba_id = ?')
+        .all(manbaId)
+        .map((q) => q.nom),
+    )
+
+    const st = d.prepare(
+      `INSERT INTO mcp_serverlar (id, manba_id, nom, tavsif, transport, buyruq, argumentlar, url, sozlamalar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (manba_id, nom) DO UPDATE SET
+            tavsif = excluded.tavsif,
+            transport = excluded.transport,
+            buyruq = excluded.buyruq,
+            argumentlar = excluded.argumentlar,
+            url = excluded.url,
+            sozlamalar = excluded.sozlamalar`,
+    )
+
+    for (const s of topilgan) {
+      st.run(
+        crypto.randomUUID(),
+        manbaId,
+        s.nom,
+        s.tavsif,
+        s.transport,
+        s.buyruq ?? null,
+        s.argumentlar ? JSON.stringify(s.argumentlar) : null,
+        s.url ?? null,
+        JSON.stringify(s.sozlamalar),
+      )
+      if (eskiNomlar.delete(s.nom)) natija.yangilandi++
+      else natija.qoshildi++
+    }
+
+    // Manbadan yo'qolgan serverlar — CASCADE o'rnatishlarni ham tozalaydi
+    const ochir = d.prepare('DELETE FROM mcp_serverlar WHERE manba_id = ? AND nom = ?')
+    for (const nom of eskiNomlar) {
+      ochir.run(manbaId, nom)
+      natija.ochirildi++
+    }
+
+    d.prepare('UPDATE mcp_manbalari SET oxirgi_sinxron = ? WHERE id = ?').run(
+      new Date().toISOString(),
+      manbaId,
+    )
+  })()
+
+  return natija
+}
+
+/**
+ * Serverni o'rnatadi va o'rnatish id'sini qaytaradi.
+ *
+ * ID QAYTARILADI (skilllardan farqli): maxfiy kredensiallar shu id bo'yicha
+ * saqlanadi, ya'ni chaqiruvchiga u kerak.
+ *
+ * Idempotent: allaqachon o'rnatilgan bo'lsa sozlama qiymatlari YANGILANADI
+ * va mavjud id qaytariladi. Sabab — foydalanuvchi uchun "o'rnatish" tugmasi
+ * ikkinchi marta bosilganda sozlamani tahrirlash ma'nosini beradi; yangi
+ * qator yaratsak eski kredensial yetim qolardi.
+ */
+export function mcpServerOrnat(
+  serverId: string,
+  qamrov: McpQamrov,
+  projectId: string | null,
+  sozlamaQiymatlari: Record<string, string>,
+  baza?: Database,
+): string {
+  const d = baza ?? globalDb()
+  const qiymatlar = JSON.stringify(sozlamaQiymatlari)
+
+  const mavjud = d
+    .query<{ id: string }, [string, McpQamrov, string | null]>(
+      `SELECT id FROM mcp_ornatish
+        WHERE server_id = ? AND qamrov = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
+    )
+    .get(serverId, qamrov, projectId)
+
+  if (mavjud) {
+    d.prepare('UPDATE mcp_ornatish SET sozlama_qiymatlari = ? WHERE id = ?').run(
+      qiymatlar,
+      mavjud.id,
+    )
+    return mavjud.id
+  }
+
+  const id = crypto.randomUUID()
+  d.prepare(
+    `INSERT INTO mcp_ornatish (id, server_id, qamrov, project_id, sozlama_qiymatlari, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, serverId, qamrov, projectId, qiymatlar, new Date().toISOString())
+  return id
+}
+
+/**
+ * O'rnatishni bekor qiladi. O'chirilgan qatorning id'sini qaytaradi (yoki
+ * null) — chaqiruvchi shu id bo'yicha kredensialni ham tozalaydi.
+ */
+export function mcpServerOrnatishniOchir(
+  serverId: string,
+  qamrov: McpQamrov,
+  projectId: string | null,
+  baza?: Database,
+): string | null {
+  const d = baza ?? globalDb()
+  const mavjud = d
+    .query<{ id: string }, [string, McpQamrov, string | null]>(
+      `SELECT id FROM mcp_ornatish
+        WHERE server_id = ? AND qamrov = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
+    )
+    .get(serverId, qamrov, projectId)
+  if (!mavjud) return null
+
+  d.prepare('DELETE FROM mcp_ornatish WHERE id = ?').run(mavjud.id)
+  return mavjud.id
 }
 
 // ---------------------------------------------------------------------------

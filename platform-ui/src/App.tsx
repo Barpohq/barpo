@@ -11,13 +11,22 @@ import type { Project } from '@platforma/shared'
 import Agents from './pages/Agents'
 import Chat from './pages/Chat'
 import Servers from './pages/Servers'
+import Mcp from './pages/Mcp'
 import Skills from './pages/Skills'
 import Suhbatlar from './pages/Suhbatlar'
 import Audit from './pages/Audit'
 import Terminal from './pages/Terminal'
 import AppView from './pages/AppView'
 
-type StaticPage = 'chat' | 'suhbatlar' | 'agents' | 'servers' | 'skills' | 'audit' | 'terminal'
+type StaticPage =
+  | 'chat'
+  | 'suhbatlar'
+  | 'agents'
+  | 'servers'
+  | 'skills'
+  | 'mcp'
+  | 'audit'
+  | 'terminal'
 type Page = StaticPage | `app:${string}`
 
 // Menyu ataylab qisqa: platforma oddiy PC'da ham ishlaydi, server bo'lsa
@@ -29,6 +38,7 @@ const nav: { id: StaticPage; label: string; icon: ReactNode }[] = [
   { id: 'agents', label: 'Agentlar', icon: <path d="M10 3a3 3 0 0 1 3 3v1h1a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1V6a3 3 0 0 1 3-3Zm-2 8h.01M12 11h.01" /> },
   { id: 'servers', label: 'Serverlar', icon: <path d="M3 4h14v4H3V4Zm0 8h14v4H3v-4Zm2-6h.01M5 14h.01" /> },
   { id: 'skills', label: "Skill do'koni", icon: <path d="M10 2 3 6v8l7 4 7-4V6l-7-4Zm0 4v12M3 6l7 4 7-4" /> },
+  { id: 'mcp', label: 'MCP serverlar', icon: <path d="M7 4v5m6-5v5M4.5 9h11l-1.5 7h-8L4.5 9Z" /> },
   { id: 'audit', label: 'Audit log', icon: <path d="M5 3h10a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2 4h6M7 10h6m-6 3h4" /> },
   { id: 'terminal', label: 'Terminal', icon: <path d="M3 4h14v12H3V4Zm3 3 3 3-3 3m5 0h4" /> },
 ]
@@ -39,6 +49,7 @@ const staticPages: StaticPage[] = [
   'agents',
   'servers',
   'skills',
+  'mcp',
   'audit',
   'terminal',
 ]
@@ -394,6 +405,7 @@ export default function App() {
           {pro && page === 'agents' && <Agents />}
           {pro && page === 'servers' && <Servers />}
           {pro && page === 'skills' && <Skills />}
+          {pro && page === 'mcp' && <Mcp />}
           {pro && page === 'audit' && <Audit />}
           {pro && page === 'terminal' && <Terminal />}
           {pro && page.startsWith('app:') && activeApp && <AppView app={activeApp} />}

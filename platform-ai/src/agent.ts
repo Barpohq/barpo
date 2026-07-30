@@ -55,6 +55,8 @@ import {
   dashboardToollariXom,
   type DashboardManbasi,
 } from './dashboard-toollari.ts'
+import { McpBoshqaruvchi, type McpUlanadiganServer } from './mcp-boshqaruvchi.ts'
+import { MCP_PROMPT_QISMI, mcpTooliMi, mcpToollariXom } from './mcp-toollari.ts'
 import type { RuxsatBoshqaruvchi } from './ruxsat.ts'
 import type { Sarflov, SuhbatXabari } from './suhbat.ts'
 
@@ -95,6 +97,15 @@ export type AgentHodisasi =
     }
   | { tur: 'xato'; xabar: string }
 
+/**
+ * Sessiya uchun ulanadigan MCP serverlar ro'yxati.
+ *
+ * HAR OQIM BOSHIDA yangi o'qiladi, keshlanmaydi: foydalanuvchi suhbat
+ * davomida server o'rnatishi yoki olib tashlashi mumkin (`ServerManbasi`
+ * bilan bir xil sabab).
+ */
+export type McpManbasi = () => McpUlanadiganServer[] | Promise<McpUlanadiganServer[]>
+
 export interface AgentSozlamalari {
   sessionId: string
   /** Tool'lar ishlaydigan papka */
@@ -130,6 +141,18 @@ export interface AgentSozlamalari {
    * da, bu paket unga bog'liq emas.
    */
   dashboardManbasi?: DashboardManbasi
+  /**
+   * Sessiyada ulanishi kerak bo'lgan MCP serverlar ro'yxatini beradigan manba.
+   *
+   * `serverManbasi`/`dashboardManbasi` bilan bir xil inversiya: serverlar
+   * bazasi `platform-server` da, bu paket unga bog'liq emas.
+   *
+   * Berilmasa YOKI bo'sh ro'yxat qaytarsa — MCP qatlami umuman ishga
+   * tushmaydi: boshqaruvchi yaratilmaydi, tool e'lon qilinmaydi va prompt
+   * MCP haqida bir og'iz so'z aytmaydi. Ya'ni "MCP yoqilgan/o'chirilgan"
+   * degan alohida config bayrog'i KERAK EMAS — o'rnatishning o'zi nazorat.
+   */
+  mcpManbasi?: McpManbasi
   /** Har tool chaqiruvidan oldin — audit uchun. Bloklamaydi. */
   toolKuzatuvchi?: (nom: string, args: unknown) => void
   /** Qo'shimcha hook'lar — config'dagilarga qo'shiladi */
@@ -255,6 +278,7 @@ export const AGENT_SISTEM_PROMPT = (
   xotira?: string,
   serverlarBor = false,
   dashboardBor = false,
+  mcpBor = false,
 ) =>
   [
     'You are the AI assistant of this platform. You work on the user\'s project:',
@@ -334,9 +358,11 @@ export const AGENT_SISTEM_PROMPT = (
     '- bash: run a command',
     ...(serverlarBor ? SERVER_PROMPT_QISMI.royxat : []),
     ...(dashboardBor ? DASHBOARD_PROMPT_QISMI.royxat : []),
+    ...(mcpBor ? MCP_PROMPT_QISMI.royxat : []),
     '',
     ...(serverlarBor ? [...SERVER_PROMPT_QISMI.qoida, ''] : []),
     ...(dashboardBor ? [...DASHBOARD_PROMPT_QISMI.qoida, ''] : []),
+    ...(mcpBor ? [...MCP_PROMPT_QISMI.qoida, ''] : []),
     'To find files use `grep`/`find`/`ls`, NOT `bash` — they are faster and ask',
     'for no permission. Reach for `bash` only when nothing else will do. Those',
     'three tools work only inside the working directory and by default skip',
@@ -426,12 +452,23 @@ export async function* agentOqimi(
     sozlama.ruxsat.klassifikatorniUla(undefined)
   }
 
+  // MCP boshqaruvchisi `bajarish` ichida yaratiladi, lekin `tozala()` unga
+  // yeta olishi kerak: oqim bekor qilinganda ham jarayonlar yopilishi shart.
+  // Shu sabab tashqarida e'lon qilinadi.
+  let mcpBoshqaruvchi: McpBoshqaruvchi | undefined
+
   const tozala = () => {
     ruxsatBekor()
     qarorBekor()
     ruxsatQaroriBekor()
     rejimBekor?.()
     sozlama.ruxsat.klassifikatorniUla(undefined)
+    // ZOMBI JARAYON QOLDIRMASLIK. `tozala()` sinxron (uni `finally` bloklari
+    // chaqiradi), MCP yopish esa async — natijani KUTMAYMIZ, faqat ishga
+    // tushiramiz. Xato yutiladi: tozalash har qanday holatda oxirigacha
+    // borishi kerak va MCP yopilmagani sessiyani yiqitmasligi lozim.
+    mcpBoshqaruvchi?.yop().catch(() => undefined)
+    mcpBoshqaruvchi = undefined
   }
 
   const bajarish = (async () => {
@@ -452,6 +489,37 @@ export async function* agentOqimi(
         buyruqTimeoutMs: sozlamalar.agent.toollar.bashTimeoutSekund * 1000,
       })
       const toolKonteksti = { env: muhit }
+
+      // --- MCP serverlar: sessiyaga o'rnatilganlarga ulanish ---
+      //
+      // AYNI `sozlama.ruxsat` INSTANSIYASI beriladi (yangisi yaratilmaydi):
+      // shunda "har doim ruxsat" naqshlari, blok hisoblagichlari va
+      // klassifikator konteksti fayl/buyruq so'rovlari bilan BIR XIL
+      // holatni baham ko'radi. Foydalanuvchi uchun ruxsat tizimi yagona.
+      //
+      // XATO TASHLAMAYDI: ulanolmagan server `ulanishXatolari` da qoladi va
+      // sessiya USIZ davom etadi (`mcp-boshqaruvchi.ts` izohiga q.).
+      if (sozlama.mcpManbasi) {
+        const serverlar = await sozlama.mcpManbasi()
+        if (serverlar.length > 0) {
+          mcpBoshqaruvchi = new McpBoshqaruvchi(sozlama.sessionId, sozlama.ruxsat)
+          // Timeoutlar CONFIGDAN qo'llanadi. Manba (`platform-server`) ularni
+          // bilmaydi — u faqat "qaysi serverga ulanish kerak" ni aytadi,
+          // "qancha kutish" esa platforma sozlamasi. Manba o'zi bergan
+          // qiymat bo'lsa u ustun turadi (test va maxsus holatlar uchun).
+          await mcpBoshqaruvchi.ulash(
+            serverlar.map((s) => ({
+              ...s,
+              sozlama: {
+                handshakeTimeoutMs: sozlamalar.mcp.ulanishTimeoutSekund * 1000,
+                chaqiruvTimeoutMs: sozlamalar.mcp.chaqiruvTimeoutSekund * 1000,
+                ...s.sozlama,
+              },
+            })),
+            sozlama.signal,
+          )
+        }
+      }
 
       // --- Kontekstni tayyorlash: tool natijalari bilan, siqilgan holda ---
       const oxirgiUser = oxirgiUserIndeksi(xabarlar)
@@ -539,9 +607,14 @@ export async function* agentOqimi(
         sozlamalar.agent.toollar.yoqilgan,
         sozlama.serverManbasi,
         sozlama.dashboardManbasi,
+        mcpBoshqaruvchi,
       )
       const serverlarBor = toollar.some((t) => t.name === 'serverList')
       const dashboardBor = toollar.some((t) => t.name === 'appPublish')
+      // MCP tool'lari dinamik — nomlarini oldindan bilmaymiz, shuning uchun
+      // prefiks bo'yicha tekshiramiz. Bittasi ham bo'lmasa prompt MCP'ni
+      // tilga OLMAYDI.
+      const mcpBor = toollar.some((t) => mcpTooliMi(t.name))
 
       const agent = new Agent({
         initialState: {
@@ -552,6 +625,7 @@ export async function* agentOqimi(
             xotira,
             serverlarBor,
             dashboardBor,
+            mcpBor,
           ),
           model,
           tools: toollar,
@@ -714,6 +788,7 @@ function toollarniTayyorla(
   yoqilgan: readonly string[],
   serverManbasi?: ServerManbasi,
   dashboardManbasi?: DashboardManbasi,
+  mcpBoshqaruvchi?: McpBoshqaruvchi,
 ): AgentTool<never>[] {
   // pi'ning tayyor tool'lari + o'zimizning qidiruv va server tool'lari.
   // Hammasi kontekstni oxirgi argument sifatida oladi, shuning uchun
@@ -735,7 +810,13 @@ function toollarniTayyorla(
   const ruxsatEtilgan = new Set(yoqilgan)
   const asosiy = barchasi.filter((tool) => ruxsatEtilgan.has(tool.name))
 
-  return asosiy.map((tool) => ({
+  // MCP tool'lari YUQORIDAGI FILTRDAN O'TMAYDI — ular statik ro'yxatda yo'q
+  // va nomlari sessiyada aniqlanadi (`mcp-toollari.ts` izohiga q.).
+  // Nazorat o'rnatishda: server o'rnatilmagan bo'lsa boshqaruvchi umuman
+  // yaratilmaydi va bu ro'yxat bo'sh bo'ladi.
+  const hammasi = [...asosiy, ...mcpToollariXom(mcpBoshqaruvchi)]
+
+  return hammasi.map((tool) => ({
     ...tool,
     execute: (toolCallId: string, params: never, signal?: AbortSignal, onUpdate?: never) =>
       // pi-agent-core ning AgentHarnessTool'i kontekstni oxirgi argument

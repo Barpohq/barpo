@@ -3,10 +3,17 @@
 // Nega bitta port? UI dev serveri (vite) `/api` va `/ws` ni bitta manzilga
 // proxy qiladi, prodda ham bitta jarayon — CORS va ikkita port muammosi yo'q.
 
+import { hammaMcpJarayoniniOldir, tirikJarayonlarSoni } from '@platforma/ai'
 import { app } from './app.ts'
 import { auditYoz } from './audit.ts'
 import { db } from './db.ts'
-import { manbaYarat, skilllarniSinxronla } from './repo.ts'
+import { standartMcpManbaniTaminla } from './mcp-standart.ts'
+import {
+  manbaYarat,
+  mcpManbaYarat,
+  mcpServerlarniSinxronla,
+  skilllarniSinxronla,
+} from './repo.ts'
 import { standartManbaniTaminla } from './standart-skilllar.ts'
 import { chatSendHandleri } from './ws/chat-handler.ts'
 import { seedQol } from './seed.ts'
@@ -34,6 +41,20 @@ const standart = standartManbaniTaminla(
 )
 if (standart) {
   console.log(`[skill] standart skilllar katalogda: ${standart.soni} ta`)
+}
+
+// 1c) Platforma bilan birga kelgan standart MCP serverlar — katalogga.
+//
+// Skilllar bilan bir xil qoida (idempotent, har ishga tushishda). Hozircha
+// `mcp-serverlar/` papkasi bo'sh, ya'ni bu `null` qaytaradi va katalogda
+// hech narsa paydo bo'lmaydi — infratuzilma birinchi `server.json`
+// qo'shilishini kutadi (`mcp-standart.ts` izohiga q.).
+const standartMcp = standartMcpManbaniTaminla(
+  (m) => mcpManbaYarat(m, baza),
+  (manbaId, topilgan) => mcpServerlarniSinxronla(manbaId, topilgan, baza),
+)
+if (standartMcp) {
+  console.log(`[mcp] standart serverlar katalogda: ${standartMcp.soni} ta`)
 }
 
 // 2) WS orqali kelgan chat.send eventlarini orchestratorga ulaymiz.
@@ -82,6 +103,14 @@ auditYoz('platforma', 'Server ishga tushdi', `port ${server.port}`, "o'qish", 'O
 function toxtat(signal: string) {
   console.log(`\n[platforma] ${signal} — to'xtatilmoqda...`)
   server.stop()
+  // MCP jarayonlari — OXIRGI HIMOYA QATLAMI. `process.exit()` bola
+  // jarayonlarni o'ldirmaydi: ular yetim qolib fonda ishlab turardi
+  // (`mcp-transport.ts` dagi reestr izohiga q.).
+  const mcpSoni = tirikJarayonlarSoni()
+  if (mcpSoni > 0) {
+    console.log(`[mcp] ${mcpSoni} ta jarayon to'xtatilmoqda`)
+    hammaMcpJarayoniniOldir()
+  }
   baza.close()
   process.exit(0)
 }

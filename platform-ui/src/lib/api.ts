@@ -12,6 +12,11 @@ import type {
   AppManifest,
   ChatMessage,
   ChatSession,
+  McpManba,
+  McpQamrov,
+  McpServer,
+  McpSozlamaMaydoni,
+  McpTransportTuri,
   ModelInfo,
   Project,
   ProviderInfo,
@@ -353,6 +358,132 @@ export async function skillOrnatishniBekor(
     body: JSON.stringify({ qamrov, projectIds }),
   })
   return javob.skill
+}
+
+// ---------------------------------------------------------------------------
+// MCP serverlar
+// ---------------------------------------------------------------------------
+//
+// Skilllar bo'limi bilan bir xil shakl. IKKI FARQ:
+//   - registry qidiruvi ALOHIDA bosqich (natija saqlanmaydi);
+//   - `sozlamaQiymatlari` yuboriladi, lekin MAXFIY qiymatlar javobda
+//     HECH QACHON qaytmaydi (server ularni umuman o'qimaydi).
+
+export interface McpKatalogi {
+  serverlar: McpServer[]
+  manbalar: McpManba[]
+}
+
+export function mcpServerlarniOl(): Promise<McpKatalogi> {
+  return sorov<McpKatalogi>('/api/mcp')
+}
+
+/** Registry qidiruv natijasi — hali katalogga tushmagan yozuv */
+export interface McpRegistryNatija {
+  nom: string
+  tavsif: string
+  transport: McpTransportTuri
+  versiya: string | null
+  sozlamalar: McpSozlamaMaydoni[]
+}
+
+/** Rasmiy registry'da qidiradi. HECH NARSA SAQLAMAYDI. */
+export async function mcpRegistryQidir(soz: string): Promise<McpRegistryNatija[]> {
+  const javob = await sorov<{ natijalar: McpRegistryNatija[] }>(
+    `/api/mcp/registry/qidir?q=${encodeURIComponent(soz)}`,
+  )
+  return javob.natijalar
+}
+
+export interface McpManbaNatija {
+  manba: McpManba
+  qoshildi: number
+  yangilandi: number
+  ochirildi: number
+  ogohlantirishlar?: string[]
+}
+
+/** Registry'dan tanlangan serverni katalogga qo'shadi */
+export function mcpRegistryQosh(nom: string): Promise<McpManbaNatija> {
+  return sorov<McpManbaNatija>('/api/mcp/manba/registry', {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ nom }),
+  })
+}
+
+/** GitHub repo'dan `server.json` fayllarini skanerlaydi */
+export function mcpGithubUlash(url: string): Promise<McpManbaNatija> {
+  return sorov<McpManbaNatija>('/api/mcp/manba/github', {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ url }),
+  })
+}
+
+export interface McpQoldaKirish {
+  nom: string
+  tavsif?: string
+  transport: McpTransportTuri
+  /** stdio uchun */
+  buyruq?: string
+  argumentlar?: string[]
+  /** http uchun */
+  url?: string
+  sozlamalar?: McpSozlamaMaydoni[]
+}
+
+/** Qo'lda server qo'shish — buyruq yoki URL foydalanuvchidan */
+export function mcpQoldaQosh(kirish: McpQoldaKirish): Promise<McpManbaNatija> {
+  return sorov<McpManbaNatija>('/api/mcp/manba/qolda', {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify(kirish),
+  })
+}
+
+export function mcpManbaSinxronla(id: string): Promise<Omit<McpManbaNatija, 'manba'>> {
+  return sorov<Omit<McpManbaNatija, 'manba'>>(`/api/mcp/manba/${id}/sinxron`, {
+    method: 'POST',
+  })
+}
+
+export function mcpManbaOchir(id: string): Promise<{ ok: boolean }> {
+  return sorov<{ ok: boolean }>(`/api/mcp/manba/${id}`, { method: 'DELETE' })
+}
+
+/**
+ * Serverni o'rnatadi.
+ *
+ * `sozlamaQiymatlari` — maydon nomi → qiymat. Maxfiy maydonlar alohida
+ * faylga tushadi (bazaga emas). BO'SH qiymat "o'zgartirmadim" degani:
+ * saqlangan token o'rnida qoladi.
+ */
+export async function mcpOrnat(
+  id: string,
+  qamrov: McpQamrov,
+  sozlamaQiymatlari: Record<string, string>,
+  projectIds?: string[],
+): Promise<McpServer> {
+  const javob = await sorov<{ server: McpServer }>(`/api/mcp/${id}/ornat`, {
+    method: 'POST',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ qamrov, projectIds, sozlamaQiymatlari }),
+  })
+  return javob.server
+}
+
+export async function mcpOrnatishniBekor(
+  id: string,
+  qamrov: McpQamrov,
+  projectIds?: string[],
+): Promise<McpServer | null> {
+  const javob = await sorov<{ server: McpServer | null }>(`/api/mcp/${id}/ornat`, {
+    method: 'DELETE',
+    headers: jsonSarlavha,
+    body: JSON.stringify({ qamrov, projectIds }),
+  })
+  return javob.server
 }
 
 // ---------------------------------------------------------------------------

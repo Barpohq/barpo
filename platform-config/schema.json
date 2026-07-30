@@ -175,6 +175,26 @@
         }
       },
       "additionalProperties": false
+    },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "ulanishTimeoutSekund": {
+          "description": "MCP serverga ulanish (handshake) uchun eng uzun kutish. Server javob bermasa sessiya davom etadi — faqat o'sha server ishlamaydi.",
+          "default": 10,
+          "type": "number",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "chaqiruvTimeoutSekund": {
+          "description": "Bitta MCP tool chaqiruvi uchun eng uzun kutish.",
+          "default": 30,
+          "type": "number",
+          "minimum": 1,
+          "maximum": 300
+        }
+      },
+      "additionalProperties": false
     }
   },
   "type": "object",

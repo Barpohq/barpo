@@ -57,6 +57,7 @@ export {
   oxirgiUserIndeksi,
   type AgentHodisasi,
   type AgentSozlamalari,
+  type McpManbasi,
 } from './agent.ts'
 
 export {
@@ -134,6 +135,7 @@ export {
 export {
   keyinZanjiri,
   kuzatuvHooki,
+  maxfiyniYashir,
   maxfiyniYashirHooki,
   oldinZanjiri,
   qoshimchaTaqiqHooki,
@@ -275,3 +277,66 @@ export {
   type ServerTafsiloti,
   type ServerYozuvi,
 } from './server-toollari.ts'
+
+// --- MCP (Model Context Protocol) klienti ---
+//
+// Server bu qatlamdan `McpKlient` ni TO'G'RIDAN-TO'G'RI ishlatmaydi — u
+// `agentOqimi()` ga `mcpManbasi` funksiyasini beradi, qolganini shu paket
+// hal qiladi (`serverManbasi`/`dashboardManbasi` bilan bir xil inversiya).
+// Eksportlar testlar va diagnostika uchun ochiq.
+
+export {
+  javobmi,
+  MCP_PROTOKOL_VERSIYASI,
+  natijaniAjrat,
+  toollarniAjrat,
+  type JsonRpcJavob,
+  type JsonRpcKelgan,
+  type JsonRpcSorov,
+  type JsonRpcXabarnoma,
+  type JsonRpcXato,
+  type McpServerMalumoti,
+  type McpToolNatijasi,
+  type McpToolTarifi,
+} from './mcp-protokol.ts'
+
+export {
+  envniTozala,
+  hammaMcpJarayoniniOldir,
+  HTTP_TIMEOUT_MS,
+  httpTransportYarat,
+  jarayonYaratuvchiniOrnat,
+  OLDIRISH_KUTISH_MS,
+  sseXabarlariniAjrat,
+  stdioTransportYarat,
+  tirikJarayonlarSoni,
+  type JarayonYaratuvchi,
+  type McpJarayon,
+  type McpTransport,
+} from './mcp-transport.ts'
+
+export {
+  MCP_CHAQIRUV_TIMEOUT_MS,
+  MCP_HANDSHAKE_TIMEOUT_MS,
+  McpKlient,
+  type McpUlanishSozlamalari,
+} from './mcp-klient.ts'
+
+export {
+  argumentlarniNishonga,
+  McpBoshqaruvchi,
+  mcpNaqshi,
+  type McpRoyxatYozuvi,
+  type McpUlanadiganServer,
+} from './mcp-boshqaruvchi.ts'
+
+export {
+  MCP_PROMPT_QISMI,
+  MCP_TOOL_PREFIKSI,
+  mcpTooliMi,
+  mcpToollari,
+  mcpToollariXom,
+  mcpToolNomi,
+  xavfsizToolNomi,
+  type McpToolTafsiloti,
+} from './mcp-toollari.ts'

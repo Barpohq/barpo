@@ -179,6 +179,144 @@ export interface Skill {
 }
 
 // ---------------------------------------------------------------------------
+// MCP (Model Context Protocol) serverlar
+// ---------------------------------------------------------------------------
+//
+// Model skilllar bilan AYNAN BIR XIL uch qatlamli (yuqoridagi izohga q.):
+//
+//   MANBA   — katalog qayerdan kelgan (registry, GitHub repo, qo'lda, standart).
+//   SERVER  — katalogdagi bitta MCP server yozuvi. "Mavjud" degani, ulangan
+//             degani EMAS.
+//   O'RNATISH — server qayerda faol: global yoki aniq loyihalarda.
+//
+// SKILLLARDAN TUB FARQI — bu yerda DISK EMAS, JARAYON.
+//
+// Skill o'rnatilganda fayl ko'chiriladi va shu bilan tugaydi; agent uni
+// `read` bilan o'qiydi. MCP server o'rnatilganda esa hech narsa ko'chmaydi:
+// u har sessiya boshida JARAYON sifatida ishga tushadi (stdio) yoki
+// masofaviy manzilga ulanadi (http), va agentga YANGI TOOL'LAR beradi.
+//
+// Shundan kelib chiqadigan uch narsa (platform-ai/src/mcp-*.ts):
+//   1) lifecycle — jarayonni ko'tarish, o'ldirish, zombi qoldirmaslik;
+//   2) kredensial — deyarli har server token talab qiladi (pastga q.);
+//   3) ruxsat — har tool chaqiruvi `RuxsatBoshqaruvchi.sora()` dan o'tadi.
+
+/**
+ * MCP server bilan qanday gaplashiladi.
+ *
+ * `stdio` — mahalliy jarayon (`npx`/`uvx`/`docker`), JSON-RPC stdin/stdout
+ *           orqali. Ekotizimning katta qismi shunday.
+ * `http`  — masofaviy server (`streamable-http` yoki `sse`). Mahalliy kod
+ *           ishga tushmaydi, ya'ni xavfsizlik jihatidan tozaroq.
+ */
+export type McpTransportTuri = 'stdio' | 'http'
+
+/**
+ * Katalog yozuvi qayerdan kelgan.
+ *
+ * `registry` — rasmiy MCP registry (registry.modelcontextprotocol.io).
+ * `github`   — repo'da `server.json` qidirib topilgan.
+ * `qolda`    — foydalanuvchi o'zi kiritgan (buyruq yoki URL).
+ * `standart` — platforma bilan birga kelgan to'plam.
+ *
+ * `SkillManbaTuri` bilan bir xil g'oya: manba turi FAQAT yozuvni QANDAY
+ * olishda farq qiladi, undan keyingi hamma qadam (katalog, o'rnatish, UI)
+ * turni bilmaydi.
+ */
+export type McpKatalogManbaTuri = 'registry' | 'github' | 'qolda' | 'standart'
+
+export interface McpManba {
+  id: string
+  tur: McpKatalogManbaTuri
+  /**
+   * Manbani identifikatsiya qiluvchi nom — turga qarab boshqa ma'no:
+   * `registry` uchun server nomi, `github` uchun `owner/repo`,
+   * `qolda` uchun foydalanuvchi bergan nom, `standart` uchun papka nomi.
+   */
+  manbaNomi: string
+  /** Faqat `github` turida to'ladi */
+  owner: string | null
+  repo: string | null
+  /** Branch yoki tag. Bo'sh satr = standart branch. */
+  ref: string
+  oxirgiSinxron: string | null
+  createdAt: string
+}
+
+/**
+ * Bitta sozlanadigan maydon — env o'zgaruvchisi (stdio) yoki HTTP sarlavha.
+ *
+ * MUHIM: bu FAQAT SXEMA, qiymat emas. Ya'ni "bu server `GITHUB_TOKEN`
+ * so'raydi" degan ma'lumot. Qiymatning o'zi o'rnatish paytida kiritiladi
+ * va `maxfiy` bo'lsa bazaga UMUMAN tushmaydi (`mcp-kredensial.ts`).
+ *
+ * Rasmiy registry sxemasidagi `KeyValueInput` dan olinadi:
+ * `isRequired` → `majburiy`, `isSecret` → `maxfiy`.
+ */
+export interface McpSozlamaMaydoni {
+  nom: string
+  izoh?: string
+  majburiy: boolean
+  /** true — UI'da yashiriladi, kredensial omboriga tushadi, API qaytarmaydi */
+  maxfiy: boolean
+  standart?: string
+}
+
+/**
+ * Katalogdagi MCP server — "bunday server bor" degani.
+ *
+ * `transport` bo'yicha ikki xil to'ldiriladi: `stdio` uchun
+ * `buyruq`+`argumentlar`, `http` uchun `url`. Bazada bu CHECK bilan
+ * majburlanadi (migratsiya 011).
+ */
+export interface McpKatalogYozuvi {
+  id: string
+  manbaId: string
+  /** Registry'dagi reverse-DNS nom (`com.example/github`) yoki erkin nom */
+  nom: string
+  tavsif: string
+  transport: McpTransportTuri
+  /** `stdio`: ishga tushirish buyrug'i — `npx`, `uvx`, `docker` */
+  buyruq?: string
+  /**
+   * `stdio`: argumentlar. O'rin egallovchilar (`{token}`) HALI
+   * almashtirilmagan — ular jarayon ko'tarilishidan oldin, `Bun.spawn`
+   * argv massivi ichida almashtiriladi (shell orqali EMAS).
+   */
+  argumentlar?: string[]
+  /** `http`: server manzili */
+  url?: string
+  /** Kerakli env/sarlavhalar TAVSIFI — qiymatsiz */
+  sozlamalar: McpSozlamaMaydoni[]
+  createdAt: string
+}
+
+/** MCP server qayerda faol — `SkillQamrov` bilan bir xil */
+export type McpQamrov = 'global' | 'loyiha'
+
+export interface McpOrnatish {
+  /** O'rnatish qatorining id'si — kredensial kaliti shundan quriladi */
+  id: string
+  qamrov: McpQamrov
+  /** `qamrov: 'loyiha'` bo'lganda majburiy */
+  projectId?: string
+  /**
+   * MAXFIY BO'LMAGAN sozlama qiymatlari (masalan `BASE_URL`).
+   *
+   * Maxfiylar bu yerda YO'Q — ular `mcp-kredensial.ts` da, alohida faylda.
+   * Har o'rnatishning o'z qiymatlari bor: bir server ikki loyihada turli
+   * token bilan ishlashi mumkin.
+   */
+  sozlamaQiymatlari: Record<string, string>
+}
+
+/** Katalog + o'rnatish holati — UI ro'yxati uchun to'liq ko'rinish */
+export interface McpServer extends McpKatalogYozuvi {
+  /** Bo'sh massiv = o'rnatilmagan, faqat katalogda turibdi */
+  ornatilgan: McpOrnatish[]
+}
+
+// ---------------------------------------------------------------------------
 // Chat: tool kartalari
 // ---------------------------------------------------------------------------
 
@@ -223,7 +361,23 @@ export interface ToolChaqiruv {
 // Ruxsat so'rovlari — xavfli amal oldidan foydalanuvchidan so'raladi
 // ---------------------------------------------------------------------------
 
-export type RuxsatTuri = 'fayl' | 'buyruq'
+/**
+ * Ruxsat so'raladigan amal turi.
+ *
+ * `fayl`   — ish papkasidan tashqaridagi fayl (`muhit.ts`).
+ * `buyruq` — xavfli yoki notanish bash buyrug'i (`buyruq-tahlil.ts`).
+ * `mcp`    — ulangan MCP serverning vositasi (`mcp-boshqaruvchi.ts`).
+ *
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ NEGA MCP UCHINCHI TUR, `buyruq` EMAS. MCP chaqiruvi na fayl, na    │
+ * │ mahalliy buyruq: u tashqi tizimda yon effekt qiladi (GitHub'ga     │
+ * │ issue, Slack'ga xabar) va bu ta'sir mahalliy fayl tizimida         │
+ * │ KO'RINMAYDI. Klassifikator ham shu farqni bilishi kerak, aks       │
+ * │ holda u "bash buyrug'i" deb baholab, buyruq matnini qidiradi —     │
+ * │ MCP chaqiruvida esa unday matn yo'q.                               │
+ * └────────────────────────────────────────────────────────────────────┘
+ */
+export type RuxsatTuri = 'fayl' | 'buyruq' | 'mcp'
 
 /** `hardoim` — ruxsat beriladi va naqsh sessiya davomida eslab qolinadi */
 export type RuxsatJavobi = 'ruxsat' | 'rad' | 'hardoim'

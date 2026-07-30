@@ -17,6 +17,7 @@ import {
   agentOqimi,
   keshdagiNatija,
   klassifikatorModeliniTanla,
+  mcpTooliMi,
   modellarniAniqla,
   rejimBoshqaruvchisi,
   ruxsatBoshqaruvchisi,
@@ -40,7 +41,9 @@ import type {
 import { auditYoz } from './audit.ts'
 import { dashboardniSaqla } from './dashboard-saqlash.ts'
 import { sessiyaIshPapkasi } from './ish-papkasi.ts'
+import { ulanadiganServerlar } from './mcp-ulash.ts'
 import {
+  faolMcpServerlar,
   faolSkilllar,
   serverlarOqi,
   sessiyaLoyihaPapkasi,
@@ -320,6 +323,21 @@ export async function javobOqizi(
           // u faqat manifest beradi, tekshiruv va kompilyatsiya bu
           // tomonda bo'ladi (`dashboard-saqlash.ts`).
           dashboardManbasi: (manifest) => dashboardniSaqla(manifest),
+          // O'rnatilgan MCP serverlar. `serverManbasi` bilan bir xil
+          // inversiya, lekin qo'shimcha ikki ish bor (`mcp-ulash.ts`):
+          // maxfiy kredensiallar alohida fayldan qo'shiladi va o'rin
+          // egallovchilar (`{token}`) almashtiriladi.
+          //
+          // BO'SH RO'YXAT = MCP UMUMAN ISHGA TUSHMAYDI: tool e'lon
+          // qilinmaydi va prompt MCP'ni tilga olmaydi. Ya'ni server
+          // o'rnatilmagan bo'lsa agent uning borligini bilmaydi.
+          mcpManbasi: () => {
+            const sessiya = sessiyaOqi(sessionId)
+            return ulanadiganServerlar(
+              faolMcpServerlar(sessiya?.projectId ?? null),
+              sessiya?.projectId ?? null,
+            )
+          },
           toolKuzatuvchi: (nom, args) => {
             auditYoz('agent', `tool: ${nom}`, toolNishoni(nom, args), toolDarajasi(nom), 'OK')
           },
@@ -744,9 +762,18 @@ function toolNishoni(nom: string, args: unknown): string {
   return nom
 }
 
-/** `read` o'qish, qolganlari o'zgartirish/xavfli */
+/**
+ * `read` o'qish, qolganlari o'zgartirish/xavfli.
+ *
+ * MCP tool'lari 'xavfli' — `bash` bilan bir darajada. Sabab: ular tashqi
+ * tizimga ta'sir qiladi (issue yaratish, xabar yuborish) va bu ta'sir
+ * mahalliy fayl tizimida ko'rinmaydi, ya'ni orqaga qaytarish ham qiyin.
+ * Ularning aynan nima qilishini platforma bilmaydi (server uchinchi tomon
+ * kodi), shuning uchun eng ehtiyotkor daraja beriladi.
+ */
 function toolDarajasi(nom: string): "o'qish" | "o'zgartirish" | 'xavfli' {
   if (nom === 'read') return "o'qish"
   if (nom === 'bash') return 'xavfli'
+  if (mcpTooliMi(nom)) return 'xavfli'
   return "o'zgartirish"
 }

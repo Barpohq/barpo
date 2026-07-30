@@ -175,6 +175,29 @@ export const MAYDONLAR = [
     izoh: "Shuncha vaqt faolsiz sessiyaning xotiradagi resurslari (ruxsat holati, rejim) tozalanadi. Suhbat tarixi bazada qoladi.",
     eng: { kam: 1, kop: 10_080 },
   },
+
+  // --- MCP serverlar ---
+  //
+  // "MCP yoqilgan/o'chirilgan" degan bayroq ATAYLAB YO'Q: nazorat
+  // o'rnatishda. Server o'rnatilmagan bo'lsa MCP qatlami umuman ishga
+  // tushmaydi — tool e'lon qilinmaydi va prompt uni tilga olmaydi
+  // (`platform-ai/src/mcp-toollari.ts` izohiga q.). Bayroq qo'yilsa
+  // foydalanuvchi serverni o'rnatib, keyin "nega ishlamayapti" holatiga
+  // tushardi.
+  {
+    yol: 'mcp.ulanishTimeoutSekund',
+    tur: 'son',
+    standart: 10,
+    izoh: "MCP serverga ulanish (handshake) uchun eng uzun kutish. Server javob bermasa sessiya davom etadi — faqat o'sha server ishlamaydi.",
+    eng: { kam: 1, kop: 60 },
+  },
+  {
+    yol: 'mcp.chaqiruvTimeoutSekund',
+    tur: 'son',
+    standart: 30,
+    izoh: 'Bitta MCP tool chaqiruvi uchun eng uzun kutish.',
+    eng: { kam: 1, kop: 300 },
+  },
 ] as const satisfies readonly MaydonTarifi[]
 
 // ---------------------------------------------------------------------------
@@ -219,6 +242,10 @@ export interface Config {
     /** Papka yo'li yoki null (`~/.platforma/ishlar/`) */
     ishPapkasi: string | null
     faolsizlikDaqiqa: number
+  }
+  mcp: {
+    ulanishTimeoutSekund: number
+    chaqiruvTimeoutSekund: number
   }
 }
 

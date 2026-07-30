@@ -63,7 +63,7 @@ Platforma oldindan loyihalanmaydi — botdan modullar ajratib olinadi:
 ### 3.2 Tool Runtime
 
 - **Claude Code integratsiyasi:** chat'da "shu repo'ga X feature qo'sh" deyilsa, orchestrator tmux sessiyasida Claude Code'ni ishga tushiradi, jarayonni kuzatadi, natijani chat'ga qaytaradi. Pro rejimda tmux sessiyasini jonli ko'rish mumkin, oddiy rejimda faqat natija ko'rinadi
-- **MCP klienti:** o'z standartimizni o'ylab topmaymiz — MCP serverlarni ulaymiz (mavjud ekotizimdan foydalanamiz)
+- **MCP klienti** ✅: o'z standartimizni o'ylab topmaymiz — MCP serverlarni ulaymiz (mavjud ekotizimdan foydalanamiz). Bajarildi: katalog to'rt manbadan to'ladi (rasmiy registry, GitHub `server.json`, qo'lda, platforma to'plami), ikkala transport (stdio + streamable-http/sse), va **har tool chaqiruvi ruxsat qatlamidan o'tadi** (`tur: 'mcp'`). Klient o'zimizning — SDK 4 MB va server tomoni bog'liqliklarini olib kelardi; protokolning bizga kerak qismi (`initialize`/`tools/list`/`tools/call`) kichik. Cheklovlar: OAuth'li serverlar va `resources`/`prompts` hozircha yo'q
 - **Sandbox:** har bir tool alohida konteynerda cheklangan huquqlar bilan
 
 ### 3.3 Server Agents
