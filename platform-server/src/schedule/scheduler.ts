@@ -396,6 +396,26 @@ async function runResume(schedule: Schedule): Promise<void> {
     model: session.model,
   })
 
+  // ┌──────────────────────────────────────────────────────────────────────┐
+  // │ THE ROW MAY HAVE BEEN RE-ARMED WHILE THIS RUN WAS STREAMING.         │
+  // │                                                                      │
+  // │ If the continuation hit the SAME limit again, `planResume` moved      │
+  // │ this row's `runAt` to the new reset time rather than creating a       │
+  // │ second one (see the box there) — and the user has been told the      │
+  // │ conversation carries on then. Writing 'failed' over that would       │
+  // │ cancel the very continuation just promised, which is exactly the     │
+  // │ silent dead end this layer exists to avoid.                          │
+  // │                                                                      │
+  // │ Re-read rather than trusting the copy captured before the stream:    │
+  // │ minutes of agent work happened in between.                           │
+  // └──────────────────────────────────────────────────────────────────────┘
+  const current = readSchedule(schedule.id)
+  if (current && current.runAt > schedule.runAt) {
+    // Still pending, at a later time. Record the attempt, keep it armed.
+    markScheduleRun(schedule.id, { nextRunAt: current.runAt, error: result.error })
+    return
+  }
+
   // A 'resume' passes no `nextRunAt`, so it becomes 'done' (or 'failed').
   markScheduleRun(schedule.id, { error: result.error })
 }
@@ -543,9 +563,53 @@ export interface ResumePlan {
  * — a limit error can arrive several times in a row (the user retries, two
  * streams overlap), and without that check the same conversation would be
  * queued to continue three times over.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────┐
+ * │ A CONTINUATION THAT HITS THE LIMIT AGAIN IS RE-ARMED, NOT DROPPED.   │
+ * │                                                                      │
+ * │ When a `resume` run is what hit the quota, the row driving that run  │
+ * │ is still 'active' (`markScheduleRun` only writes when the stream     │
+ * │ ends), so `pendingResume` hands it back as `existing` — a row whose  │
+ * │ `runAt` is in the PAST, because it is the firing happening right     │
+ * │ now. Returning `null` there did two wrong things at once: the user   │
+ * │ was shown "continues at <a time that has already gone>", and the     │
+ * │ stream then retired that same row as 'failed', leaving nothing       │
+ * │ pending at all. The promise on screen had no schedule behind it.     │
+ * │                                                                      │
+ * │ So a row already due moves to the new reset time and is returned.    │
+ * │ `runResume` sees the moved `runAt` and leaves the row alone (see     │
+ * │ the completion check there), which is what makes the fallback        │
+ * │ repeat: a guessed reset time that was too early costs another hour,  │
+ * │ not the whole continuation.                                          │
+ * └──────────────────────────────────────────────────────────────────────┘
  */
-export function planResume(plan: ResumePlan, existing?: Schedule | null): Schedule | null {
-  if (existing) return null
+export function planResume(
+  plan: ResumePlan,
+  existing?: Schedule | null,
+  now: number = Date.now(),
+): Schedule | null {
+  if (existing) {
+    // Still in the future: a genuine duplicate — the conversation is already
+    // booked to continue and one booking is enough.
+    if (existing.runAt > now) return null
+
+    // Due or overdue: this IS the run that just hit the limit again. Move it
+    // to the new reset time so a continuation remains pending.
+    setScheduleRunAt(existing.id, plan.resumeAt)
+    const rearmed = readSchedule(existing.id)
+    if (rearmed) {
+      auditWrite(
+        'platform',
+        'continuation re-armed',
+        `${new Date(plan.resumeAt).toISOString()} — ${plan.reason.slice(0, 80)}`,
+        'write',
+        'OK',
+      )
+      hub.broadcast({ type: 'schedule.changed', schedule: rearmed })
+      return rearmed
+    }
+    return null
+  }
 
   const schedule = createSchedule({
     kind: 'resume',

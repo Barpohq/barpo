@@ -23,6 +23,7 @@ import {
 } from '@platforma/ai'
 import { openDb, setDb } from '../src/db.ts'
 import {
+  createProject,
   createSchedule,
   createSession,
   lockSessionModel,
@@ -535,5 +536,68 @@ describe('the model a new schedule inherits', () => {
     })
 
     expect(p.asked[0]!.reason).toContain('AUTO')
+  })
+})
+
+// ===========================================================================
+// Which project a schedule belongs to
+// ===========================================================================
+
+describe('the project a new schedule inherits', () => {
+  test('it belongs to the project the conversation was in', () => {
+    // ─────────────────────────────────────────────────────────────────────
+    // "Every morning, update the notes in rules.md" said inside a project
+    // means THAT project's `rules.md`. Without the project on the row,
+    // `runRecurring` opened its session with none and the run landed in a
+    // bare session directory: the file the prompt names is missing, and
+    // whatever the run writes appears where the user never looks. Both
+    // failures are quiet — the schedule reports success either way.
+    // ─────────────────────────────────────────────────────────────────────
+    const project = createProject('Work', '/tmp/work-project', db)
+    const session = createSession('chat', db, project.id)
+    lockSessionModel(session.id, 'anthropic', 'claude-x', db)
+
+    const result = createFromAgent(
+      { title: 'Daily notes', cron: '0 9 * * *', prompt: 'Update the notes in rules.md' },
+      session.id,
+    )
+
+    expect(result.ok).toBe(true)
+    expect(readSchedules(db)[0]!.projectId).toBe(project.id)
+  })
+
+  test('a conversation outside any project pins no project', () => {
+    const session = createSession('chat', db)
+    lockSessionModel(session.id, 'anthropic', 'claude-x', db)
+
+    createFromAgent(
+      { title: 'Daily report', cron: '0 9 * * *', prompt: 'Prepare the daily report' },
+      session.id,
+    )
+
+    expect(readSchedules(db)[0]!.projectId).toBeUndefined()
+  })
+
+  test('the project is inherited even when the agent names its own model', () => {
+    // The two are independent: overriding the model must not quietly drop the
+    // project along with it.
+    const project = createProject('Work', '/tmp/work-project-2', db)
+    const session = createSession('chat', db, project.id)
+    lockSessionModel(session.id, 'anthropic', 'claude-x', db)
+
+    createFromAgent(
+      {
+        title: 'Daily notes',
+        cron: '0 9 * * *',
+        prompt: 'Update the notes in rules.md',
+        provider: 'ollama',
+        model: 'qwen3:0.6b',
+      },
+      session.id,
+    )
+
+    const stored = readSchedules(db)[0]!
+    expect(stored.projectId).toBe(project.id)
+    expect(stored.provider).toBe('ollama')
   })
 })

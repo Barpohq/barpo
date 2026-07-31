@@ -238,6 +238,49 @@ describe('tick — selecting what is due', () => {
     expect(readSchedule(s.id, db)!.runs).toBe(1)
     expect(readSessions(db)).toHaveLength(1)
   })
+
+  test('a pause made DURING a run survives the run finishing', async () => {
+    // ─────────────────────────────────────────────────────────────────────
+    // An agent run takes minutes, and Pause is a button the user can press
+    // in any of them. Recording the outcome afterwards used to write
+    // 'active' unconditionally, so the pause was undone seconds after the
+    // UI confirmed it — and the schedule carried on doing unattended work
+    // the user believed they had stopped. The next firing is still
+    // recorded, so unpausing later resumes the right rhythm; only the
+    // status is left alone.
+    // ─────────────────────────────────────────────────────────────────────
+    const now = Date.now()
+    const s = createSchedule(
+      {
+        kind: 'recurring',
+        title: 'daily report',
+        prompt: 'Prepare the report',
+        cron: '0 9 * * *',
+        runAt: now - MINUTE,
+        createdBy: 'user',
+      },
+      db,
+    )
+
+    // Hold the stream open, so the pause lands while the run is in flight.
+    let release: () => void = () => {}
+    streamHold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const running = tick(now)
+    // The user presses Pause — exactly what the PATCH route writes.
+    db.prepare("UPDATE schedules SET status = 'paused' WHERE id = ?").run(s.id)
+    release()
+    await running
+
+    const after = readSchedule(s.id, db)!
+    expect(after.status).toBe('paused')
+    expect(after.runs).toBe(1)
+    // …and it stays paused: the next tick must not pick it up.
+    await tick(after.runAt + MINUTE)
+    expect(readSchedule(s.id, db)!.runs).toBe(1)
+  })
 })
 
 // ===========================================================================
@@ -694,6 +737,174 @@ describe('planResume', () => {
     )
 
     expect(second).not.toBeNull()
+  })
+
+  test('a continuation that is ALREADY DUE is moved, not treated as a duplicate', () => {
+    // ─────────────────────────────────────────────────────────────────────
+    // The row that is due is the run happening right now — it is still
+    // 'active' because `markScheduleRun` only writes when the stream ends.
+    // Treating it as a duplicate and returning `null` left the user with a
+    // promised time that had already gone.
+    // ─────────────────────────────────────────────────────────────────────
+    const now = Date.now()
+    const session = createSession('limited', db)
+    const running = createSchedule(
+      {
+        kind: 'resume',
+        title: 'continue',
+        prompt: RESUME_PROMPT,
+        runAt: now - MINUTE,
+        createdBy: 'system',
+        sessionId: session.id,
+      },
+      db,
+    )
+
+    const again = planResume(
+      { sessionId: session.id, resumeAt: now + 2 * HOUR, reason: 'rate limit' },
+      running,
+      now,
+    )
+
+    // The SAME row, carried forward — not a second one queued behind it.
+    expect(again).not.toBeNull()
+    expect(again!.id).toBe(running.id)
+    expect(again!.runAt).toBe(now + 2 * HOUR)
+    expect(readSchedules(db).filter((s) => s.kind === 'resume')).toHaveLength(1)
+  })
+
+  test('a continuation still in the future is left exactly where it is', () => {
+    // The ordinary duplicate: two streams overlapped, or the user retried.
+    const now = Date.now()
+    const session = createSession('limited', db)
+    const booked = createSchedule(
+      {
+        kind: 'resume',
+        title: 'continue',
+        prompt: RESUME_PROMPT,
+        runAt: now + HOUR,
+        createdBy: 'system',
+        sessionId: session.id,
+      },
+      db,
+    )
+
+    const again = planResume(
+      { sessionId: session.id, resumeAt: now + 3 * HOUR, reason: 'rate limit' },
+      booked,
+      now,
+    )
+
+    expect(again).toBeNull()
+    // The original time is untouched — the later error must not push a
+    // continuation the user was already promised further away.
+    expect(readSchedule(booked.id, db)!.runAt).toBe(now + HOUR)
+  })
+})
+
+// ===========================================================================
+// A continuation that hits the same limit again
+// ===========================================================================
+
+describe('a resume run that hits the limit a second time', () => {
+  /**
+   * The whole loop end to end: a `resume` fires, the provider refuses it for
+   * the same reason, and the question is whether anything is still pending
+   * when the dust settles.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ THE FAILURE THIS PROTECTS AGAINST IS INVISIBLE. The user is shown    │
+   * │ "the conversation continues at 15:40" and then nothing ever happens: │
+   * │ the row that would have done it was retired as 'failed' by the very  │
+   * │ run that booked the new time. No error, no missing schedule in the   │
+   * │ list — just a conversation that stops for good.                      │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
+  function limitedConversation() {
+    const session = createSession('interrupted', db)
+    lockSessionModel(session.id, 'ollama', 'qwen3:0.6b', db)
+    return session
+  }
+
+  test('stays armed at the NEW reset time instead of dying as failed', async () => {
+    const now = Date.now()
+    const session = limitedConversation()
+    const s = createSchedule(
+      {
+        kind: 'resume',
+        title: 'continue',
+        prompt: RESUME_PROMPT,
+        runAt: now - MINUTE,
+        createdBy: 'system',
+        sessionId: session.id,
+      },
+      db,
+    )
+
+    // The continuation runs, and the provider refuses it all over again.
+    fakeEvents = [{ kind: 'error', message: 'Rate limit reached. Try again in 30 minutes.' }]
+    await tick(now)
+
+    const after = readSchedule(s.id, db)!
+    expect(after.status).toBe('active')
+    expect(after.runAt).toBeGreaterThan(now)
+    // Carried forward on the same row — a second one would make the
+    // conversation answer itself twice when both fired.
+    expect(readSchedules(db).filter((x) => x.kind === 'resume')).toHaveLength(1)
+    expect(after.runs).toBe(1)
+  })
+
+  test('the user is told a time that is still ahead of them', async () => {
+    // The promise on screen and the row behind it must agree — that is the
+    // difference between "paused until 15:40" being a fact and being a guess
+    // about a firing that already went past.
+    const now = Date.now()
+    const session = limitedConversation()
+    createSchedule(
+      {
+        kind: 'resume',
+        title: 'continue',
+        prompt: RESUME_PROMPT,
+        runAt: now - MINUTE,
+        createdBy: 'system',
+        sessionId: session.id,
+      },
+      db,
+    )
+
+    fakeEvents = [{ kind: 'error', message: 'Rate limit reached. Try again in 30 minutes.' }]
+    await tick(now)
+
+    const event = received.find((e) => e.type === 'chat.scheduled') as
+      | { runAt: number; scheduleId: string }
+      | undefined
+    expect(event).toBeDefined()
+    expect(event!.runAt).toBeGreaterThan(now)
+    expect(readSchedule(event!.scheduleId, db)!.runAt).toBe(event!.runAt)
+    expect(received.map((e) => e.type)).not.toContain('chat.error')
+  })
+
+  test('a continuation that fails for an ORDINARY reason is still retired', async () => {
+    // The re-arm is for quota errors only. Anything else has no reset time to
+    // wait for, and leaving the row active would retry it for ever.
+    const now = Date.now()
+    const session = limitedConversation()
+    const s = createSchedule(
+      {
+        kind: 'resume',
+        title: 'continue',
+        prompt: RESUME_PROMPT,
+        runAt: now - MINUTE,
+        createdBy: 'system',
+        sessionId: session.id,
+      },
+      db,
+    )
+
+    fakeEvents = [{ kind: 'error', message: 'invalidated oauth token' }]
+    await tick(now)
+
+    expect(readSchedule(s.id, db)!.status).toBe('failed')
   })
 })
 

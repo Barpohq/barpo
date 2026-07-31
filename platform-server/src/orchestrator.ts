@@ -709,16 +709,16 @@ function scheduleContinuation(sessionId: string, messageId: string, error: strin
     // WS event are not written for a conversation that has gone.
     if (!readSession(sessionId)) return false
 
-    const schedule = planResume(
-      { sessionId, resumeAt: limit.resumeAt, reason: error },
-      pendingResume(sessionId),
-    )
-    // `null` means one was already pending — the conversation IS scheduled, so
-    // the error must still be suppressed. Reporting a failure here would
-    // contradict the notice the user was shown a moment ago.
-    const runAt = schedule?.runAt ?? pendingResume(sessionId)?.runAt
-    const scheduleId = schedule?.id ?? pendingResume(sessionId)?.id
-    if (!runAt || !scheduleId) return false
+    const already = pendingResume(sessionId)
+    const schedule = planResume({ sessionId, resumeAt: limit.resumeAt, reason: error }, already)
+    // `null` means one was already pending FOR A FUTURE TIME — the conversation
+    // IS scheduled, so the error must still be suppressed. Reporting a failure
+    // here would contradict the notice the user was shown a moment ago. (A
+    // pending row that is already due gets moved instead, and comes back as
+    // `schedule` — see `planResume`.)
+    const pending = schedule ?? already
+    if (!pending) return false
+    const { id: scheduleId, runAt } = pending
 
     hub.broadcast({
       type: 'chat.scheduled',

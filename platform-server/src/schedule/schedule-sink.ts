@@ -12,7 +12,7 @@
 // schedule that can never fire is never stored.
 
 import type { ScheduleCreateResult, ScheduleDeleteResult, ScheduleSummary } from '@platforma/ai'
-import type { Schedule } from '@platforma/shared'
+import type { ChatSession, Schedule } from '@platforma/shared'
 import { auditWrite } from '../audit.ts'
 import {
   createSchedule,
@@ -61,19 +61,21 @@ export function toSummary(schedule: Schedule): ScheduleSummary {
  * idea what was wrong with its cron expression.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ THE MODEL IS INHERITED FROM THE CONVERSATION, unless the agent named │
- * │ one explicitly.                                                      │
+ * │ THE MODEL AND THE PROJECT ARE INHERITED FROM THE CONVERSATION —      │
+ * │ the model unless the agent named one explicitly, the project always. │
  * │                                                                      │
  * │ Without this the schedule stored no model at all and every run       │
  * │ picked whatever happened to be first in the detected list — so a     │
  * │ user who set up a report while talking to one model would get their  │
  * │ report written by a different one, with no indication that anything  │
- * │ had changed. Inheriting makes the obvious reading the true one: the  │
- * │ schedule runs on the model you set it up with.                       │
+ * │ had changed. The project went the same way: a schedule made inside a │
+ * │ project ran outside it, in a session directory of its own. Both      │
+ * │ failures are quiet, and both are fixed by the same rule — a schedule │
+ * │ runs where and how you set it up.                                    │
  * │                                                                      │
  * │ `sessionId` is what makes that possible, which is why this function  │
  * │ takes one. When it is absent (the REST route, a test) the caller     │
- * │ supplies the model itself or accepts the platform default.           │
+ * │ supplies these itself or accepts the platform default.               │
  * └──────────────────────────────────────────────────────────────────────┘
  */
 export function createFromAgent(
@@ -132,7 +134,8 @@ export function createFromAgent(
     }
   }
 
-  const choice = pickScheduleModel(input, sessionId)
+  const origin = sessionId ? readSession(sessionId) : null
+  const choice = pickScheduleModel(input, origin)
 
   const schedule = createSchedule({
     kind: 'recurring',
@@ -143,6 +146,18 @@ export function createFromAgent(
     createdBy: 'agent',
     provider: choice?.provider,
     model: choice?.model,
+    // ┌──────────────────────────────────────────────────────────────────┐
+    // │ THE PROJECT IS INHERITED FOR THE SAME REASON THE MODEL IS.       │
+    // │                                                                  │
+    // │ "Every morning, update the notes in rules.md" said inside a      │
+    // │ project means THAT project's `rules.md`. Without this the row    │
+    // │ carried no project, `runRecurring` created its session with      │
+    // │ none, and the run landed in a bare session directory: the file   │
+    // │ the prompt names is missing, and anything the run writes appears │
+    // │ somewhere the user never looks. Both failures are quiet — the    │
+    // │ schedule reports success either way.                             │
+    // └──────────────────────────────────────────────────────────────────┘
+    projectId: origin?.projectId,
   })
 
   auditWrite(
@@ -169,17 +184,19 @@ export function createFromAgent(
  * detected list at run time. That is the right outcome for a session with no
  * model locked yet (the tool was somehow called before the first reply) — a
  * schedule with no model still runs, it just does not promise which one.
+ *
+ * Takes the SESSION rather than its id because the caller already read it for
+ * the project — one lookup for both facts, and no way for the two to come from
+ * different reads.
  */
 function pickScheduleModel(
   input: { provider?: string; model?: string },
-  sessionId?: string,
+  session?: ChatSession | null,
 ): { provider: string; model: string } | undefined {
   if (input.provider && input.model) {
     return { provider: input.provider, model: input.model }
   }
 
-  if (!sessionId) return undefined
-  const session = readSession(sessionId)
   if (!session?.provider || !session.model) return undefined
 
   return { provider: session.provider, model: session.model }

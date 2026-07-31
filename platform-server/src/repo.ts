@@ -1827,6 +1827,23 @@ export function pendingResume(sessionId: string, database?: Database): Schedule 
  * schedule passes its next cron firing and stays 'active'; a `resume` passes
  * nothing and becomes 'done'. Doing it in one statement keeps the row from
  * being briefly visible in a half-updated state.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────┐
+ * │ A PAUSE MADE DURING THE RUN SURVIVES IT.                             │
+ * │                                                                      │
+ * │ An agent run takes minutes, and the user can press Pause at any      │
+ * │ point in them — the PATCH route writes 'paused' and answers OK.      │
+ * │ Writing 'active' here unconditionally then un-paused it seconds      │
+ * │ later, and the schedule carried on doing unattended work that the    │
+ * │ user had been told was stopped. The `status != 'paused'` guard in    │
+ * │ the statement is what makes the pause stick: the next firing is      │
+ * │ still recorded (so unpausing later resumes the right rhythm), only   │
+ * │ the status is left alone.                                            │
+ * │                                                                      │
+ * │ It is done inside the UPDATE rather than by reading the row first,   │
+ * │ so a pause landing between the read and the write cannot slip        │
+ * │ through the gap.                                                     │
+ * └──────────────────────────────────────────────────────────────────────┘
  */
 export function markScheduleRun(
   id: string,
@@ -1849,7 +1866,7 @@ export function markScheduleRun(
             last_run_at = ?,
             last_error = ?,
             run_at = COALESCE(?, run_at),
-            status = ?
+            status = CASE WHEN status = 'paused' THEN 'paused' ELSE ? END
       WHERE id = ?`,
   ).run(new Date().toISOString(), outcome.error ?? null, outcome.nextRunAt ?? null, status, id)
 }
