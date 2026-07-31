@@ -153,6 +153,7 @@ export {
 
 export {
   assessAction,
+  CLASSIFIER_BY_PROVIDER,
   CLASSIFIER_PROMPT,
   CLASSIFIER_TIMEOUT_MS,
   pickClassifierModel,
@@ -274,6 +275,25 @@ export {
   type DashboardResult,
   type DashboardDetail,
 } from './dashboard-tools.ts'
+
+export {
+  SCHEDULE_PROMPT_SECTION,
+  createScheduleCreateTool,
+  createScheduleDeleteTool,
+  createScheduleListTool,
+  scheduleTools,
+  scheduleToolsRaw,
+  type ScheduleCreateInput,
+  type ScheduleCreateResult,
+  type ScheduleDeleteInput,
+  type ScheduleDeleteResult,
+  type ScheduleDetail,
+  type ScheduleLister,
+  type ScheduleListInput,
+  type ScheduleRemover,
+  type ScheduleSink,
+  type ScheduleSummary,
+} from './schedule-tools.ts'
 
 export {
   SERVER_PROMPT_SECTION,

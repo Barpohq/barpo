@@ -39,6 +39,8 @@ import { migration as m012 } from './012-attachments.ts'
 import { migration as m013 } from './013-english-rename.ts'
 import { migration as m014 } from './014-builtin-source-rename.ts'
 import { migration as m015 } from './015-apps-as-folders.ts'
+import { migration as m016 } from './016-schedules.ts'
+import { migration as m017 } from './017-schedule-session-trigger.ts'
 
 export const migrations: Migration[] = [
   m001,
@@ -55,4 +57,6 @@ export const migrations: Migration[] = [
   m013,
   m014,
   m015,
+  m016,
+  m017,
 ]

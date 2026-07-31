@@ -89,6 +89,42 @@ machines they read from.
   view-build.ts     — compiling the AI's JSX into browser JS (classic transform)
 ```
 
+**The time layer** — work that starts when nobody is watching.
+
+```
+  schedule/
+    cron.ts          — a 5-field cron parser and `nextRun` (no dependency, no minute-by-minute search)
+    scheduler.ts     — the 30s tick, the run, and the missed-run rules
+    limit-detect.ts  — recognising "the quota ran out" in a provider error, and when it lifts
+    schedule-sink.ts — the server side of the agent's schedule tools
+```
+
+Two needs, one table (`schedules`). A **recurring** schedule fires a stored
+prompt into a **brand-new session** on a cron timetable — a fresh context every
+run is what makes a daily report reproducible. A **resume** schedule is created
+by the platform itself when a provider limit interrupts a reply: the error text
+is read for the reset time, five minutes are added, and the SAME conversation
+is continued at that point. The user is told "paused until 14:35"
+(`chat.scheduled`) rather than "failed", because nothing is left for them to do.
+
+A missed run (the machine was asleep) is caught up if it is less than six hours
+late and skipped with a recorded reason after that — a week away must not
+produce seven reports at breakfast.
+
+**A scheduled run works in AUTO permission mode, and has to.** In `confirm` mode
+the agent stops at the first `bash` and waits five minutes for an answer nobody
+is there to give; the run then produces nothing and reports no error, so the
+schedule looks like it worked. The safety condition is the CLASSIFIER: auto mode
+means the checks are made by a model rather than a person, so with no classifier
+configured the run is REFUSED and the reason recorded. If auto turns itself off
+mid-run (three consecutive blocks, a broken classifier) the stream is cut short
+and `lastError` says why.
+
+**A schedule inherits the model of the conversation that created it**, so a
+report set up while talking to one model is not silently written by another.
+`scheduleCreate` accepts an explicit `provider`/`model` to override that; a
+pinned model that has since disappeared falls back to the default.
+
 **An app is a FOLDER, not a database row.** `~/.platforma/apps/<id>/` holds
 `app.json` plus optional `view.jsx`, `states/<name>.js`, `settings.js` and
 `actions/<name>.js`; the `apps` table records only that a folder was published
@@ -114,9 +150,11 @@ relocates the root (tests point it at a temporary directory).
     012-attachments.ts         — chat attachments
     013-english-rename.ts      — the Uzbek→English rename of the whole schema
     014-builtin-source-rename.ts — renames the stored built-in source identifiers
+    015-apps-as-folders.ts     — an app becomes a folder; `apps.manifest` → `apps.dir`
+    016-schedules.ts           — the schedules table (recurring tasks + limit resumes)
   routes/
     health.ts  apps.ts  servers.ts  skills.ts  audit.ts  chat.ts  models.ts
-    mcp.ts  projects.ts
+    mcp.ts  projects.ts  schedules.ts
   ws/
     hub.ts          — connection registry, channel subscription, broadcast
     chat-handler.ts — WS chat.send, chat.permission.reply, chat.mode.set

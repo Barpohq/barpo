@@ -114,6 +114,14 @@ export const FIELDS = [
       // auto mode or a stored "always" rule. Removing it from this list is
       // still the way to take the capability away entirely.
       'appDelete',
+      // The schedule tools are on by default for the same reason as
+      // `appDelete`: creating and deleting one both ask the user first, and
+      // `scheduleList` only reads. Removing them from this list is how the
+      // capability is taken away entirely — the agent then does not know
+      // schedules exist.
+      'scheduleCreate',
+      'scheduleList',
+      'scheduleDelete',
     ],
     hint: 'Tools given to the agent. A tool removed from the list is invisible — the agent does not know it exists.',
   },
@@ -152,7 +160,7 @@ export const FIELDS = [
     kind: 'text',
     default: null,
     nullable: true,
-    hint: 'Model for the auto-mode classifier, as `provider/model`. When `null` it is chosen automatically (fast, proven models first).',
+    hint: 'Model for the auto-mode classifier, as `provider/model`. When `null` it is chosen automatically FROM THE CHAT\'S OWN PROVIDER — that one is known to be reachable and paid for, whereas the cheapest model overall may sit on a billing channel with no credit on it.',
   },
   {
     path: 'permission.consecutiveBlockLimit',

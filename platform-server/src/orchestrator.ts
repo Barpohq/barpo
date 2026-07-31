@@ -49,6 +49,7 @@ import {
   activeMcpServers,
   activeSkills,
   deleteOrphanAttachments,
+  pendingResume,
   readMessages,
   readServers,
   readSession,
@@ -56,6 +57,9 @@ import {
   writeMessage,
   writeToolCall,
 } from './repo.ts'
+import { detectLimit, limitNotice } from './schedule/limit-detect.ts'
+import { createFromAgent, listForAgent, removeForAgent } from './schedule/schedule-sink.ts'
+import { planResume } from './schedule/scheduler.ts'
 import { syncToProject } from './skill-store.ts'
 import { sessionWorkDir } from './work-dir.ts'
 import { hub } from './ws/hub.ts'
@@ -378,6 +382,16 @@ export async function streamReply(
           // one — and the tool refuses to act without the permission manager
           // below, which is the thing that makes the user confirm.
           dashboardRemover: (id: string) => deleteApp(id, sessionId),
+          // The schedule tools. Same inversion again: `@platforma/ai` knows
+          // nothing about the table or the tick — it hands over a title, a
+          // cron expression and a prompt, and everything else (parsing the
+          // expression, computing the first firing, broadcasting to the list)
+          // happens on this side (`schedule-sink.ts`).
+          // `sessionId` is passed so a new schedule inherits THIS
+          // conversation's model — see the box in `schedule-sink.ts`.
+          scheduleSink: (input) => createFromAgent(input, sessionId),
+          scheduleLister: () => listForAgent(),
+          scheduleRemover: (id: string) => removeForAgent(id),
           // The installed MCP servers. The same inversion as `serverManbasi`,
           // but with two extra jobs (`mcp-connect.ts`): the secret credentials
           // are merged in from a separate file, and the placeholders
@@ -630,8 +644,24 @@ export async function streamReply(
   }
 
   if (error && !stopped) {
-    hub.broadcast({ type: 'chat.error', sessionId, messageId, error })
-    auditWrite('chat', 'LLM response failed', `${choice.provider}/${choice.model}`, 'read', 'denied')
+    // ┌──────────────────────────────────────────────────────────────────┐
+    // │ THE QUOTA CASE IS NOT REPORTED AS A FAILURE.                     │
+    // │                                                                  │
+    // │ When the provider's limit is what stopped the reply, the platform│
+    // │ books the continuation itself and tells the user WHEN — so the   │
+    // │ honest message is "paused until 14:35", not "failed". Sending    │
+    // │ `chat.error` as well would ask the user to act on something that │
+    // │ is already handled.                                              │
+    // │                                                                  │
+    // │ Everything else takes the ordinary error path untouched. The     │
+    // │ scheduling attempt itself is wrapped: if it fails, the user must │
+    // │ still see the original provider error rather than silence.       │
+    // └──────────────────────────────────────────────────────────────────┘
+    const scheduled = scheduleContinuation(sessionId, messageId, error)
+    if (!scheduled) {
+      hub.broadcast({ type: 'chat.error', sessionId, messageId, error })
+      auditWrite('chat', 'LLM response failed', `${choice.provider}/${choice.model}`, 'read', 'denied')
+    }
   } else if (stopped) {
     // For the UI this is an ordinary completion: the stream closes and no red
     // warning appears.
@@ -655,6 +685,57 @@ export async function streamReply(
 }
 
 /**
+ * Books a continuation when the reply died on the provider's quota.
+ *
+ * Returns `true` when the conversation is now scheduled to carry on — in which
+ * case the caller must NOT send `chat.error`, because from the user's point of
+ * view nothing needs doing.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────┐
+ * │ IT NEVER THROWS, AND THAT IS THE POINT. This runs on the failure     │
+ * │ path: if scheduling itself breaks (the database is locked, the       │
+ * │ session was deleted mid-stream) the user must still see the ORIGINAL │
+ * │ provider error. Swallowing that in favour of a scheduling error      │
+ * │ would replace a problem the user can act on with one they cannot.    │
+ * └──────────────────────────────────────────────────────────────────────┘
+ */
+function scheduleContinuation(sessionId: string, messageId: string, error: string): boolean {
+  try {
+    const limit = detectLimit(error)
+    if (!limit) return false
+
+    // A session that no longer exists has nothing to continue. This is checked
+    // here rather than relying on the foreign key, so the audit entry and the
+    // WS event are not written for a conversation that has gone.
+    if (!readSession(sessionId)) return false
+
+    const schedule = planResume(
+      { sessionId, resumeAt: limit.resumeAt, reason: error },
+      pendingResume(sessionId),
+    )
+    // `null` means one was already pending — the conversation IS scheduled, so
+    // the error must still be suppressed. Reporting a failure here would
+    // contradict the notice the user was shown a moment ago.
+    const runAt = schedule?.runAt ?? pendingResume(sessionId)?.runAt
+    const scheduleId = schedule?.id ?? pendingResume(sessionId)?.id
+    if (!runAt || !scheduleId) return false
+
+    hub.broadcast({
+      type: 'chat.scheduled',
+      sessionId,
+      messageId,
+      scheduleId,
+      runAt,
+      reason: limitNotice(limit),
+    })
+    return true
+  } catch {
+    // See the box above — fall back to the ordinary error path.
+    return false
+  }
+}
+
+/**
  * Which model the classifier is running with (shown in the UI).
  *
  * Relies on the cache — `detectModels()` must have run before this is called.
@@ -667,6 +748,12 @@ function classifierName(sessionId?: string): string | undefined {
   const choice = pickClassifierModel(
     cachedResult()?.models ?? [],
     settings.permission.classifierModel,
+    // The session's own provider, so the name shown in the UI is the model
+    // that will ACTUALLY be used. Reading it from the database on every call
+    // is one indexed SELECT, and a cached copy could disagree with the pick
+    // the permission layer makes — which is precisely the confusion this
+    // display exists to prevent.
+    sessionId ? readSession(sessionId)?.provider : undefined,
   )
   return choice ? `${choice.provider}/${choice.model}` : undefined
 }
