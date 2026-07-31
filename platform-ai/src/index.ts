@@ -52,7 +52,7 @@ export {
 // --- The tool-using agent layer ---
 
 export {
-  AGENT_SISTEM_PROMPT,
+  AGENT_SYSTEM_PROMPT,
   agentStream,
   attachmentNote,
   classifierHistory,

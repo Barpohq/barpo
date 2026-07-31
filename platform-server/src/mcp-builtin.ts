@@ -36,7 +36,7 @@ import { convertRegistryEntry, type RegistryServerEntry } from './mcp-registry.t
  * value MUST BE STABLE — otherwise a new source would be created on every
  * start-up.
  */
-export const BUILTIN_MCP_SOURCE = 'platforma-standart'
+export const BUILTIN_MCP_SOURCE = 'platforma-builtin'
 
 /**
  * The directory the builtin MCP servers live in (inside the repo).

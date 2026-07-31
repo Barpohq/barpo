@@ -1,98 +1,98 @@
-// Boshqaruv qatlami validatori — sozlamalar (forma) va amallar (tugma).
+// The controls-layer validator — settings (the form) and actions (the button).
 //
-// `manifest-tekshir.test.ts` bilan bir xil maqsad: AI yozgan buzuq manifest
-// platformani yiqitmasin. Lekin bu qatlamda YANGI xavf bor — foydalanuvchi
-// KIRISHI. Shuning uchun alohida e'tibor kalit/nom naqshlariga: ular
-// serverdagi `.env` kaliti va URL yo'li bo'lib chiqadi.
+// The same goal as `manifest-validate.test.ts`: a broken manifest written by
+// the AI must not take the platform down. But this layer carries a NEW risk —
+// USER INPUT. Hence the special attention on the key/name patterns: they turn
+// into a `.env` key on the server and into a URL path.
 
 import { describe, expect, test } from 'bun:test'
 import {
-  AMAL_NOMI_NAQSHI,
-  AMAL_SONI_CHEGARASI,
-  SOZLAMA_KALITI_NAQSHI,
-  SOZLAMA_SONI_CHEGARASI,
-  amallarniTekshir,
-  manifestniTekshir,
-  sozlamalarniTekshir,
+  ACTION_COUNT_LIMIT,
+  ACTION_NAME_PATTERN,
+  SETTING_COUNT_LIMIT,
+  SETTING_KEY_PATTERN,
+  validateActions,
+  validateManifest,
+  validateSettings,
 } from '@platforma/shared'
 
-/** Eng kichik yaroqli sozlama bloki */
-const sozlamaAsosi = {
-  maydonlar: [{ kalit: 'token', turi: 'sir', yorliq: 'Bot tokeni' }],
-  yoz: 'module.exports = async () => {}',
+/** The smallest valid settings block */
+const settingsBase = {
+  fields: [{ key: 'token', kind: 'secret', label: 'Bot token' }],
+  write: 'module.exports = async () => {}',
 }
 
-/** Eng kichik yaroqli amal */
-const amalAsosi = { nom: 'restart', yorliq: 'Restart', kod: 'module.exports = async () => {}' }
+/** The smallest valid action */
+const actionBase = { name: 'restart', label: 'Restart', code: 'module.exports = async () => {}' }
 
-describe('sozlamalarniTekshir — asosiy shakl', () => {
-  test('yaroqli blok o\'tadi', () => {
-    const xatolar: string[] = []
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir(sozlamaAsosi, xatolar, ogoh)
+describe('validateSettings — the basic shape', () => {
+  test('a valid block passes', () => {
+    const errors: string[] = []
+    const warnings: string[] = []
+    const r = validateSettings(settingsBase, errors, warnings)
 
-    expect(xatolar).toEqual([])
-    expect(n?.maydonlar).toHaveLength(1)
-    expect(n?.maydonlar[0]?.kalit).toBe('token')
-    expect(n?.maydonlar[0]?.turi).toBe('sir')
+    expect(errors).toEqual([])
+    expect(r?.fields).toHaveLength(1)
+    expect(r?.fields[0]?.key).toBe('token')
+    expect(r?.fields[0]?.kind).toBe('secret')
   })
 
-  test('berilmagan blok `null` — xato emas', () => {
-    const xatolar: string[] = []
-    for (const xom of [undefined, null]) {
-      expect(sozlamalarniTekshir(xom, xatolar, [])).toBeNull()
+  test('a block that is not given is `null` — not an error', () => {
+    const errors: string[] = []
+    for (const raw of [undefined, null]) {
+      expect(validateSettings(raw, errors, [])).toBeNull()
     }
-    expect(xatolar).toEqual([])
+    expect(errors).toEqual([])
   })
 
-  test('obyekt bo\'lmagan blok RAD etiladi', () => {
-    const xatolar: string[] = []
-    expect(sozlamalarniTekshir([1, 2], xatolar, [])).toBeNull()
-    expect(xatolar.length).toBeGreaterThan(0)
+  test('a non-object block is REJECTED', () => {
+    const errors: string[] = []
+    expect(validateSettings([1, 2], errors, [])).toBeNull()
+    expect(errors.length).toBeGreaterThan(0)
   })
 
-  // `yoz` kodi — formaning MA'NOSI. Sxema bo'lib kodi yo'q forma
-  // foydalanuvchini aldaydi: kiritadi, saqlaydi, hech narsa bo'lmaydi.
-  test('`yoz` kodi yo\'q bo\'lsa RAD etiladi', () => {
-    for (const yoz of [undefined, null, '', '   ', 42]) {
-      const xatolar: string[] = []
-      const n = sozlamalarniTekshir({ ...sozlamaAsosi, yoz }, xatolar, [])
-      expect(n).toBeNull()
-      expect(xatolar.some((x) => x.includes('yoz'))).toBe(true)
+  // The `write` code is the POINT of the form. A form with a schema but no code
+  // misleads the user: they type something, save, and nothing happens.
+  test('a missing `write` code is REJECTED', () => {
+    for (const write of [undefined, null, '', '   ', 42]) {
+      const errors: string[] = []
+      const r = validateSettings({ ...settingsBase, write }, errors, [])
+      expect(r).toBeNull()
+      expect(errors.some((e) => e.includes('write'))).toBe(true)
     }
   })
 
-  test('`oqi` yaroqsiz bo\'lsa TASHLANADI, blok qoladi', () => {
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir({ ...sozlamaAsosi, oqi: 42 }, [], ogoh)
+  test('an invalid `read` is DROPPED, the block stays', () => {
+    const warnings: string[] = []
+    const r = validateSettings({ ...settingsBase, read: 42 }, [], warnings)
 
-    // Blok saqlanadi: `oqi` bo'lmasa forma bo'sh ochiladi — ishlaydigan holat.
-    expect(n).not.toBeNull()
-    expect(n?.oqi).toBeUndefined()
-    expect(ogoh.some((o) => o.includes('oqi'))).toBe(true)
+    // The block is kept: without `read` the form opens empty — a working state.
+    expect(r).not.toBeNull()
+    expect(r?.read).toBeUndefined()
+    expect(warnings.some((w) => w.includes('read'))).toBe(true)
   })
 })
 
-describe('sozlama kaliti — u konfiguratsiya kaliti bo\'ladi', () => {
-  test('naqsh kichik harf bilan boshlanishni majburlaydi', () => {
-    expect(SOZLAMA_KALITI_NAQSHI.test('token')).toBe(true)
-    expect(SOZLAMA_KALITI_NAQSHI.test('admin_id')).toBe(true)
-    expect(SOZLAMA_KALITI_NAQSHI.test('a1_b2')).toBe(true)
+describe('the setting key — it becomes a configuration key', () => {
+  test('the pattern forces a lowercase first letter', () => {
+    expect(SETTING_KEY_PATTERN.test('token')).toBe(true)
+    expect(SETTING_KEY_PATTERN.test('admin_id')).toBe(true)
+    expect(SETTING_KEY_PATTERN.test('a1_b2')).toBe(true)
 
-    expect(SOZLAMA_KALITI_NAQSHI.test('Token')).toBe(false)
-    expect(SOZLAMA_KALITI_NAQSHI.test('1token')).toBe(false)
-    expect(SOZLAMA_KALITI_NAQSHI.test('_token')).toBe(false)
+    expect(SETTING_KEY_PATTERN.test('Token')).toBe(false)
+    expect(SETTING_KEY_PATTERN.test('1token')).toBe(false)
+    expect(SETTING_KEY_PATTERN.test('_token')).toBe(false)
   })
 
-  // ENG MUHIM TEST. Kalit `.env` fayliga KALIT bo'lib tushadi — `=`,
-  // yangi qator yoki bo'shliq fayl strukturasini buzardi.
-  test('fayl strukturasini buzadigan kalitlar RAD etiladi', () => {
-    const xavflilar = [
+  // THE MOST IMPORTANT TEST. The key lands in a `.env` file AS A KEY — `=`, a
+  // newline or a space would break the structure of the file.
+  test('keys that break the file structure are REJECTED', () => {
+    const dangerous = [
       'to=ken',
       'to ken',
       'to\nken',
       'to\rken',
-      'token#izoh',
+      'token#comment',
       'token"',
       "token'",
       'token$',
@@ -101,308 +101,309 @@ describe('sozlama kaliti — u konfiguratsiya kaliti bo\'ladi', () => {
       'token;rm -rf /',
     ]
 
-    for (const kalit of xavflilar) {
-      expect(SOZLAMA_KALITI_NAQSHI.test(kalit)).toBe(false)
+    for (const key of dangerous) {
+      expect(SETTING_KEY_PATTERN.test(key)).toBe(false)
 
-      const ogoh: string[] = []
-      const n = sozlamalarniTekshir(
-        { ...sozlamaAsosi, maydonlar: [{ kalit, turi: 'matn', yorliq: 'X' }] },
+      const warnings: string[] = []
+      const r = validateSettings(
+        { ...settingsBase, fields: [{ key, kind: 'text', label: 'X' }] },
         [],
-        ogoh,
+        warnings,
       )
-      // Yaroqli maydon qolmadi — blok tushadi
-      expect(n).toBeNull()
+      // No valid field is left — the block falls away
+      expect(r).toBeNull()
     }
   })
 
-  test('kalit TAKRORLANSA manifest rad etiladi', () => {
-    const xatolar: string[] = []
-    sozlamalarniTekshir(
+  test('a DUPLICATE key rejects the manifest', () => {
+    const errors: string[] = []
+    validateSettings(
       {
-        ...sozlamaAsosi,
-        maydonlar: [
-          { kalit: 'token', turi: 'sir', yorliq: 'A' },
-          { kalit: 'token', turi: 'matn', yorliq: 'B' },
+        ...settingsBase,
+        fields: [
+          { key: 'token', kind: 'secret', label: 'A' },
+          { key: 'token', kind: 'text', label: 'B' },
         ],
       },
-      xatolar,
+      errors,
       [],
     )
-    // Qaysi qiymat yozilishi tasodifga bog'liq bo'lardi — shuning uchun xato.
-    expect(xatolar.some((x) => x.includes('Duplicate'))).toBe(true)
+    // Which value gets written would come down to chance — hence an error.
+    expect(errors.some((e) => e.includes('Duplicate'))).toBe(true)
   })
 })
 
-describe('sozlama maydoni turlari', () => {
-  test('tanilmagan tur `matn` ga tushadi va ogohlantiradi', () => {
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir(
-      { ...sozlamaAsosi, maydonlar: [{ kalit: 'x', turi: 'yolgon', yorliq: 'X' }] },
+describe('setting field kinds', () => {
+  test('an unrecognised kind falls back to `text` with a warning', () => {
+    const warnings: string[] = []
+    const r = validateSettings(
+      { ...settingsBase, fields: [{ key: 'x', kind: 'bogus', label: 'X' }] },
       [],
-      ogoh,
+      warnings,
     )
-    expect(n?.maydonlar[0]?.turi).toBe('matn')
-    expect(ogoh.some((o) => o.includes('not recognised'))).toBe(true)
+    expect(r?.fields[0]?.kind).toBe('text')
+    expect(warnings.some((w) => w.includes('not recognised'))).toBe(true)
   })
 
-  test('`tanlov` variantsiz `matn` ga tushadi', () => {
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir(
-      { ...sozlamaAsosi, maydonlar: [{ kalit: 'rejim', turi: 'tanlov', yorliq: 'R' }] },
+  test('a `select` without options falls back to `text`', () => {
+    const warnings: string[] = []
+    const r = validateSettings(
+      { ...settingsBase, fields: [{ key: 'mode', kind: 'select', label: 'M' }] },
       [],
-      ogoh,
+      warnings,
     )
-    // Bo'sh select foydalanuvchini qamalda qoldirardi.
-    expect(n?.maydonlar[0]?.turi).toBe('matn')
-    expect(n?.maydonlar[0]?.variantlar).toBeUndefined()
+    // An empty select would trap the user.
+    expect(r?.fields[0]?.kind).toBe('text')
+    expect(r?.fields[0]?.options).toBeUndefined()
   })
 
-  test('`tanlov` variantlari bilan saqlanadi', () => {
-    const n = sozlamalarniTekshir(
+  test('a `select` with options is kept', () => {
+    const r = validateSettings(
       {
-        ...sozlamaAsosi,
-        maydonlar: [
-          { kalit: 'rejim', turi: 'tanlov', yorliq: 'R', variantlar: ['polling', 'webhook'] },
+        ...settingsBase,
+        fields: [
+          { key: 'mode', kind: 'select', label: 'M', options: ['polling', 'webhook'] },
         ],
       },
       [],
       [],
     )
-    expect(n?.maydonlar[0]?.turi).toBe('tanlov')
-    expect(n?.maydonlar[0]?.variantlar).toEqual(['polling', 'webhook'])
+    expect(r?.fields[0]?.kind).toBe('select')
+    expect(r?.fields[0]?.options).toEqual(['polling', 'webhook'])
   })
 
-  // Sir uchun `standart` qarama-qarshilik: standart qiymat manifestda
-  // OCHIQ turadi va bazaga yoziladi.
-  test('`sir` maydondagi `standart` TASHLANADI', () => {
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir(
+  // A `default` for a secret is a contradiction: the default value sits in the
+  // manifest IN THE CLEAR and is written to the database.
+  test('a `default` on a `secret` field is DROPPED', () => {
+    const warnings: string[] = []
+    const r = validateSettings(
       {
-        ...sozlamaAsosi,
-        maydonlar: [{ kalit: 'token', turi: 'sir', yorliq: 'T', standart: '123:ABC' }],
+        ...settingsBase,
+        fields: [{ key: 'token', kind: 'secret', label: 'T', default: '123:ABC' }],
       },
       [],
-      ogoh,
+      warnings,
     )
-    expect(n?.maydonlar[0]?.standart).toBeUndefined()
-    expect(ogoh.some((o) => o.includes('standart'))).toBe(true)
+    expect(r?.fields[0]?.default).toBeUndefined()
+    expect(warnings.some((w) => w.includes('default'))).toBe(true)
   })
 
-  test('yorliq bo\'lmasa kalitning o\'zi ishlatiladi', () => {
-    const n = sozlamalarniTekshir(
-      { ...sozlamaAsosi, maydonlar: [{ kalit: 'admin_id', turi: 'raqam' }] },
+  test('the key itself is used when there is no label', () => {
+    const r = validateSettings(
+      { ...settingsBase, fields: [{ key: 'admin_id', kind: 'number' }] },
       [],
       [],
     )
-    expect(n?.maydonlar[0]?.yorliq).toBe('admin_id')
+    expect(r?.fields[0]?.label).toBe('admin_id')
   })
 
-  test('chegaradan oshgan maydonlar kesiladi', () => {
-    const kop = Array.from({ length: SOZLAMA_SONI_CHEGARASI + 5 }, (_, i) => ({
-      kalit: `maydon_${i}`,
-      turi: 'matn',
-      yorliq: `M${i}`,
+  test('fields beyond the limit are cut', () => {
+    const many = Array.from({ length: SETTING_COUNT_LIMIT + 5 }, (_, i) => ({
+      key: `field_${i}`,
+      kind: 'text',
+      label: `F${i}`,
     }))
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir({ ...sozlamaAsosi, maydonlar: kop }, [], ogoh)
+    const warnings: string[] = []
+    const r = validateSettings({ ...settingsBase, fields: many }, [], warnings)
 
-    expect(n?.maydonlar).toHaveLength(SOZLAMA_SONI_CHEGARASI)
-    expect(ogoh.some((o) => o.includes('were kept'))).toBe(true)
+    expect(r?.fields).toHaveLength(SETTING_COUNT_LIMIT)
+    expect(warnings.some((w) => w.includes('were kept'))).toBe(true)
   })
 })
 
-describe('naqsh — injection himoyasining uchinchi qatlami', () => {
-  test('yaroqli regex saqlanadi', () => {
-    const n = sozlamalarniTekshir(
+describe('the pattern — the third layer of injection protection', () => {
+  test('a valid regex is kept', () => {
+    const r = validateSettings(
       {
-        ...sozlamaAsosi,
-        maydonlar: [
-          { kalit: 'token', turi: 'sir', yorliq: 'T', naqsh: '^\\d+:[A-Za-z0-9_-]+$' },
+        ...settingsBase,
+        fields: [
+          { key: 'token', kind: 'secret', label: 'T', pattern: '^\\d+:[A-Za-z0-9_-]+$' },
         ],
       },
       [],
       [],
     )
-    expect(n?.maydonlar[0]?.naqsh).toBe('^\\d+:[A-Za-z0-9_-]+$')
+    expect(r?.fields[0]?.pattern).toBe('^\\d+:[A-Za-z0-9_-]+$')
   })
 
-  // Buzuq regex `new RegExp` da yiqilardi — butun formani yo'qotmaslik
-  // uchun naqsh tashlanadi, maydon qoladi.
-  test('buzuq regex TASHLANADI, maydon qoladi', () => {
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir(
-      { ...sozlamaAsosi, maydonlar: [{ kalit: 'x', turi: 'matn', yorliq: 'X', naqsh: '([' }] },
+  // A broken regex would blow up in `new RegExp` — the pattern is dropped and
+  // the field stays, so the whole form is not lost.
+  test('a broken regex is DROPPED, the field stays', () => {
+    const warnings: string[] = []
+    const r = validateSettings(
+      { ...settingsBase, fields: [{ key: 'x', kind: 'text', label: 'X', pattern: '([' }] },
       [],
-      ogoh,
+      warnings,
     )
-    expect(n?.maydonlar).toHaveLength(1)
-    expect(n?.maydonlar[0]?.naqsh).toBeUndefined()
-    expect(ogoh.some((o) => o.includes('naqsh'))).toBe(true)
+    expect(r?.fields).toHaveLength(1)
+    expect(r?.fields[0]?.pattern).toBeUndefined()
+    expect(warnings.some((w) => w.includes('pattern'))).toBe(true)
   })
 
-  test('juda uzun naqsh TASHLANADI (ReDoS chegarasi)', () => {
-    const ogoh: string[] = []
-    const n = sozlamalarniTekshir(
+  test('an excessively long pattern is DROPPED (the ReDoS limit)', () => {
+    const warnings: string[] = []
+    const r = validateSettings(
       {
-        ...sozlamaAsosi,
-        maydonlar: [{ kalit: 'x', turi: 'matn', yorliq: 'X', naqsh: 'a'.repeat(600) }],
+        ...settingsBase,
+        fields: [{ key: 'x', kind: 'text', label: 'X', pattern: 'a'.repeat(600) }],
       },
       [],
-      ogoh,
+      warnings,
     )
-    expect(n?.maydonlar[0]?.naqsh).toBeUndefined()
-    expect(ogoh.some((o) => o.includes('too long'))).toBe(true)
+    expect(r?.fields[0]?.pattern).toBeUndefined()
+    expect(warnings.some((w) => w.includes('too long'))).toBe(true)
   })
 
-  test('naqsh yo\'q bo\'lsa `naqshIzohi` ham saqlanmaydi', () => {
-    const n = sozlamalarniTekshir(
+  test('without a pattern the `patternHint` is not kept either', () => {
+    const r = validateSettings(
       {
-        ...sozlamaAsosi,
-        maydonlar: [{ kalit: 'x', turi: 'matn', yorliq: 'X', naqshIzohi: 'Xato format' }],
+        ...settingsBase,
+        fields: [{ key: 'x', kind: 'text', label: 'X', patternHint: 'Wrong format' }],
       },
       [],
       [],
     )
-    // Izoh naqshsiz ma'nosiz — hech qachon ko'rinmasdi.
-    expect(n?.maydonlar[0]?.naqshIzohi).toBeUndefined()
+    // A hint is meaningless without a pattern — it would never be shown.
+    expect(r?.fields[0]?.patternHint).toBeUndefined()
   })
 })
 
-describe('amallarniTekshir', () => {
-  test('yaroqli amal o\'tadi', () => {
-    const n = amallarniTekshir([amalAsosi], [], [])
-    expect(n).toHaveLength(1)
-    expect(n?.[0]?.nom).toBe('restart')
-    // Xavf berilmasa — ENG XAVFSIZ standart.
-    expect(n?.[0]?.xavf).toBe("o'zgartirish")
+describe('validateActions', () => {
+  test('a valid action passes', () => {
+    const r = validateActions([actionBase], [], [])
+    expect(r).toHaveLength(1)
+    expect(r?.[0]?.name).toBe('restart')
+    // When the risk is not given — the SAFEST default.
+    expect(r?.[0]?.risk).toBe('write')
   })
 
-  test('berilmagan `amallar` — xato emas', () => {
-    const xatolar: string[] = []
-    for (const xom of [undefined, null]) {
-      expect(amallarniTekshir(xom, xatolar, [])).toBeNull()
+  test('`actions` that is not given — not an error', () => {
+    const errors: string[] = []
+    for (const raw of [undefined, null]) {
+      expect(validateActions(raw, errors, [])).toBeNull()
     }
-    expect(xatolar).toEqual([])
+    expect(errors).toEqual([])
   })
 
-  test('massiv bo\'lmasa e\'tiborsiz qoldiriladi (rad etmaydi)', () => {
-    const xatolar: string[] = []
-    const ogoh: string[] = []
-    expect(amallarniTekshir({ nom: 'x' }, xatolar, ogoh)).toBeNull()
-    expect(xatolar).toEqual([])
-    expect(ogoh.length).toBeGreaterThan(0)
+  test('a non-array is ignored (not rejected)', () => {
+    const errors: string[] = []
+    const warnings: string[] = []
+    expect(validateActions({ name: 'x' }, errors, warnings)).toBeNull()
+    expect(errors).toEqual([])
+    expect(warnings.length).toBeGreaterThan(0)
   })
 
-  // Amal nomi URL yo'liga tushadi — yo'l chiqishi butunlay yopilishi kerak.
-  test('URL yo\'lini buzadigan nomlar RAD etiladi', () => {
-    const xavflilar = ['../restart', 'res/tart', 'Restart', 'restart?x=1', 'res tart', '']
-    for (const nom of xavflilar) {
-      expect(AMAL_NOMI_NAQSHI.test(nom)).toBe(false)
-      const ogoh: string[] = []
-      expect(amallarniTekshir([{ ...amalAsosi, nom }], [], ogoh)).toBeNull()
-      expect(ogoh.length).toBeGreaterThan(0)
+  // The action name lands in a URL path — path traversal must be fully closed.
+  test('names that break the URL path are REJECTED', () => {
+    const dangerous = ['../restart', 'res/tart', 'Restart', 'restart?x=1', 'res tart', '']
+    for (const name of dangerous) {
+      expect(ACTION_NAME_PATTERN.test(name)).toBe(false)
+      const warnings: string[] = []
+      expect(validateActions([{ ...actionBase, name }], [], warnings)).toBeNull()
+      expect(warnings.length).toBeGreaterThan(0)
     }
   })
 
-  test('nom TAKRORLANSA manifest rad etiladi', () => {
-    const xatolar: string[] = []
-    amallarniTekshir([amalAsosi, { ...amalAsosi, yorliq: 'Boshqa' }], xatolar, [])
-    expect(xatolar.some((x) => x.includes('Duplicate'))).toBe(true)
+  test('a DUPLICATE name rejects the manifest', () => {
+    const errors: string[] = []
+    validateActions([actionBase, { ...actionBase, label: 'Another' }], errors, [])
+    expect(errors.some((e) => e.includes('Duplicate'))).toBe(true)
   })
 
-  test('kodsiz amal TASHLANADI, qolgani ishlaydi', () => {
-    const ogoh: string[] = []
-    const n = amallarniTekshir(
-      [{ nom: 'buzuq', yorliq: 'B' }, amalAsosi],
+  test('an action without code is DROPPED, the rest still works', () => {
+    const warnings: string[] = []
+    const r = validateActions(
+      [{ name: 'broken', label: 'B' }, actionBase],
       [],
-      ogoh,
+      warnings,
     )
-    // Bitta buzuq amal uchun boshqasini yo'qotish foydalanuvchiga zarar.
-    expect(n).toHaveLength(1)
-    expect(n?.[0]?.nom).toBe('restart')
-    expect(ogoh.some((o) => o.includes('code'))).toBe(true)
+    // Losing the other action over one broken one would harm the user.
+    expect(r).toHaveLength(1)
+    expect(r?.[0]?.name).toBe('restart')
+    expect(warnings.some((w) => w.includes('code'))).toBe(true)
   })
 
-  test('tanilmagan xavf darajasi `o\'zgartirish` ga tushadi', () => {
-    const n = amallarniTekshir([{ ...amalAsosi, xavf: 'yolgon' }], [], [])
-    expect(n?.[0]?.xavf).toBe("o'zgartirish")
+  test('an unrecognised risk level falls back to `write`', () => {
+    const r = validateActions([{ ...actionBase, risk: 'bogus' }], [], [])
+    expect(r?.[0]?.risk).toBe('write')
   })
 
-  test('xavf darajasi to\'g\'ri bo\'lsa saqlanadi', () => {
-    const n = amallarniTekshir([{ ...amalAsosi, xavf: 'xavfli' }], [], [])
-    expect(n?.[0]?.xavf).toBe('xavfli')
+  test('a correct risk level is kept', () => {
+    const r = validateActions([{ ...actionBase, risk: 'dangerous' }], [], [])
+    expect(r?.[0]?.risk).toBe('dangerous')
   })
 
-  test('`tasdiq` faqat aniq `true` bo\'lganda saqlanadi', () => {
-    expect(amallarniTekshir([{ ...amalAsosi, tasdiq: true }], [], [])?.[0]?.tasdiq).toBe(true)
-    // "truthy" qiymat yetarli emas: tasdiq xavfsizlik belgisi, aniq bo'lishi kerak.
-    expect(amallarniTekshir([{ ...amalAsosi, tasdiq: 'ha' }], [], [])?.[0]?.tasdiq).toBeUndefined()
+  test('`confirm` is kept only when it is exactly `true`', () => {
+    expect(validateActions([{ ...actionBase, confirm: true }], [], [])?.[0]?.confirm).toBe(true)
+    // A "truthy" value is not enough: confirm is a safety marker, it has to be explicit.
+    expect(validateActions([{ ...actionBase, confirm: 'yes' }], [], [])?.[0]?.confirm).toBeUndefined()
   })
 
-  test('chegaradan oshgan amallar kesiladi', () => {
-    const kop = Array.from({ length: AMAL_SONI_CHEGARASI + 3 }, (_, i) => ({
-      ...amalAsosi,
-      nom: `amal_${i}`,
+  test('actions beyond the limit are cut', () => {
+    const many = Array.from({ length: ACTION_COUNT_LIMIT + 3 }, (_, i) => ({
+      ...actionBase,
+      name: `action_${i}`,
     }))
-    const ogoh: string[] = []
-    expect(amallarniTekshir(kop, [], ogoh)).toHaveLength(AMAL_SONI_CHEGARASI)
-    expect(ogoh.some((o) => o.includes('were kept'))).toBe(true)
+    const warnings: string[] = []
+    expect(validateActions(many, [], warnings)).toHaveLength(ACTION_COUNT_LIMIT)
+    expect(warnings.some((w) => w.includes('were kept'))).toBe(true)
   })
 })
 
-describe('manifest bilan birga', () => {
-  const asos = { id: 'bot', name: 'Bot' }
+describe('together with the manifest', () => {
+  const base = { id: 'bot', name: 'Bot' }
 
-  test('faqat sozlamalar bo\'lgan manifest O\'TADI (vidjet shart emas)', () => {
-    // Boshqaruv paneli — to'liq ma'noli ilova. Vidjet majburlash ortiqcha.
-    const n = manifestniTekshir({ ...asos, sozlamalar: sozlamaAsosi })
-    expect(n.ok).toBe(true)
-    expect(n.qiymat?.sozlamalar?.maydonlar).toHaveLength(1)
+  test('a manifest with only settings PASSES (a widget is not required)', () => {
+    // A control panel is a perfectly meaningful app. Forcing a widget would be
+    // excessive.
+    const r = validateManifest({ ...base, settings: settingsBase })
+    expect(r.ok).toBe(true)
+    expect(r.value?.settings?.fields).toHaveLength(1)
   })
 
-  test('faqat amallar bo\'lgan manifest O\'TADI', () => {
-    const n = manifestniTekshir({ ...asos, amallar: [amalAsosi] })
-    expect(n.ok).toBe(true)
-    expect(n.qiymat?.amallar).toHaveLength(1)
+  test('a manifest with only actions PASSES', () => {
+    const r = validateManifest({ ...base, actions: [actionBase] })
+    expect(r.ok).toBe(true)
+    expect(r.value?.actions).toHaveLength(1)
   })
 
-  test('hammasi bo\'sh bo\'lsa RAD etiladi', () => {
-    const n = manifestniTekshir(asos)
-    expect(n.ok).toBe(false)
-    expect(n.xatolar.some((x) => x.includes('nothing to display'))).toBe(true)
+  test('a manifest with everything empty is REJECTED', () => {
+    const r = validateManifest(base)
+    expect(r.ok).toBe(false)
+    expect(r.errors.some((e) => e.includes('nothing to display'))).toBe(true)
   })
 
-  test('`yangila` mavjud bo\'lmagan state\'ga ishora qilsa TOZALANADI', () => {
-    const n = manifestniTekshir({
-      ...asos,
-      states: [{ nom: 'holat', kod: 'module.exports = async () => 1' }],
-      amallar: [{ ...amalAsosi, yangila: ['holat', 'yoq_state'] }],
+  test('a `refresh` pointing at a missing state is CLEANED UP', () => {
+    const r = validateManifest({
+      ...base,
+      states: [{ name: 'status', code: 'module.exports = async () => 1' }],
+      actions: [{ ...actionBase, refresh: ['status', 'missing_state'] }],
     })
 
-    expect(n.ok).toBe(true)
-    // Mavjudi qoladi, yo'g'i tushadi — aks holda "yangilash" jimgina
-    // hech narsa qilmasdi.
-    expect(n.qiymat?.amallar?.[0]?.yangila).toEqual(['holat'])
-    expect(n.ogohlantirishlar.some((o) => o.includes('yoq_state'))).toBe(true)
+    expect(r.ok).toBe(true)
+    // The existing one stays, the missing one falls away — otherwise "refresh"
+    // would silently do nothing.
+    expect(r.value?.actions?.[0]?.refresh).toEqual(['status'])
+    expect(r.warnings.some((w) => w.includes('missing_state'))).toBe(true)
   })
 
-  test('`yangila` dagi hamma state yo\'q bo\'lsa maydon butunlay tushadi', () => {
-    const n = manifestniTekshir({
-      ...asos,
-      amallar: [{ ...amalAsosi, yangila: ['yoq'] }],
+  test('the field falls away entirely when every state in `refresh` is missing', () => {
+    const r = validateManifest({
+      ...base,
+      actions: [{ ...actionBase, refresh: ['missing'] }],
     })
-    expect(n.ok).toBe(true)
-    expect(n.qiymat?.amallar?.[0]?.yangila).toBeUndefined()
+    expect(r.ok).toBe(true)
+    expect(r.value?.actions?.[0]?.refresh).toBeUndefined()
   })
 
-  test('buzuq sozlama bloki butun manifestni rad etadi', () => {
-    // Forma — foydalanuvchi KIRISHI. Yarim ishlaydigan forma jimgina
-    // ma'lumot yo'qotishga olib kelardi.
-    const n = manifestniTekshir({
-      ...asos,
+  test('a broken settings block rejects the whole manifest', () => {
+    // The form is USER INPUT. A half-working form would silently lead to data
+    // loss.
+    const r = validateManifest({
+      ...base,
       widgets: [{ type: 'note', text: 'x' }],
-      sozlamalar: { maydonlar: [{ kalit: 'token', turi: 'sir' }] },
+      settings: { fields: [{ key: 'token', kind: 'secret' }] },
     })
-    expect(n.ok).toBe(false)
+    expect(r.ok).toBe(false)
   })
 })

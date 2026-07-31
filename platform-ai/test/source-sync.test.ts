@@ -1,7 +1,7 @@
-// Yangilangan tokenni ~/.codex/auth.json ga qaytarish.
+// Writing the refreshed token back to ~/.codex/auth.json.
 //
-// Bu boshqa dasturning fayli — asosiy talab: begona maydonlarni saqlash,
-// faylni yarim holatda qoldirmaslik va hech qachon throw qilmaslik.
+// This is another program's file — the main requirements: keep the foreign
+// fields, never leave the file half-written and never throw.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -10,150 +10,150 @@ import { join } from 'node:path'
 import type { OAuthCredential } from '@earendil-works/pi-ai'
 import { writeToCodex } from '../src/source-sync.ts'
 
-let uy: string
+let home: string
 
 beforeEach(() => {
-  uy = mkdtempSync(join(tmpdir(), 'platforma-sinxron-'))
+  home = mkdtempSync(join(tmpdir(), 'platforma-sync-'))
 })
 
 afterEach(() => {
-  rmSync(uy, { recursive: true, force: true })
+  rmSync(home, { recursive: true, force: true })
 })
 
-const yoli = () => join(uy, '.codex', 'auth.json')
+const path = () => join(home, '.codex', 'auth.json')
 
-function codexFayliYoz(qiymat: unknown): void {
-  mkdirSync(join(uy, '.codex'), { recursive: true })
-  writeFileSync(yoli(), JSON.stringify(qiymat, null, 2), { mode: 0o600 })
+function writeCodexFile(value: unknown): void {
+  mkdirSync(join(home, '.codex'), { recursive: true })
+  writeFileSync(path(), JSON.stringify(value, null, 2), { mode: 0o600 })
 }
 
-function oqi(): Record<string, any> {
-  return JSON.parse(readFileSync(yoli(), 'utf8'))
+function read(): Record<string, any> {
+  return JSON.parse(readFileSync(path(), 'utf8'))
 }
 
-const yangiToken: OAuthCredential = {
+const freshToken: OAuthCredential = {
   type: 'oauth',
-  access: 'yangi-access',
-  refresh: 'yangi-refresh',
+  access: 'new-access',
+  refresh: 'new-refresh',
   expires: Date.now() + 86_400_000,
 }
 
 describe('writeToCodex', () => {
-  test('access va refresh yangilanadi', () => {
-    codexFayliYoz({ tokens: { access_token: 'eski-a', refresh_token: 'eski-r' } })
+  test('access and refresh are updated', () => {
+    writeCodexFile({ tokens: { access_token: 'old-a', refresh_token: 'old-r' } })
 
-    const natija = writeToCodex(yangiToken, uy)
+    const result = writeToCodex(freshToken, home)
 
-    expect(natija.yozildi).toBe(true)
-    expect(oqi().tokens.access_token).toBe('yangi-access')
-    expect(oqi().tokens.refresh_token).toBe('yangi-refresh')
+    expect(result.written).toBe(true)
+    expect(read().tokens.access_token).toBe('new-access')
+    expect(read().tokens.refresh_token).toBe('new-refresh')
   })
 
-  test('id_token va account_id saqlanadi — refresh javobida ular kelmaydi', () => {
-    codexFayliYoz({
+  test('id_token and account_id are kept — they do not come in the refresh response', () => {
+    writeCodexFile({
       tokens: {
-        access_token: 'eski-a',
-        refresh_token: 'eski-r',
-        id_token: 'saqlanishi-kerak',
+        access_token: 'old-a',
+        refresh_token: 'old-r',
+        id_token: 'must-be-kept',
         account_id: 'acc-123',
       },
     })
 
-    writeToCodex(yangiToken, uy)
+    writeToCodex(freshToken, home)
 
-    expect(oqi().tokens.id_token).toBe('saqlanishi-kerak')
-    expect(oqi().tokens.account_id).toBe('acc-123')
+    expect(read().tokens.id_token).toBe('must-be-kept')
+    expect(read().tokens.account_id).toBe('acc-123')
   })
 
-  test('tokens tashqarisidagi maydonlar tegilmaydi', () => {
-    codexFayliYoz({
+  test('the fields outside tokens are not touched', () => {
+    writeCodexFile({
       auth_mode: 'chatgpt',
       OPENAI_API_KEY: null,
-      kelajakdagi_maydon: { chuqur: true },
-      tokens: { access_token: 'eski-a', refresh_token: 'eski-r' },
+      future_field: { deep: true },
+      tokens: { access_token: 'old-a', refresh_token: 'old-r' },
     })
 
-    writeToCodex(yangiToken, uy)
+    writeToCodex(freshToken, home)
 
-    const natija = oqi()
-    expect(natija.auth_mode).toBe('chatgpt')
-    expect(natija.OPENAI_API_KEY).toBeNull()
-    expect(natija.kelajakdagi_maydon).toEqual({ chuqur: true })
+    const result = read()
+    expect(result.auth_mode).toBe('chatgpt')
+    expect(result.OPENAI_API_KEY).toBeNull()
+    expect(result.future_field).toEqual({ deep: true })
   })
 
-  test('last_refresh ISO vaqt bilan yangilanadi', () => {
-    codexFayliYoz({ tokens: { access_token: 'a', refresh_token: 'r' }, last_refresh: null })
+  test('last_refresh is updated with an ISO time', () => {
+    writeCodexFile({ tokens: { access_token: 'a', refresh_token: 'r' }, last_refresh: null })
 
-    writeToCodex(yangiToken, uy)
+    writeToCodex(freshToken, home)
 
-    const qiymat = oqi().last_refresh
-    expect(typeof qiymat).toBe('string')
-    expect(Number.isNaN(Date.parse(qiymat))).toBe(false)
+    const value = read().last_refresh
+    expect(typeof value).toBe('string')
+    expect(Number.isNaN(Date.parse(value))).toBe(false)
   })
 
-  test('fayl huquqi 600 bo\'lib qoladi', () => {
-    codexFayliYoz({ tokens: { access_token: 'a', refresh_token: 'r' } })
+  test('the file permissions stay at 600', () => {
+    writeCodexFile({ tokens: { access_token: 'a', refresh_token: 'r' } })
 
-    writeToCodex(yangiToken, uy)
+    writeToCodex(freshToken, home)
 
-    expect(statSync(yoli()).mode & 0o777).toBe(0o600)
+    expect(statSync(path()).mode & 0o777).toBe(0o600)
   })
 
-  test('token o\'zgarmagan bo\'lsa qayta yozilmaydi', () => {
-    codexFayliYoz({
-      tokens: { access_token: yangiToken.access, refresh_token: yangiToken.refresh },
+  test('if the token has not changed it is not rewritten', () => {
+    writeCodexFile({
+      tokens: { access_token: freshToken.access, refresh_token: freshToken.refresh },
     })
 
-    const natija = writeToCodex(yangiToken, uy)
+    const result = writeToCodex(freshToken, home)
 
-    expect(natija.yozildi).toBe(false)
-    expect(natija.sabab).toContain('no change')
+    expect(result.written).toBe(false)
+    expect(result.reason).toContain('no change')
   })
 
-  test('fayl yo\'q bo\'lsa YARATILMAYDI — codex o\'rnatilmagan', () => {
-    const natija = writeToCodex(yangiToken, uy)
+  test('if the file is missing it IS NOT CREATED — codex is not installed', () => {
+    const result = writeToCodex(freshToken, home)
 
-    expect(natija.yozildi).toBe(false)
-    expect(natija.sabab).toContain('not found')
-    expect(() => statSync(yoli())).toThrow()
+    expect(result.written).toBe(false)
+    expect(result.reason).toContain('not found')
+    expect(() => statSync(path())).toThrow()
   })
 
-  test('buzuq JSON — throw yo\'q, fayl tegilmaydi', () => {
-    mkdirSync(join(uy, '.codex'), { recursive: true })
-    writeFileSync(yoli(), '{bu json emas')
+  test('broken JSON — no throw, the file is not touched', () => {
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(path(), '{this is not json')
 
-    const natija = writeToCodex(yangiToken, uy)
+    const result = writeToCodex(freshToken, home)
 
-    expect(natija.yozildi).toBe(false)
-    expect(natija.sabab).toBeTruthy()
-    expect(readFileSync(yoli(), 'utf8')).toBe('{bu json emas')
+    expect(result.written).toBe(false)
+    expect(result.reason).toBeTruthy()
+    expect(readFileSync(path(), 'utf8')).toBe('{this is not json')
   })
 
-  test('massiv berilsa ham yiqilmaydi', () => {
-    mkdirSync(join(uy, '.codex'), { recursive: true })
-    writeFileSync(yoli(), '[1,2,3]')
+  test('it does not fall over even when given an array', () => {
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(path(), '[1,2,3]')
 
-    const natija = writeToCodex(yangiToken, uy)
+    const result = writeToCodex(freshToken, home)
 
-    expect(natija.yozildi).toBe(false)
-    expect(natija.sabab).toContain('unexpected shape')
+    expect(result.written).toBe(false)
+    expect(result.reason).toContain('unexpected shape')
   })
 
-  test('tokens maydoni yo\'q bo\'lsa yaratiladi', () => {
-    codexFayliYoz({ auth_mode: 'chatgpt' })
+  test('if the tokens field is missing it is created', () => {
+    writeCodexFile({ auth_mode: 'chatgpt' })
 
-    const natija = writeToCodex(yangiToken, uy)
+    const result = writeToCodex(freshToken, home)
 
-    expect(natija.yozildi).toBe(true)
-    expect(oqi().tokens.access_token).toBe('yangi-access')
-    expect(oqi().auth_mode).toBe('chatgpt')
+    expect(result.written).toBe(true)
+    expect(read().tokens.access_token).toBe('new-access')
+    expect(read().auth_mode).toBe('chatgpt')
   })
 
-  test('yozilgan fayl haqiqiy JSON — yarim holat qolmaydi', () => {
-    codexFayliYoz({ tokens: { access_token: 'a', refresh_token: 'r' } })
+  test('the written file is real JSON — no half state is left', () => {
+    writeCodexFile({ tokens: { access_token: 'a', refresh_token: 'r' } })
 
-    writeToCodex(yangiToken, uy)
+    writeToCodex(freshToken, home)
 
-    expect(() => oqi()).not.toThrow()
+    expect(() => read()).not.toThrow()
   })
 })

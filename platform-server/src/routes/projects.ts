@@ -6,7 +6,7 @@
 //
 // THE USER DOES NOT SUPPLY A PATH — only a name. If a path were accepted, the
 // boundary of the agent's tools could end up pointing at `/` or `~`; the
-// platform creates `~/.platforma/loyihalar/<slug>/` itself.
+// platform creates `~/.platforma/projects/<slug>/` itself.
 //
 // DELETING a folder is not supported yet: whether the folder should be removed
 // as well (and the confirmation flow that goes with it) is a separate step.

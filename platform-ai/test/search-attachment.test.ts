@@ -50,7 +50,7 @@ beforeEach(() => {
   context = {
     env: new RestrictedEnv({
       workDir: papka,
-      ruxsat: new PermissionManager('sinov'),
+      permission: new PermissionManager('sinov'),
     }),
   }
 })

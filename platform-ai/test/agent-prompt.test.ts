@@ -1,16 +1,16 @@
-// Prompt tanlash — tarix `assistant` bilan tugagan holat.
+// Picking the prompt — the case where the history ends with an `assistant`.
 //
-// NEGA BU TEST BOR (haqiqiy poyga holati):
-//   1) foydalanuvchi xabar yubordi, javob oqmoqda;
-//   2) u "To'xtatish" bosdi va darhol yangi xabar yubordi;
-//   3) `streamReply` eski oqimni abort qildi va YANGI user xabarini yozdi;
-//   4) abort qilingan eski oqim `finally` da o'z javobini ENDI saqladi —
-//      ya'ni yangi user xabaridan KEYIN.
+// WHY THIS TEST EXISTS (a real race condition):
+//   1) the user sent a message and the answer is streaming;
+//   2) they pressed "Stop" and immediately sent a new message;
+//   3) `streamReply` aborted the old stream and wrote the NEW user message;
+//   4) the aborted old stream saved its own answer in `finally` ONLY THEN —
+//      that is, AFTER the new user message.
 //
-// Natijada tarix `user, user, assistant` bo'lib qoladi. Oldin bu holatda
-// `xabarlar.at(-1)?.role === 'user'` tekshiruvi yiqilib, agent
-// "Yuboriladigan foydalanuvchi xabari topilmadi" xatosini berardi va
-// foydalanuvchining xabari JIMGINA yo'qolardi.
+// The history is then left as `user, user, assistant`. Previously the
+// `messages.at(-1)?.role === 'user'` check failed in this situation and the
+// agent produced a "No user message found to send" error, so the user's
+// message was SILENTLY lost.
 
 import { describe, expect, test } from 'bun:test'
 import { attachmentNote, nonTextBlocks, lastUserIndex } from '../src/agent.ts'
@@ -21,134 +21,136 @@ const u = (text: string): ConversationMessage => ({ role: 'user', text })
 const a = (text: string): ConversationMessage => ({ role: 'assistant', text })
 
 describe('lastUserIndex', () => {
-  test('oddiy holat — oxirgi element user', () => {
-    expect(lastUserIndex([u('salom'), a('javob'), u('yana')])).toBe(2)
+  test('the ordinary case — the last element is a user message', () => {
+    expect(lastUserIndex([u('hello'), a('answer'), u('again')])).toBe(2)
   })
 
-  test('tarix assistant bilan tugasa ham user topiladi', () => {
-    // Aynan poyga holati: bekor qilingan javob user xabaridan keyin saqlandi
-    const xabarlar = [
-      u('birinchi so\'rov'),
-      u('ikkinchi so\'rov'),
-      a("⚠︎ Javob to'liq kelmadi: So'rov bekor qilindi"),
+  test('the user message is found even when the history ends with an assistant', () => {
+    // Exactly the race condition: the cancelled answer was saved after the
+    // user message
+    const messages = [
+      u('first request'),
+      u('second request'),
+      a('⚠︎ The answer did not arrive in full: the request was cancelled'),
     ]
-    expect(lastUserIndex(xabarlar)).toBe(1)
-    expect(xabarlar[lastUserIndex(xabarlar)]!.text).toBe("ikkinchi so'rov")
+    expect(lastUserIndex(messages)).toBe(1)
+    expect(messages[lastUserIndex(messages)]!.text).toBe('second request')
   })
 
-  test('ketma-ket bir necha assistant xabaridan keyin ham topiladi', () => {
-    expect(lastUserIndex([u('so\'rov'), a('bir'), a('ikki'), a('uch')])).toBe(0)
+  test('it is found after several consecutive assistant messages too', () => {
+    expect(lastUserIndex([u('request'), a('one'), a('two'), a('three')])).toBe(0)
   })
 
-  test('faqat bitta user xabari', () => {
-    expect(lastUserIndex([u('yolg\'iz')])).toBe(0)
+  test('only one user message', () => {
+    expect(lastUserIndex([u('alone')])).toBe(0)
   })
 
-  test('user xabari umuman yo\'q — -1', () => {
-    expect(lastUserIndex([a('faqat assistant')])).toBe(-1)
+  test('no user message at all — -1', () => {
+    expect(lastUserIndex([a('assistant only')])).toBe(-1)
     expect(lastUserIndex([])).toBe(-1)
   })
 
-  test('eng OXIRGI user tanlanadi, birinchisi emas', () => {
-    const xabarlar = [u('eski'), a('javob'), u('yangi'), a('bekor qilindi')]
-    expect(xabarlar[lastUserIndex(xabarlar)]!.text).toBe('yangi')
+  test('the LAST user message is picked, not the first', () => {
+    const messages = [u('old'), a('answer'), u('new'), a('cancelled')]
+    expect(messages[lastUserIndex(messages)]!.text).toBe('new')
   })
 })
 
-// Biriktirilgan fayl agentga PROMPT MATNI orqali yetadi — base64 bo'lib
-// emas. Rasm ham fayl: agent uni `read` bilan o'qiydi va o'shanda ko'radi.
+// An attached file reaches the agent through THE PROMPT TEXT — not as base64.
+// An image is a file too: the agent reads it with `read` and sees it then.
 describe('attachmentNote', () => {
-  const rasm: MessageAttachment = {
-    tur: 'rasm',
-    aslNom: 'ekran.png',
-    yol: '.platforma/sessiyalar/s1/fayllar/ekran.png',
+  const image: MessageAttachment = {
+    kind: 'image',
+    originalName: 'screen.png',
+    path: '.platforma/sessions/s1/files/screen.png',
   }
-  const fayl: MessageAttachment = {
-    tur: 'fayl',
-    aslNom: 'hisobot.pdf',
-    yol: '.platforma/sessiyalar/s1/fayllar/hisobot.pdf',
+  const file: MessageAttachment = {
+    kind: 'file',
+    originalName: 'report.pdf',
+    path: '.platforma/sessions/s1/files/report.pdf',
   }
 
-  test('biriktirma bo\'lmasa matn tegilmaydi', () => {
-    expect(attachmentNote('salom')).toBe('salom')
-    expect(attachmentNote('salom', [])).toBe('salom')
+  test('the text is left alone when there is no attachment', () => {
+    expect(attachmentNote('hello')).toBe('hello')
+    expect(attachmentNote('hello', [])).toBe('hello')
   })
 
-  test('yo\'l promptga tushadi', () => {
-    const natija = attachmentNote('bu nima?', [rasm])
+  test('the path lands in the prompt', () => {
+    const result = attachmentNote('what is this?', [image])
 
-    expect(natija).toContain('bu nima?')
-    expect(natija).toContain(rasm.yol)
+    expect(result).toContain('what is this?')
+    expect(result).toContain(image.path)
   })
 
-  test('rasm uchun `read` ko\'rsatmasi beriladi', () => {
-    const natija = attachmentNote('tasvirla', [rasm])
+  test('an image gets a `read` instruction', () => {
+    const result = attachmentNote('describe it', [image])
 
-    expect(natija).toContain('read')
-    // Agent rasmni KO'RISHI mumkinligini bilishi kerak, aks holda u faylni
-    // matn deb o'ylab "o'qib bo'lmadi" degan xulosaga kelardi
-    expect(natija).toContain('image')
+    expect(result).toContain('read')
+    // The agent has to know it CAN SEE the image, otherwise it would take the
+    // file for text and conclude "it could not be read"
+    expect(result).toContain('image')
   })
 
-  test('bir necha fayl ro\'yxat bo\'lib chiqadi', () => {
-    const natija = attachmentNote('ko\'rib chiq', [rasm, fayl])
+  test('several files come out as a list', () => {
+    const result = attachmentNote('take a look', [image, file])
 
-    expect(natija).toContain(rasm.yol)
-    expect(natija).toContain(fayl.yol)
+    expect(result).toContain(image.path)
+    expect(result).toContain(file.path)
   })
 
-  test('matn bo\'sh bo\'lsa ham eslatma qo\'shiladi', () => {
-    // Foydalanuvchi faqat fayl yuborib, hech narsa yozmasligi mumkin
-    const natija = attachmentNote('', [fayl])
+  test('the note is added even when the text is empty', () => {
+    // The user may send only a file and write nothing
+    const result = attachmentNote('', [file])
 
-    expect(natija).toContain(fayl.yol)
+    expect(result).toContain(file.path)
   })
 
-  // Fayl mazmuni promptga QO'YILMAYDI — agent `read` bilan o'zi oladi.
-  // Aks holda 10 MB log fayli kontekstni bir o'zi to'ldirardi.
-  test('fayl mazmuni promptga qo\'yilmaydi — faqat yo\'l', () => {
-    const natija = attachmentNote('tekshir', [fayl])
+  // The file contents are NOT PUT into the prompt — the agent fetches them
+  // itself with `read`. Otherwise a 10 MB log file would fill the context on
+  // its own.
+  test('the file contents are not put into the prompt — only the path', () => {
+    const result = attachmentNote('check it', [file])
 
-    expect(natija.length).toBeLessThan(500)
+    expect(result.length).toBeLessThan(500)
   })
 })
 
-// `afterToolCall` hook'lardan keyin natijani qayta quradi. Ilgari u
-// `content` ni butunlay `[{type:'text'}]` bilan almashtirardi va bu RASMNI
-// JIMGINA YO'Q QILARDI: `read` tool'i rasm faylini o'qiganda
-// `[{type:'text'}, {type:'image'}]` qaytaradi, hook'lar esa (`lengthHook`,
-// `redactSecretsHook`) deyarli har natijadan o'tadi.
+// `afterToolCall` rebuilds the result after the hooks. It used to replace
+// `content` entirely with `[{type:'text'}]` and that SILENTLY DESTROYED THE
+// IMAGE: when the `read` tool reads an image file it returns
+// `[{type:'text'}, {type:'image'}]`, while the hooks (`lengthHook`,
+// `redactSecretsHook`) run over nearly every result.
 //
-// Biriktirilgan rasm AYNAN shu yo'ldan keladi, ya'ni bu tuzatishsiz
-// "rasm biriktirish" funksiyasi ishlamas edi — xato xabarisiz.
+// An attached image comes in by EXACTLY that path, i.e. without this fix the
+// "attach an image" feature would not work — with no error message.
 describe('nonTextBlocks', () => {
-  const rasmNatijasi = {
+  const imageResult = {
     content: [
       { type: 'text', text: 'Read image file [image/png]' },
       { type: 'image', data: 'AAAA', mimeType: 'image/png' },
     ],
   }
 
-  test('rasm bloki saqlanadi', () => {
-    const bloklar = nonTextBlocks(rasmNatijasi)
+  test('the image block is kept', () => {
+    const blocks = nonTextBlocks(imageResult)
 
-    expect(bloklar).toHaveLength(1)
-    expect((bloklar[0] as { type: string }).type).toBe('image')
+    expect(blocks).toHaveLength(1)
+    expect((blocks[0] as { type: string }).type).toBe('image')
   })
 
-  test('matn bloklari olinmaydi — ular hook natijasidan qayta quriladi', () => {
-    const bloklar = nonTextBlocks({
+  test('text blocks are not taken — they are rebuilt from the hook result', () => {
+    const blocks = nonTextBlocks({
       content: [
-        { type: 'text', text: 'bir' },
-        { type: 'text', text: 'ikki' },
+        { type: 'text', text: 'one' },
+        { type: 'text', text: 'two' },
       ],
     })
 
-    expect(bloklar).toEqual([])
+    expect(blocks).toEqual([])
   })
 
-  test('bir necha rasm ham saqlanadi', () => {
-    const bloklar = nonTextBlocks({
+  test('several images are kept as well', () => {
+    const blocks = nonTextBlocks({
       content: [
         { type: 'text', text: 'x' },
         { type: 'image', data: 'A', mimeType: 'image/png' },
@@ -156,31 +158,31 @@ describe('nonTextBlocks', () => {
       ],
     })
 
-    expect(bloklar).toHaveLength(2)
+    expect(blocks).toHaveLength(2)
   })
 
-  test('noto\'g\'ri shakl yiqitmaydi', () => {
+  test('a malformed shape does not bring it down', () => {
     expect(nonTextBlocks(undefined)).toEqual([])
     expect(nonTextBlocks(null)).toEqual([])
-    expect(nonTextBlocks('matn')).toEqual([])
+    expect(nonTextBlocks('text')).toEqual([])
     expect(nonTextBlocks({})).toEqual([])
-    expect(nonTextBlocks({ content: 'massiv emas' })).toEqual([])
+    expect(nonTextBlocks({ content: 'not an array' })).toEqual([])
     expect(nonTextBlocks({ content: [null, undefined] })).toEqual([])
   })
 
-  // Filtr "image" ni ANIQ tanlaydi, "matn emas" deb inkor bilan emas.
-  // Sabab: pi kelajakda yangi blok turi qo'shsa (masalan `audio`), u
-  // tekshirilmagan holda providerga o'tib ketmasligi kerak.
-  test('notanish blok turi o\'tkazilmaydi', () => {
-    const bloklar = nonTextBlocks({
+  // The filter picks "image" EXPLICITLY, not by negation as "not text".
+  // The reason: if pi adds a new block kind in the future (`audio`, say), it
+  // must not slip through to the provider unchecked.
+  test('an unknown block kind is not let through', () => {
+    const blocks = nonTextBlocks({
       content: [
         { type: 'text', text: 'x' },
-        { type: 'kelajakdagi-tur', data: 'nimadir' },
+        { type: 'future-kind', data: 'something' },
         { type: 'image', data: 'A', mimeType: 'image/png' },
       ],
     })
 
-    expect(bloklar).toHaveLength(1)
-    expect(bloklar[0]!.type).toBe('image')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]!.type).toBe('image')
   })
 })

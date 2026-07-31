@@ -32,11 +32,11 @@ import type { Api, Model, Models } from '@earendil-works/pi-ai'
 
 /** A file attached to a message — only its path is shown to the agent */
 export interface MessageAttachment {
-  tur: 'rasm' | 'fayl'
+  kind: 'image' | 'file'
   /** The name the user gave — this is what appears in the note */
-  aslNom: string
+  originalName: string
   /** Path relative to the working directory — the agent passes this to `read` */
-  yol: string
+  path: string
 }
 
 /** A single stored message — in the shape it comes back from the database */
@@ -55,23 +55,23 @@ export interface StoredMessage {
    * `chat_messages.text`, otherwise the file name would end up in the
    * classifier's history.
    */
-  biriktirmalar?: MessageAttachment[]
+  attachments?: MessageAttachment[]
 }
 
 export interface CompactionOptions {
   /** Whether compaction is enabled at all */
-  yoqilgan: boolean
+  enabled: boolean
   /** The token reserve set aside for the summary prompt and its answer */
-  zaxiraTokenlar: number
+  reserveTokens: number
   /** The size of the most recent context left untouched after compaction */
-  saqlanadiganTokenlar: number
+  keptTokens: number
 }
 
 /** The maximum number of messages in the history — a hard limit applied even after compaction */
 export interface HistoryOptions {
-  maksXabar: number
+  maxMessages: number
   /** The maximum length (in characters) of a single tool result in the history */
-  toolNatijasiChegarasi: number
+  toolResultLimit: number
 }
 
 // ---------------------------------------------------------------------------
@@ -87,25 +87,25 @@ export interface HistoryOptions {
  * a pre-migration conversation is continued, its older part is text and its
  * newer part is complete.
  */
-export function buildContext(xabarlar: StoredMessage[]): AgentMessage[] {
+export function buildContext(messages: StoredMessage[]): AgentMessage[] {
   const result: AgentMessage[] = []
   const timestamp = Date.now()
 
-  for (const x of xabarlar) {
-    if (x.agentMessages?.length) {
+  for (const m of messages) {
+    if (m.agentMessages?.length) {
       // Raw JSON — we restore the type confidently, because we wrote it
       // ourselves. If it is corrupt the provider request errors out and the
-      // stream ends with `xato`; that beats a silently wrong context.
-      result.push(...(x.agentMessages as AgentMessage[]))
+      // stream ends with `error`; that beats a silently wrong context.
+      result.push(...(m.agentMessages as AgentMessage[]))
       continue
     }
-    if (!x.text.trim()) continue
+    if (!m.text.trim()) continue
     result.push(
-      x.role === 'user'
-        ? { role: 'user', content: x.text, timestamp }
+      m.role === 'user'
+        ? { role: 'user', content: m.text, timestamp }
         : {
             role: 'assistant',
-            content: [{ type: 'text', text: x.text }],
+            content: [{ type: 'text', text: m.text }],
             api: 'openai-completions',
             provider: 'history',
             model: 'history',
@@ -148,29 +148,29 @@ function emptyUsage() {
  * contains".
  */
 export function truncateToolResults(
-  xabarlar: AgentMessage[],
-  chegara: number,
+  messages: AgentMessage[],
+  limit: number,
 ): AgentMessage[] {
-  return xabarlar.map((x) => {
-    if (x.role !== 'toolResult') return x
-    const content = (x as { content?: unknown }).content
-    if (!Array.isArray(content)) return x
+  return messages.map((m) => {
+    if (m.role !== 'toolResult') return m
+    const content = (m as { content?: unknown }).content
+    if (!Array.isArray(content)) return m
 
     let changed = false
     const updated = content.map((piece) => {
       const b = piece as { type?: string; text?: string }
-      if (b?.type !== 'text' || typeof b.text !== 'string' || b.text.length <= chegara) {
+      if (b?.type !== 'text' || typeof b.text !== 'string' || b.text.length <= limit) {
         return piece
       }
       changed = true
-      const remaining = b.text.length - chegara
+      const remaining = b.text.length - limit
       return {
         ...b,
-        text: `${b.text.slice(0, chegara)}\n… (${remaining} characters truncated from history — read it again if you need it)`,
+        text: `${b.text.slice(0, limit)}\n… (${remaining} characters truncated from history — read it again if you need it)`,
       }
     })
 
-    return changed ? ({ ...x, content: updated } as AgentMessage) : x
+    return changed ? ({ ...m, content: updated } as AgentMessage) : m
   })
 }
 
@@ -190,46 +190,46 @@ export function truncateToolResults(
  * (`estimateContextTokens` combines the two).
  */
 export function needsCompaction(
-  xabarlar: AgentMessage[],
+  messages: AgentMessage[],
   contextWindow: number,
-  sozlama: CompactionOptions,
+  options: CompactionOptions,
 ): boolean {
-  if (!sozlama.yoqilgan) return false
+  if (!options.enabled) return false
   if (contextWindow <= 0) return false
-  const limit = contextWindow - sozlama.zaxiraTokenlar
+  const limit = contextWindow - options.reserveTokens
   if (limit <= 0) return false
-  return contextTokens(xabarlar) > limit
+  return contextTokens(messages) > limit
 }
 
 /** The approximate token size of the context */
-export function contextTokens(xabarlar: AgentMessage[]): number {
-  if (xabarlar.length === 0) return 0
-  return estimateContextTokens(xabarlar).tokens
+export function contextTokens(messages: AgentMessage[]): number {
+  if (messages.length === 0) return 0
+  return estimateContextTokens(messages).tokens
 }
 
 /**
  * Finds the boundary of the most recent messages kept during compaction.
  *
  * Walking backwards from the end, we collect messages until
- * `saqlanadiganTokenlar` is filled. The important rule: **you cannot cut in
+ * `keptTokens` is filled. The important rule: **you cannot cut in
  * the middle of a `toolResult`** — it has to stay together with the assistant
  * message that invoked it, otherwise the provider gets a context with "an
  * answer but no question" and rejects the request.
  */
-export function cutPoint(xabarlar: AgentMessage[], saqlanadiganTokenlar: number): number {
+export function cutPoint(messages: AgentMessage[], keptTokens: number): number {
   let total = 0
-  let point = xabarlar.length
+  let point = messages.length
 
-  for (let i = xabarlar.length - 1; i >= 0; i -= 1) {
-    const x = xabarlar[i]!
-    total += approximateTokens(x)
-    if (total > saqlanadiganTokenlar) break
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]!
+    total += approximateTokens(m)
+    if (total > keptTokens) break
     point = i
   }
 
   // Do not let it start at a `toolResult` — move back so the assistant
   // message that invoked it is covered too
-  while (point < xabarlar.length && xabarlar[point]?.role === 'toolResult') {
+  while (point < messages.length && messages[point]?.role === 'toolResult') {
     point -= 1
     if (point < 0) return 0
   }
@@ -244,7 +244,7 @@ export function cutPoint(xabarlar: AgentMessage[], saqlanadiganTokenlar: number)
  * The difference is catastrophic for a message with an image:
  * `JSON.stringify` counts the whole base64, so a 5 MB image came out as
  * ~1.7 million "tokens". In that case `cutPoint` could not fit even a single
- * image message into `saqlanadiganTokenlar`, and compaction sent the ENTIRE
+ * image message into `keptTokens`, and compaction sent the ENTIRE
  * RECENT HISTORY off to be summarised.
  *
  * pi instead counts an image as a fixed ~1200 tokens
@@ -255,8 +255,8 @@ export function cutPoint(xabarlar: AgentMessage[], saqlanadiganTokenlar: number)
  * Images arrive here through the `read` tool (when an attached image file is
  * read), so this case is not theoretical.
  */
-function approximateTokens(xabar: AgentMessage): number {
-  return estimateTokens(xabar)
+function approximateTokens(message: AgentMessage): number {
+  return estimateTokens(message)
 }
 
 // ---------------------------------------------------------------------------
@@ -264,35 +264,35 @@ function approximateTokens(xabar: AgentMessage): number {
 // ---------------------------------------------------------------------------
 
 export type CompactionResult =
-  | { holat: 'siqildi'; xabarlar: AgentMessage[]; xulosa: string; oldingiTokenlar: number }
-  | { holat: 'kerak_emas' }
-  | { holat: 'nosoz'; sabab: string }
+  | { status: 'compacted'; messages: AgentMessage[]; summary: string; previousTokens: number }
+  | { status: 'not_needed' }
+  | { status: 'failed'; reason: string }
 
 /**
  * Compacts the context: summarises its older part with the LLM and leaves the
  * newer part untouched.
  *
- * It does not throw — a problem comes back as `nosoz` and the caller falls
+ * It does not throw — a problem comes back as `failed` and the caller falls
  * back to the hard cut (`dropOldest`). The reason: compaction failing is not
  * grounds for stopping the conversation, there is a fallback path.
  */
 export async function compact(
-  xabarlar: AgentMessage[],
+  messages: AgentMessage[],
   models: Models,
   model: Model<Api>,
-  sozlama: CompactionOptions,
+  options: CompactionOptions,
   signal?: AbortSignal,
 ): Promise<CompactionResult> {
-  if (!sozlama.yoqilgan) return { holat: 'kerak_emas' }
+  if (!options.enabled) return { status: 'not_needed' }
 
-  const point = cutPoint(xabarlar, sozlama.saqlanadiganTokenlar)
+  const point = cutPoint(messages, options.keptTokens)
   // If the part to be cut is very small there is nothing to gain — the LLM
   // call costs tokens and time of its own
-  if (point <= 1) return { holat: 'kerak_emas' }
+  if (point <= 1) return { status: 'not_needed' }
 
-  const toCompact = xabarlar.slice(0, point)
-  const toKeep = xabarlar.slice(point)
-  const oldingiTokenlar = contextTokens(xabarlar)
+  const toCompact = messages.slice(0, point)
+  const toKeep = messages.slice(point)
+  const previousTokens = contextTokens(messages)
 
   // If there is a summary from an earlier compaction we find it — the new
   // summary builds on it, so the old context is not lost entirely
@@ -304,25 +304,25 @@ export async function compact(
       toCompact,
       models,
       model,
-      sozlama.zaxiraTokenlar,
+      options.reserveTokens,
       signal,
       undefined,
       previousSummary,
     )
-  } catch (xato) {
-    return { holat: 'nosoz', sabab: errorText(xato) }
+  } catch (error) {
+    return { status: 'failed', reason: errorText(error) }
   }
 
   if (!result.ok) {
-    return { holat: 'nosoz', sabab: result.error.message }
+    return { status: 'failed', reason: result.error.message }
   }
 
-  const xulosa = result.value
+  const summary = result.value
   return {
-    holat: 'siqildi',
-    xabarlar: [summaryMessage(xulosa), ...toKeep],
-    xulosa,
-    oldingiTokenlar,
+    status: 'compacted',
+    messages: [summaryMessage(summary), ...toKeep],
+    summary,
+    previousTokens,
   }
 }
 
@@ -334,23 +334,23 @@ export async function compact(
  * the model takes it as "this is what I said", and may treat the plans in the
  * summary as already carried out.
  */
-function summaryMessage(xulosa: string): AgentMessage {
+function summaryMessage(summary: string): AgentMessage {
   return {
     role: 'user',
-    content: `${COMPACTION_SUMMARY_PREFIX}${xulosa}${COMPACTION_SUMMARY_SUFFIX}`,
+    content: `${COMPACTION_SUMMARY_PREFIX}${summary}${COMPACTION_SUMMARY_SUFFIX}`,
     timestamp: Date.now(),
   } as AgentMessage
 }
 
 /** Finds the summary of an earlier compaction among the messages */
-function extractSummary(xabarlar: AgentMessage[]): string | undefined {
-  for (let i = xabarlar.length - 1; i >= 0; i -= 1) {
-    const x = xabarlar[i]
-    if (x?.role !== 'user' || typeof x.content !== 'string') continue
-    if (!x.content.startsWith(COMPACTION_SUMMARY_PREFIX)) continue
-    return x.content.slice(
+function extractSummary(messages: AgentMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]
+    if (m?.role !== 'user' || typeof m.content !== 'string') continue
+    if (!m.content.startsWith(COMPACTION_SUMMARY_PREFIX)) continue
+    return m.content.slice(
       COMPACTION_SUMMARY_PREFIX.length,
-      x.content.length - COMPACTION_SUMMARY_SUFFIX.length,
+      m.content.length - COMPACTION_SUMMARY_SUFFIX.length,
     )
   }
   return undefined
@@ -366,14 +366,14 @@ function extractSummary(xabarlar: AgentMessage[]): string | undefined {
  *
  * The rule about not starting at a `toolResult` applies here too.
  */
-export function dropOldest(xabarlar: AgentMessage[], maksXabar: number): AgentMessage[] {
-  if (xabarlar.length <= maksXabar) return xabarlar
+export function dropOldest(messages: AgentMessage[], maxMessages: number): AgentMessage[] {
+  if (messages.length <= maxMessages) return messages
 
-  let start = xabarlar.length - maksXabar
-  while (start < xabarlar.length && xabarlar[start]?.role === 'toolResult') start += 1
-  return xabarlar.slice(start)
+  let start = messages.length - maxMessages
+  while (start < messages.length && messages[start]?.role === 'toolResult') start += 1
+  return messages.slice(start)
 }
 
-function errorText(xato: unknown): string {
-  return xato instanceof Error ? xato.message : String(xato)
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

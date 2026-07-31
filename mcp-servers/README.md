@@ -74,7 +74,7 @@ A remote (http) server example:
 ## Important
 
 - Fields marked `isSecret: true` are **not written to the database** — they live
-  in a separate file (`~/.platforma/mcp-kredensiallar.json`, `chmod 600`).
+  in a separate file (`~/.platforma/mcp-credentials.json`, `chmod 600`).
 - After adding a file the server has to be restarted: the catalog is scanned on
   every startup (`mcp-builtin.ts`).
 - If you edit an entry, **do not change** its `name`: syncing is keyed by name,

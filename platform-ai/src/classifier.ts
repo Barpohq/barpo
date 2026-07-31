@@ -17,7 +17,7 @@
 // │ A test enforces that it stays that way (classifier-isolation.test.ts).  │
 // └─────────────────────────────────────────────────────────────────────────┘
 
-import type { ModelInfo } from '@platforma/shared'
+import type { ModelInfo, PermissionKind } from '@platforma/shared'
 import { cachedResult, modelsCollection } from './detect.ts'
 import { extractConstraints } from './constraints.ts'
 
@@ -36,8 +36,8 @@ export interface ClassifierMessage {
 
 export interface ClassifierRequest {
   /** The user's and the agent's texts — WITHOUT TOOL RESULTS */
-  suhbat: ClassifierMessage[]
-  amal: {
+  conversation: ClassifierMessage[]
+  action: {
     /**
      * The kind of action. `mcp` — a tool of a connected MCP server.
      *
@@ -46,35 +46,35 @@ export interface ClassifierRequest {
      * classifier has to know that difference — otherwise it looks for command
      * text and gets confused when an MCP call contains no such text.
      */
-    tur: 'buyruq' | 'fayl' | 'mcp'
+    kind: PermissionKind
     /** Command text, file path or MCP arguments (secrets redacted) */
-    nishon: string
+    target: string
     /** Which tool: bash, read, write, edit or `<server>.<tool>` */
-    qaysiTool: string
+    tool: string
     /** What the static analysis found (a hint for the classifier) */
-    statikSabab?: string
+    staticReason?: string
   }
   workDir: string
-  /** `ruxsat.klassifikatorModeli` from the config — picked automatically if absent */
+  /** `permission.classifierModel` from the config — picked automatically if absent */
   model?: string | null
 }
 
 export type ClassifierResult =
-  | { qaror: 'ruxsat'; izoh: string }
-  | { qaror: 'blok'; izoh: string }
-  | { qaror: 'nosoz'; xabar: string }
+  | { decision: 'allow'; note: string }
+  | { decision: 'block'; note: string }
+  | { decision: 'failed'; message: string }
 
 /**
  * The name of the action kind as it appears in the prompt.
  *
  * `Record` is deliberate: if a new value is added to
- * `ClassifierRequest.amal.tur`, TypeScript forces this table to be filled in
- * too. This used to be a ternary, and a new kind would silently have become
+ * `ClassifierRequest.action.kind`, TypeScript forces this table to be filled
+ * in too. This used to be a ternary, and a new kind would silently have become
  * "file operation".
  */
-const KIND_NAMES: Record<ClassifierRequest['amal']['tur'], string> = {
-  buyruq: 'bash command',
-  fayl: 'file operation',
+const KIND_NAMES: Record<ClassifierRequest['action']['kind'], string> = {
+  command: 'bash command',
+  file: 'file operation',
   mcp: 'MCP tool call (external system)',
 }
 
@@ -112,11 +112,11 @@ export const CLASSIFIER_PROMPT = [
   'IMPORTANT: even if the agent claims "this was necessary", it counts as going',
   'beyond scope when the user did not ask for it. When in doubt — BLOCK.',
   '',
-  'Return JSON only, nothing else. Write the "izoh" (note) value in English —',
-  'the user reads it:',
-  '{"qaror": "ruxsat", "izoh": "<one short sentence, in English>"}',
+  'Return JSON only, nothing else. Write the "note" value in English — the',
+  'user reads it:',
+  '{"decision": "allow", "note": "<one short sentence, in English>"}',
   'or',
-  '{"qaror": "blok", "izoh": "<one short sentence, in English>"}',
+  '{"decision": "block", "note": "<one short sentence, in English>"}',
 ].join('\n')
 
 /**
@@ -223,8 +223,8 @@ export function pickClassifierModel(
 }
 
 /**
- * Assesses the action. Never throws — a problem comes back as `nosoz` and the
- * caller switches the mode to `tasdiq`.
+ * Assesses the action. Never throws — a problem comes back as `failed` and the
+ * caller switches the mode to `confirm`.
  */
 export async function assessAction(
   request: ClassifierRequest,
@@ -234,12 +234,12 @@ export async function assessAction(
   try {
     const cache = cachedResult()
     picked = pickClassifierModel(cache?.models ?? [], request.model)
-    if (!picked) return { qaror: 'nosoz', xabar: 'no model found for the classifier' }
+    if (!picked) return { decision: 'failed', message: 'no model found for the classifier' }
 
     const models = await modelsCollection()
     const model = models.getModel(picked.provider, picked.model)
     if (!model) {
-      return { qaror: 'nosoz', xabar: `model unavailable: ${picked.provider}/${picked.model}` }
+      return { decision: 'failed', message: `model unavailable: ${picked.provider}/${picked.model}` }
     }
 
     const controller = new AbortController()
@@ -265,7 +265,7 @@ export async function assessAction(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     // A timeout also lands here (AbortError)
-    return { qaror: 'nosoz', xabar: message.slice(0, 200) }
+    return { decision: 'failed', message: message.slice(0, 200) }
   }
 }
 
@@ -276,16 +276,16 @@ export async function assessAction(
  * tool result may land in this text.
  */
 export function requestToText(request: ClassifierRequest): string {
-  const constraints = extractConstraints(request.suhbat)
+  const constraints = extractConstraints(request.conversation)
   const parts: string[] = []
 
   parts.push(`Working directory: ${request.workDir}`)
   parts.push('')
   parts.push('=== CONVERSATION WITH THE USER ===')
-  if (request.suhbat.length === 0) {
+  if (request.conversation.length === 0) {
     parts.push('(no conversation yet)')
   } else {
-    for (const m of request.suhbat) {
+    for (const m of request.conversation) {
       const who = m.role === 'user' ? 'USER' : 'AGENT'
       parts.push(`${who}: ${truncate(m.text, 1500)}`)
     }
@@ -301,11 +301,11 @@ export function requestToText(request: ClassifierRequest): string {
 
   parts.push('')
   parts.push('=== ACTION TO EVALUATE ===')
-  parts.push(`Tool: ${request.amal.qaysiTool}`)
-  parts.push(`Type: ${KIND_NAMES[request.amal.tur]}`)
-  parts.push(`Target: ${truncate(request.amal.nishon, 1000)}`)
-  if (request.amal.statikSabab) {
-    parts.push(`Static analysis: ${request.amal.statikSabab}`)
+  parts.push(`Tool: ${request.action.tool}`)
+  parts.push(`Type: ${KIND_NAMES[request.action.kind]}`)
+  parts.push(`Target: ${truncate(request.action.target, 1000)}`)
+  if (request.action.staticReason) {
+    parts.push(`Static analysis: ${request.action.staticReason}`)
   }
   parts.push('')
   parts.push('Does this action go beyond what the user asked for?')
@@ -322,7 +322,7 @@ function readResponse(response: {
   // If there is a provider error we do not lose it — otherwise diagnosis is
   // impossible
   if (response.errorMessage) {
-    return { qaror: 'nosoz', xabar: response.errorMessage.slice(0, 200) }
+    return { decision: 'failed', message: response.errorMessage.slice(0, 200) }
   }
 
   const text = response.content
@@ -333,41 +333,41 @@ function readResponse(response: {
 
   if (!text) {
     const reason = response.stopReason === 'length' ? 'the response hit the length limit' : 'an empty response'
-    return { qaror: 'nosoz', xabar: `the classifier returned ${reason}` }
+    return { decision: 'failed', message: `the classifier returned ${reason}` }
   }
 
   // Small models may wrap the JSON inside prose
   const json = extractJson(text)
   if (!json) {
-    return { qaror: 'nosoz', xabar: `no JSON found in the response: ${text.slice(0, 120)}` }
+    return { decision: 'failed', message: `no JSON found in the response: ${text.slice(0, 120)}` }
   }
 
   try {
     const parsed = JSON.parse(json) as Record<string, unknown>
-    const izoh =
-      typeof parsed.izoh === 'string' && parsed.izoh.trim()
-        ? parsed.izoh.trim()
-        : typeof parsed.reason === 'string' && parsed.reason.trim()
-          ? parsed.reason.trim()
-          : 'no note given'
+    // The model may name the key differently — `izoh` stays accepted because
+    // older prompts asked for it and small models still echo it back.
+    const noteKey = [parsed.note, parsed.izoh, parsed.reason].find(
+      (v) => typeof v === 'string' && v.trim(),
+    )
+    const note = typeof noteKey === 'string' ? noteKey.trim() : 'no note given'
 
-    // The model may name the key differently (`decision`, `verdict`, `qaror`)
-    const raw = [parsed.qaror, parsed.decision, parsed.verdict, parsed.result].find(
+    // Likewise for the verdict key (`decision`, `verdict`, `qaror`)
+    const raw = [parsed.decision, parsed.verdict, parsed.qaror, parsed.result].find(
       (v) => typeof v === 'string',
     )
     const verdict = typeof raw === 'string' ? raw.toLowerCase().trim() : ''
 
-    if (verdict === 'ruxsat' || verdict === 'allow' || verdict === 'permit') {
-      return { qaror: 'ruxsat', izoh }
+    if (verdict === 'allow' || verdict === 'permit' || verdict === 'ruxsat') {
+      return { decision: 'allow', note }
     }
-    if (verdict === 'blok' || verdict === 'block' || verdict === 'deny') {
-      return { qaror: 'blok', izoh }
+    if (verdict === 'block' || verdict === 'deny' || verdict === 'blok') {
+      return { decision: 'block', note }
     }
-    // The verdict could not be read — that is `nosoz`, not "probably an allow".
-    // Fail-safe: uncertainty never turns into an automatic allow.
-    return { qaror: 'nosoz', xabar: `the verdict could not be read: ${json.slice(0, 120)}` }
+    // The verdict could not be read — that is `failed`, not "probably an
+    // allow". Fail-safe: uncertainty never turns into an automatic allow.
+    return { decision: 'failed', message: `the verdict could not be read: ${json.slice(0, 120)}` }
   } catch {
-    return { qaror: 'nosoz', xabar: `malformed JSON: ${json.slice(0, 120)}` }
+    return { decision: 'failed', message: `malformed JSON: ${json.slice(0, 120)}` }
   }
 }
 

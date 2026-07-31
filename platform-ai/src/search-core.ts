@@ -69,7 +69,7 @@ export const SKIPPED_DIRS = [
   //
   // WHY IT IS SKIPPED. Conversations attached to a project share a single
   // directory (`work-dir.ts`), and uploads live in
-  // `.platforma/sessiyalar/<sid>/`. If it were not skipped, an agent `grep`
+  // `.platforma/sessions/<sid>/`. If it were not skipped, an agent `grep`
   // would return results from OTHER conversations' attached files — noise,
   // plus information leaking between conversations.
   //
@@ -81,7 +81,7 @@ export const SKIPPED_DIRS = [
   //
   // Given an explicit path the list is bypassed anyway (see the note above),
   // so the agent can freely read
-  // `read('.platforma/sessiyalar/…/fayllar/rasm.png')` — the attachment
+  // `read('.platforma/sessions/…/files/rasm.png')` — the attachment
   // flow relies on that.
   '.platforma',
   'node_modules',

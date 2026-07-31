@@ -357,9 +357,11 @@ export function createAppPublishTool(
           settings: Array.isArray(params.settings?.fields) ? params.settings.fields.length : 0,
           actions: Array.isArray(params.actions) ? params.actions.length : 0,
         },
-        // A rejected call must look like an ERROR to the model, otherwise it
-        // would carry on thinking the publish "succeeded".
-        isError: !result.ok,
+        // A rejected call has to read as a FAILURE to the model, otherwise it
+        // carries on believing the publish succeeded. `AgentToolResult` has no
+        // `isError` field, so the signal is carried by the text itself —
+        // `resultToText` opens with "was REJECTED and nothing was saved" — and
+        // by `details.ok` for the UI.
       }
     },
   }

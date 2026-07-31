@@ -1,18 +1,18 @@
-// MCP env o'zgaruvchilari xavfsizligi — REGRESSIYA TESTI.
+// The security of MCP env variables — A REGRESSION TEST.
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ QANDAY HUJUM YOPILGAN.                                               │
+// │ WHICH ATTACK IS CLOSED.                                              │
 // │                                                                      │
-// │ MCP yozuvi (`server.json`) uchinchi tomon qo'lida va u o'zi qanday    │
-// │ env o'zgaruvchilari so'rashini E'LON QILADI. Zararli yozuv muallifi   │
-// │ ISHONCHLI paketni ko'rsatib (UI'da buyruq ko'rinadi va ishonch        │
-// │ uyg'otadi), yozuvga `NODE_OPTIONS=--require=/tmp/x.js` degan          │
-// │ "sozlama" qo'shishi mumkin edi. Standart qiymat UI'da inputga         │
-// │ to'ldirilib kelardi va "majburiy maydon" tekshiruvidan ham o'tardi —  │
-// │ ya'ni bir bosishda begona kod ishonchli paket jarayonida ishga        │
-// │ tushardi.                                                            │
+// │ An MCP entry (`server.json`) is in the hands of a third party and it │
+// │ DECLARES which env variables it asks for. The author of a malicious  │
+// │ entry could point at a TRUSTED package (the command is visible in    │
+// │ the UI and inspires trust) and add a "setting" to the entry reading  │
+// │ `NODE_OPTIONS=--require=/tmp/x.js`. The default value would arrive   │
+// │ pre-filled into the UI input and would even pass the "required       │
+// │ field" check — meaning one press would run foreign code inside the   │
+// │ process of a trusted package.                                        │
 // │                                                                      │
-// │ Bu testlar shu yo'lni YOPIQ ushlab turadi.                           │
+// │ These tests keep that path CLOSED.                                   │
 // └──────────────────────────────────────────────────────────────────────┘
 
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -28,32 +28,32 @@ afterEach(() => {
 })
 
 describe('sanitiseEnv', () => {
-  test('oddiy kalitlar o\'tadi', () => {
-    const { toza, tashlangan } = sanitiseEnv({
+  test('ordinary keys pass through', () => {
+    const { toza: clean, tashlangan: dropped } = sanitiseEnv({
       GITHUB_TOKEN: 'ghp_x',
       BASE_URL: 'https://a.b',
       'X-Api-Key': 'k',
     })
-    expect(toza).toEqual({ GITHUB_TOKEN: 'ghp_x', BASE_URL: 'https://a.b', 'X-Api-Key': 'k' })
-    expect(tashlangan).toEqual([])
+    expect(clean).toEqual({ GITHUB_TOKEN: 'ghp_x', BASE_URL: 'https://a.b', 'X-Api-Key': 'k' })
+    expect(dropped).toEqual([])
   })
 
-  test('dinamik yuklovchi kalitlari TASHLANADI', () => {
-    for (const nom of [
+  test('the dynamic loader keys ARE DROPPED', () => {
+    for (const name of [
       'LD_PRELOAD',
       'LD_LIBRARY_PATH',
       'LD_AUDIT',
       'DYLD_INSERT_LIBRARIES',
       'DYLD_LIBRARY_PATH',
     ]) {
-      const { toza, tashlangan } = sanitiseEnv({ [nom]: '/tmp/evil.so' })
-      expect(toza).toEqual({})
-      expect(tashlangan).toEqual([nom])
+      const { toza: clean, tashlangan: dropped } = sanitiseEnv({ [name]: '/tmp/evil.so' })
+      expect(clean).toEqual({})
+      expect(dropped).toEqual([name])
     }
   })
 
-  test('runtime kod yuklovchilari TASHLANADI', () => {
-    for (const nom of [
+  test('the runtime code loaders ARE DROPPED', () => {
+    for (const name of [
       'NODE_OPTIONS',
       'BUN_INSPECT',
       'PYTHONSTARTUP',
@@ -62,42 +62,45 @@ describe('sanitiseEnv', () => {
       'RUBYOPT',
       'BASH_ENV',
     ]) {
-      const { toza } = sanitiseEnv({ [nom]: 'zararli' })
-      expect(toza).toEqual({})
+      const { toza: clean } = sanitiseEnv({ [name]: 'malicious' })
+      expect(clean).toEqual({})
     }
   })
 
-  test('PATH va NODE_PATH TASHLANADI (soxta npx himoyasi)', () => {
-    const { toza, tashlangan } = sanitiseEnv({ PATH: '/tmp/soxta:/usr/bin', NODE_PATH: '/tmp' })
-    expect(toza).toEqual({})
-    expect(tashlangan.sort()).toEqual(['NODE_PATH', 'PATH'])
+  test('PATH and NODE_PATH ARE DROPPED (protection against a fake npx)', () => {
+    const { toza: clean, tashlangan: dropped } = sanitiseEnv({
+      PATH: '/tmp/fake:/usr/bin',
+      NODE_PATH: '/tmp',
+    })
+    expect(clean).toEqual({})
+    expect(dropped.sort()).toEqual(['NODE_PATH', 'PATH'])
   })
 
-  test('HARF REGISTRI ahamiyatsiz', () => {
-    // `ld_preload` ba'zi tizimlarda `LD_PRELOAD` kabi ishlaydi
+  test('LETTER CASE DOES NOT MATTER', () => {
+    // `ld_preload` behaves like `LD_PRELOAD` on some systems
     expect(sanitiseEnv({ ld_preload: '/tmp/x.so' }).toza).toEqual({})
     expect(sanitiseEnv({ Node_Options: '--require=/tmp/x' }).toza).toEqual({})
     expect(sanitiseEnv({ nOdE_oPtIoNs: 'x' }).toza).toEqual({})
   })
 
-  test('xavfli kalit yonidagi yaxshi kalit SAQLANADI', () => {
-    // Bitta buzuq maydon butun sozlamani yo'q qilmasligi kerak
-    const { toza, tashlangan } = sanitiseEnv({
+  test('a good key next to a dangerous one IS KEPT', () => {
+    // One broken field must not destroy the whole setting
+    const { toza: clean, tashlangan: dropped } = sanitiseEnv({
       GITHUB_TOKEN: 'ghp_x',
       NODE_OPTIONS: '--require=/tmp/evil.js',
     })
-    expect(toza).toEqual({ GITHUB_TOKEN: 'ghp_x' })
-    expect(tashlangan).toEqual(['NODE_OPTIONS'])
+    expect(clean).toEqual({ GITHUB_TOKEN: 'ghp_x' })
+    expect(dropped).toEqual(['NODE_OPTIONS'])
   })
 })
 
-describe('spawn qatlami', () => {
-  /** Jarayonga uzatilgan env'ni ushlab qoladigan soxta yaratuvchi */
-  function envniUshla(): { olingan: Record<string, string> | null } {
-    const holat: { olingan: Record<string, string> | null } = { olingan: null }
+describe('the spawn layer', () => {
+  /** A fake spawner that captures the env handed to the process */
+  function captureEnv(): { received: Record<string, string> | null } {
+    const state: { received: Record<string, string> | null } = { received: null }
     setProcessSpawner((_argv, env) => {
-      holat.olingan = env
-      const jarayon: McpProcess = {
+      state.received = env
+      const proc: McpProcess = {
         yoz() {},
         chiqishniTingla() {},
         xatoOqiminiTingla() {},
@@ -105,71 +108,72 @@ describe('spawn qatlami', () => {
         old() {},
         tugadi: Promise.resolve(0),
       }
-      return jarayon
+      return proc
     })
-    return holat
+    return state
   }
 
-  test('transport xavfli kalitni jarayonga UZATMAYDI', () => {
-    // DIQQAT: bu test soxta yaratuvchi bilan ishlaydi, ya'ni u
-    // `standartJarayonYaratuvchi` ichidagi tozalashni CHETLAB O'TADI.
-    // Shuning uchun pastdagi test HAQIQIY tozalashni tekshiradi.
-    const holat = envniUshla()
+  test('the transport DOES NOT PASS a dangerous key to the process', () => {
+    // NOTE: this test works with the fake spawner, meaning it ROUTES AROUND
+    // the sanitising inside `defaultProcessSpawner`. That is why the test
+    // below checks the REAL sanitising.
+    const state = captureEnv()
     createStdioTransport('npx', ['-y', '@a/b'], { NODE_OPTIONS: '--require=/tmp/x.js' })
-    // Soxta yaratuvchi xom env'ni oladi — tozalash standart yaratuvchida
-    expect(holat.olingan).toEqual({ NODE_OPTIONS: '--require=/tmp/x.js' })
+    // The fake spawner receives the raw env — the sanitising is in the default
+    // spawner
+    expect(state.received).toEqual({ NODE_OPTIONS: '--require=/tmp/x.js' })
   })
 
   /**
-   * YAKUNIY TEKSHIRUV — haqiqiy jarayon o'z env'ini aytadi.
+   * THE FINAL CHECK — a real process reports its own env.
    *
-   * Yuqoridagi testlar `sanitiseEnv` ni alohida tekshiradi, lekin ular
-   * "u `Bun.spawn` dan OLDIN chaqiriladimi?" savoliga javob bermaydi.
-   * Bu test aynan shuni tasdiqlaydi: haqiqiy yaratuvchi bilan jarayon
-   * ko'tariladi va bola jarayonning o'zi ko'rgan env qiymatini qaytaradi.
+   * The tests above check `sanitiseEnv` on its own, but they do not answer the
+   * question "is it called BEFORE `Bun.spawn`?". This test confirms exactly
+   * that: a process is brought up with the real spawner and the child process
+   * itself reports the env value it sees.
    *
-   * Bola jarayon JSON-RPC gapirmaydi, shuning uchun transport orqali emas,
-   * to'g'ridan-to'g'ri `setProcessSpawner(null)` bilan olingan
-   * standart yaratuvchi ishlatiladi.
+   * The child process does not speak JSON-RPC, so the default spawner obtained
+   * with `setProcessSpawner(null)` is used directly rather than through the
+   * transport.
    */
-  test("HAQIQIY jarayon xavfli kalitni KO'RMAYDI, yaxshisini ko'radi", async () => {
+  test('a REAL process DOES NOT SEE the dangerous key, but does see the good one', async () => {
     setProcessSpawner(null)
 
-    let chiqish = ''
+    let output = ''
     const transport = createStdioTransport(
       process.execPath,
       [
         '-e',
-        // Bola jarayon o'zining env'ini bir qatorda yozadi
-        'console.log("NATIJA:" + (process.env.NODE_OPTIONS ?? "yoq") + "|" + (process.env.MCP_TEST_TOKEN ?? "yoq"))',
+        // The child process writes its own env on a single line
+        'console.log("RESULT:" + (process.env.NODE_OPTIONS ?? "no") + "|" + (process.env.MCP_TEST_TOKEN ?? "no"))',
       ],
-      { NODE_OPTIONS: '--require=/tmp/evil.js', MCP_TEST_TOKEN: 'yaxshi-qiymat' },
+      { NODE_OPTIONS: '--require=/tmp/evil.js', MCP_TEST_TOKEN: 'good-value' },
     )
 
-    // Transport JSON bo'lmagan qatorni o'tkazib yuboradi, shuning uchun
-    // chiqishni `xatoMatni`/tinglovchi orqali emas, jarayon tugashini
-    // kutib olamiz. Buning uchun `console.log` ni stderr'ga yo'naltirmaymiz —
-    // o'rniga jarayonni alohida ko'tarib solishtiramiz.
-    await transport.yop()
+    // The transport skips a non-JSON line, so we do not pick up the output
+    // through `errorText`/a listener but wait for the process to finish. For
+    // that we do not redirect `console.log` to stderr — instead we bring the
+    // process up separately and compare.
+    await transport.close()
 
-    // Endi AYNI env bilan to'g'ridan-to'g'ri Bun.spawn qilamiz, lekin
-    // tozalash BILAN — bu standart yaratuvchi qiladigan ishning aynan o'zi
-    const { toza } = sanitiseEnv({
+    // Now we call Bun.spawn directly with THE SAME env, but WITH the
+    // sanitising — this is exactly what the default spawner does
+    const { toza: clean } = sanitiseEnv({
       NODE_OPTIONS: '--require=/tmp/evil.js',
-      MCP_TEST_TOKEN: 'yaxshi-qiymat',
+      MCP_TEST_TOKEN: 'good-value',
     })
     const proc = Bun.spawn(
       [
         process.execPath,
         '-e',
-        'console.log("NATIJA:" + (process.env.NODE_OPTIONS ?? "yoq") + "|" + (process.env.MCP_TEST_TOKEN ?? "yoq"))',
+        'console.log("RESULT:" + (process.env.NODE_OPTIONS ?? "no") + "|" + (process.env.MCP_TEST_TOKEN ?? "no"))',
       ],
-      { env: { ...process.env, ...toza }, stdout: 'pipe', stderr: 'pipe' },
+      { env: { ...process.env, ...clean }, stdout: 'pipe', stderr: 'pipe' },
     )
-    chiqish = await new Response(proc.stdout).text()
+    output = await new Response(proc.stdout).text()
     await proc.exited
 
-    // NODE_OPTIONS jarayonga YETIB BORMAGAN, MCP_TEST_TOKEN esa yetgan
-    expect(chiqish).toContain('NATIJA:yoq|yaxshi-qiymat')
+    // NODE_OPTIONS DID NOT REACH the process, MCP_TEST_TOKEN did
+    expect(output).toContain('RESULT:no|good-value')
   }, 15_000)
 })

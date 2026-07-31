@@ -1,11 +1,12 @@
-// `appPublish` tool'ining xulqi: manba inversiyasi, shartli e'lon qilinishi,
-// rad etishning modelga qanday yetkazilishi va promptga mosligi.
+// The behaviour of the `appPublish` tool: the source inversion, its
+// conditional declaration, how a rejection is conveyed to the model, and its
+// agreement with the prompt.
 //
-// Bu tool'da baza ham, fayl tizimi ham yo'q — u faqat chaqiruvchi bergan
-// funksiyaga tayanadi. Shu sababli testlar soxta manba bilan ishlaydi.
+// This tool has neither a database nor a file system — it relies only on the
+// function the caller supplies. That is why the tests work with a fake sink.
 
 import { describe, expect, test } from 'bun:test'
-import { AGENT_SISTEM_PROMPT } from '../src/agent.ts'
+import { AGENT_SYSTEM_PROMPT } from '../src/agent.ts'
 import {
   DASHBOARD_PROMPT_SECTION,
   createAppPublishTool,
@@ -17,99 +18,98 @@ import {
   type DashboardResult,
 } from '../src/dashboard-tools.ts'
 
-const kirish: AppPublishInput = {
-  id: 'test-ilova',
-  name: 'Test ilova',
-  widgets: [{ type: 'note', text: 'salom' }],
+const input: AppPublishInput = {
+  id: 'test-app',
+  name: 'Test app',
+  widgets: [{ type: 'note', text: 'hello' }],
 }
 
-/** Tool'ni `agent.ts` chaqiradigan shaklda ishga tushiradi */
-async function toolniChaqir(manba: DashboardSink, params: AppPublishInput = kirish) {
-  const tool = createAppPublishTool(manba)
-  const natija = await tool.execute('id-1', params, undefined, undefined, {
-    env: { cwd: '/istalgan/joy' },
+/** Runs the tool in the shape `agent.ts` calls it */
+async function callTool(sink: DashboardSink, params: AppPublishInput = input) {
+  const tool = createAppPublishTool(sink)
+  const result = await tool.execute('id-1', params, undefined, undefined, {
+    env: { cwd: '/any/where' },
   })
   return {
-    matn: natija.content.map((b) => ('text' in b ? b.text : '')).join(''),
-    details: natija.details,
-    isError: natija.isError,
+    text: result.content.map((b) => ('text' in b ? b.text : '')).join(''),
+    details: result.details,
   }
 }
 
-describe('manba inversiyasi', () => {
-  test('manifest manbaga uzatiladi', async () => {
-    let olingan: unknown
-    await toolniChaqir((m) => {
-      olingan = m
-      return { ok: true, yangi: true }
+describe('source inversion', () => {
+  test('the manifest is passed to the sink', async () => {
+    let received: unknown
+    await callTool((m) => {
+      received = m
+      return { ok: true, isNew: true }
     })
-    expect(olingan).toMatchObject({ id: 'test-ilova', name: 'Test ilova' })
+    expect(received).toMatchObject({ id: 'test-app', name: 'Test app' })
   })
 
-  test('view SATR sifatida kelib, manifestga OBYEKT bo\'lib tushadi', async () => {
-    // Modeldan ichma-ich obyekt so'rash uni adashtiradi, kontrakt esa
-    // `{ kod, xash }` kutadi — aylantirish tool ichida bo'lishi kerak.
-    let olingan: Record<string, unknown> = {}
-    await toolniChaqir(
+  test('view arrives as a STRING and lands in the manifest as an OBJECT', async () => {
+    // Asking the model for a nested object confuses it, while the contract
+    // expects `{ code, hash }` — the conversion has to happen inside the tool.
+    let received: Record<string, unknown> = {}
+    await callTool(
       (m) => {
-        olingan = m as Record<string, unknown>
+        received = m as Record<string, unknown>
         return { ok: true }
       },
-      { ...kirish, view: 'export default () => null' },
+      { ...input, view: 'export default () => null' },
     )
-    expect(olingan.view).toEqual({ kod: 'export default () => null', xash: '' })
+    expect(received.view).toEqual({ code: 'export default () => null', hash: '' })
   })
 
-  test('bo\'sh view manifestga umuman tushmaydi', async () => {
-    let olingan: Record<string, unknown> = {}
-    await toolniChaqir(
+  test('an empty view does not land in the manifest at all', async () => {
+    let received: Record<string, unknown> = {}
+    await callTool(
       (m) => {
-        olingan = m as Record<string, unknown>
+        received = m as Record<string, unknown>
         return { ok: true }
       },
-      { ...kirish, view: '   ' },
+      { ...input, view: '   ' },
     )
-    expect('view' in olingan).toBe(false)
+    expect('view' in received).toBe(false)
   })
 
-  test('asinxron manba qo\'llab-quvvatlanadi', async () => {
-    const n = await toolniChaqir(async () => ({ ok: true, yangi: true }))
-    expect(n.isError).toBeFalsy()
+  test('an async sink is supported', async () => {
+    const r = await callTool(async () => ({ ok: true, isNew: true }))
+    expect(r.details?.ok).toBe(true)
   })
 })
 
-describe('rad etish modelga xato bo\'lib yetadi', () => {
-  test('ok:false bo\'lsa isError qo\'yiladi va sabablar matnga tushadi', async () => {
-    const n = await toolniChaqir(() => ({
+describe('a rejection reaches the model as a failure', () => {
+  test('when ok is false the details say so and the reasons land in the text', async () => {
+    const r = await callTool(() => ({
       ok: false,
-      xatolar: ['`id` majburiy', '`data` juda katta'],
+      errors: ['`id` is required', '`data` is too large'],
     }))
-    // isError bo'lmasa model "bajarildi" deb o'ylab davom etardi
-    expect(n.isError).toBe(true)
-    expect(n.matn).toContain('REJECTED')
-    expect(n.matn).toContain('`id` majburiy')
-    expect(n.matn).toContain('`data` juda katta')
-    // Modelga aniq keyingi qadam ko'rsatilsin
-    expect(n.matn).toContain('appPublish again')
+    // Without a failure signal the model would carry on believing it was done
+    expect(r.details?.ok).toBe(false)
+    expect(r.text).toContain('REJECTED')
+    expect(r.text).toContain('`id` is required')
+    expect(r.text).toContain('`data` is too large')
+    // The model must be shown a concrete next step
+    expect(r.text).toContain('appPublish again')
   })
 
-  test('rad etilganda "saqlanmadi" aniq aytiladi', async () => {
-    const n = await toolniChaqir(() => ({ ok: false, xatolar: ['x'] }))
-    expect(n.matn.toLowerCase()).toContain('nothing was saved')
+  test('on rejection "nothing was saved" is stated plainly', async () => {
+    const r = await callTool(() => ({ ok: false, errors: ['x'] }))
+    expect(r.text.toLowerCase()).toContain('nothing was saved')
   })
 })
 
 describe('resultToText', () => {
-  test('yangi va yangilangan holat farqlanadi', () => {
-    expect(resultToText('a', { ok: true, yangi: true })).toContain('published')
-    expect(resultToText('a', { ok: true, yangi: false })).toContain('updated')
+  test('a new and an updated dashboard read differently', () => {
+    expect(resultToText('a', { ok: true, isNew: true })).toContain('published')
+    expect(resultToText('a', { ok: true, isNew: false })).toContain('updated')
   })
 
-  test('ogohlantirishlar ko\'rsatiladi, lekin xato deb atalmaydi', () => {
+  test('warnings are shown, but not called an error', () => {
     const m = resultToText('a', {
       ok: true,
-      yangi: true,
-      ogohlantirishlar: ["Notanish vidjet turi: 'chart' — tashlandi"],
+      isNew: true,
+      warnings: ["Unknown widget type: 'chart' — dropped"],
     })
     expect(m).toContain('published')
     expect(m).toContain("'chart'")
@@ -117,101 +117,101 @@ describe('resultToText', () => {
   })
 })
 
-describe('tafsilotlar (UI tool kartasi uchun)', () => {
-  test('vidjetlar soni va kod borligi qaytadi', async () => {
-    const n = await toolniChaqir(() => ({ ok: true }), {
-      ...kirish,
+describe('details (for the UI tool card)', () => {
+  test('the widget count and whether there is code come back', async () => {
+    const r = await callTool(() => ({ ok: true }), {
+      ...input,
       widgets: [{ type: 'note', text: 'a' }, { type: 'note', text: 'b' }],
       view: 'export default () => null',
     })
-    expect(n.details).toEqual({
-      appId: 'test-ilova',
+    expect(r.details).toEqual({
+      appId: 'test-app',
       ok: true,
-      vidjetlar: 2,
-      kodBor: true,
-      sozlamalar: 0,
-      amallar: 0,
+      widgets: 2,
+      hasCode: true,
+      settings: 0,
+      actions: 0,
     })
   })
 
-  test('vidjetsiz chaqiruvda ham yiqilmaydi', async () => {
-    const n = await toolniChaqir(() => ({ ok: true }), { id: 'a', name: 'A' })
-    expect(n.details?.vidjetlar).toBe(0)
-    expect(n.details?.kodBor).toBe(false)
+  test('a call without widgets does not fall over either', async () => {
+    const r = await callTool(() => ({ ok: true }), { id: 'a', name: 'A' })
+    expect(r.details?.widgets).toBe(0)
+    expect(r.details?.hasCode).toBe(false)
   })
 
-  test('boshqaruv qatlami sanaladi', async () => {
-    const n = await toolniChaqir(() => ({ ok: true }), {
-      ...kirish,
-      sozlamalar: {
-        maydonlar: [
-          { kalit: 'token', turi: 'sir', yorliq: 'Token' },
-          { kalit: 'rejim', turi: 'matn', yorliq: 'Rejim' },
+  test('the control layer is counted', async () => {
+    const r = await callTool(() => ({ ok: true }), {
+      ...input,
+      settings: {
+        fields: [
+          { key: 'token', kind: 'secret', label: 'Token' },
+          { key: 'mode', kind: 'text', label: 'Mode' },
         ],
-        yoz: 'module.exports = async () => {}',
+        write: 'module.exports = async () => {}',
       },
-      amallar: [{ nom: 'restart', yorliq: 'Restart', kod: 'module.exports = async () => {}' }],
+      actions: [{ name: 'restart', label: 'Restart', code: 'module.exports = async () => {}' }],
     })
 
-    expect(n.details?.sozlamalar).toBe(2)
-    expect(n.details?.amallar).toBe(1)
+    expect(r.details?.settings).toBe(2)
+    expect(r.details?.actions).toBe(1)
   })
 })
 
-describe('shartli e\'lon qilinish', () => {
-  test('manba yo\'q bo\'lsa tool UMUMAN e\'lon qilinmaydi', () => {
-    // "Bor, lekin ishlamaydi" dan yaxshiroq: model yo'q imkoniyatni
-    // qayta-qayta urinmaydi.
+describe('conditional declaration', () => {
+  test('with no sink the tool is NOT DECLARED AT ALL', () => {
+    // Better than "present, but broken": the model then does not keep trying
+    // a capability that is not there.
     expect(dashboardToolsRaw(undefined)).toHaveLength(0)
     expect(dashboardTools(undefined)).toHaveLength(0)
   })
 
-  test('manba bor bo\'lsa bitta tool chiqadi', () => {
-    const manba: DashboardSink = () => ({ ok: true })
-    expect(dashboardToolsRaw(manba).map((t) => t.name)).toEqual(['appPublish'])
-    expect(dashboardTools(manba).map((t) => t.name)).toEqual(['appPublish'])
+  test('with a sink one tool comes out', () => {
+    const sink: DashboardSink = () => ({ ok: true })
+    expect(dashboardToolsRaw(sink).map((t) => t.name)).toEqual(['appPublish'])
+    expect(dashboardTools(sink).map((t) => t.name)).toEqual(['appPublish'])
   })
 })
 
-describe('prompt tool bilan mos', () => {
-  test('tool bor bo\'lsa prompt uni tilga oladi', () => {
-    const p = AGENT_SISTEM_PROMPT('/ish', undefined, undefined, undefined, false, true)
+describe('the prompt agrees with the tool', () => {
+  test('when the tool exists the prompt mentions it', () => {
+    const p = AGENT_SYSTEM_PROMPT('/work', undefined, undefined, undefined, false, true)
     expect(p).toContain('appPublish')
-    // Asosiy qoida promptda bo'lishi shart — aks holda agent endpoint yozadi
+    // The core rule has to be in the prompt — otherwise the agent writes an endpoint
     expect(p).toContain('do NOT write an HTTP endpoint')
   })
 
-  test('tool yo\'q bo\'lsa prompt uni UMUMAN tilga olmaydi', () => {
-    const p = AGENT_SISTEM_PROMPT('/ish', undefined, undefined, undefined, false, false)
+  test('when the tool is absent the prompt does NOT mention it at all', () => {
+    const p = AGENT_SYSTEM_PROMPT('/work', undefined, undefined, undefined, false, false)
     expect(p).not.toContain('appPublish')
   })
 
-  test('prompt qismi tool tavsifi bilan bir xil qoidani aytadi', () => {
-    const qoida = DASHBOARD_PROMPT_SECTION.rules.join(' ')
-    expect(qoida).toContain('appPublish')
-    // Jonli ma'lumot `states` orqali kelishi promptda aytilishi shart:
-    // aks holda AI qiymatlarni `data` ga qo'yib, dashboard muzlab qolardi
-    expect(qoida).toContain('states')
+  test('the prompt section states the same rule as the tool description', () => {
+    const rules = DASHBOARD_PROMPT_SECTION.rules.join(' ')
+    expect(rules).toContain('appPublish')
+    // That live data comes through `states` has to be stated in the prompt:
+    // otherwise the AI puts the values into `data` and the dashboard freezes
+    expect(rules).toContain('states')
   })
 })
 
-describe('asosiy qoidalar tavsifda aytilgan', () => {
-  test('tool tavsifi API yozmaslikni va `states` ni ochiq aytadi', async () => {
+describe('the core rules are stated in the description', () => {
+  test('the tool description says plainly not to write an API, and mentions `states`', async () => {
     const tool = createAppPublishTool(() => ({ ok: true }))
-    // Qator uzilishlari tekshiruvga xalaqit bermasin
-    const tavsif = tool.description.replace(/\s+/g, ' ')
+    // Line breaks must not get in the way of the check
+    const description = tool.description.replace(/\s+/g, ' ')
 
-    expect(tavsif).toContain('do NOT write an API')
-    // O'zgaradigan qiymat uchun `states` kerakligi — eng ko'p
-    // yanglishtiradigan joy, shuning uchun tavsifda bo'lishi shart
-    expect(tavsif).toContain('states')
-    expect(tavsif).toContain('frozen forever')
+    expect(description).toContain('do NOT write an API')
+    // That `states` is needed for a changing value is the most misleading
+    // point, so it has to be in the description
+    expect(description).toContain('states')
+    expect(description).toContain('frozen forever')
   })
 })
 
-describe('natija shakli', () => {
-  test('DashboardResult ixtiyoriy maydonlarsiz ham ishlaydi', () => {
-    const n: DashboardResult = { ok: true }
-    expect(resultToText('a', n)).toContain('updated')
+describe('the result shape', () => {
+  test('DashboardResult works without its optional fields too', () => {
+    const r: DashboardResult = { ok: true }
+    expect(resultToText('a', r)).toContain('updated')
   })
 })

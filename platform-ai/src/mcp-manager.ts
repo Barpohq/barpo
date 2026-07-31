@@ -105,7 +105,7 @@ export class McpManager {
 
   constructor(
     readonly sessionId: string,
-    private ruxsat: PermissionManager,
+    private permission: PermissionManager,
   ) {}
 
   /** How many servers are connected */
@@ -191,12 +191,12 @@ export class McpManager {
       )
     }
 
-    const answer = await this.ruxsat.sora({
-      tur: 'mcp',
-      amal: `${serverName}.${toolName}`,
-      nishon: argsToTarget(args),
-      sabab: `the "${toolName}" tool of the "${serverName}" MCP server reaches an external system`,
-      naqsh: mcpPattern(serverName, toolName),
+    const answer = await this.permission.ask({
+      kind: 'mcp',
+      action: `${serverName}.${toolName}`,
+      target: argsToTarget(args),
+      reason: `the "${toolName}" tool of the "${serverName}" MCP server reaches an external system`,
+      pattern: mcpPattern(serverName, toolName),
     })
 
     if (answer === 'deny') {

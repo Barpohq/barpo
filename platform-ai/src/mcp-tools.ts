@@ -32,6 +32,8 @@ import type { SearchTool } from './search-tools.ts'
 export interface McpToolDetail {
   serverName: string
   toolName: string
+  /** Whether the MCP tool itself reported a failure — shown on the tool card */
+  isError?: boolean
 }
 
 /** The prefix of the tool names the agent sees */
@@ -102,18 +104,22 @@ export function mcpToolsRaw(manager?: McpManager): SearchTool<never>[] {
         signal?: AbortSignal,
       ): Promise<AgentToolResult<McpToolDetail>> {
         // THE PERMISSION CHECK IS INSIDE THIS CALL — the `call()` method
-        // (`mcp-manager.ts`) calls `sora()` itself. There is NO extra check
+        // (`mcp-manager.ts`) calls `ask()` itself. There is NO extra check
         // here: one gate, not two places.
         const result = await manager.call(serverId, tool.name, params, signal)
+        const content = result.content.map((c) => ({
+          type: 'text' as const,
+          text: c.text ?? '',
+        }))
+        // If the tool itself returned a failing result the agent has to SEE
+        // that — otherwise it treats the failure as a success and moves on.
+        // `AgentToolResult` carries no `isError` field, so the failure is
+        // marked in the text instead.
         return {
-          content: result.content.map((c) => ({
-            type: 'text' as const,
-            text: c.text ?? '',
-          })),
-          // If the tool itself returned a failing result we show it to the
-          // agent as such — it may look for another way.
-          isError: result.isError,
-          details: { serverName, toolName: tool.name },
+          content: result.isError
+            ? [{ type: 'text' as const, text: `The MCP tool reported an error:\n${content.map((c) => c.text).join('\n')}` }]
+            : content,
+          details: { serverName, toolName: tool.name, isError: result.isError },
         }
       },
     }
@@ -138,7 +144,7 @@ export function mcpTools(manager?: McpManager): AgentTool<never>[] {
 }
 
 /**
- * The section appended to `AGENT_SISTEM_PROMPT`.
+ * The section appended to `AGENT_SYSTEM_PROMPT`.
  *
  * It is added ONLY WHEN MCP TOOLS EXIST (the `hasMcp` flag in `agent.ts`).
  * Otherwise the model would waste time thinking about a capability that is not

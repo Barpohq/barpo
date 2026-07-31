@@ -1,386 +1,389 @@
-// Skilllar: baza qatlami + loyihaga sinxronlash.
+// Skills: the database layer + syncing into a project.
 //
-// Tarmoq so'rovlari (GitHub) SINALMAYDI — ular tashqi xizmatga bog'liq.
-// Bu yerda ular kelgandan KEYINGI mantiq tekshiriladi: katalog UPSERT'i,
-// qamrov, va diskdagi `.platforma/skills/` ning bazaga moslashuvi.
+// Network requests (GitHub) are NOT EXERCISED — they depend on an external
+// service. What is checked here is the logic that runs AFTER they return: the
+// catalog UPSERT, the scope, and how `.platforma/skills/` on disk is brought
+// into line with the database.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bazaOch, dbOrnat } from '../src/db.ts'
-import { manzilniAjrat } from '../src/github.ts'
+import { openDb, setDb } from '../src/db.ts'
+import { parseGithubRef } from '../src/github.ts'
 import {
-  faolSkilllar,
-  loyihaYarat,
-  manbaOchir,
-  manbalarOqi,
-  manbaYarat,
-  skillOqi,
-  skillOrnat,
-  skillOrnatishniOchir,
-  skilllarniSinxronla,
-  skilllarOqi,
+  activeSkills,
+  createProject,
+  deleteSkillSource,
+  readSkillSources,
+  createSkillSource,
+  readSkill,
+  installSkill,
+  uninstallSkill,
+  syncSkills,
+  readSkills,
 } from '../src/repo.ts'
-import { ISH_SKILL_PAPKASI, loyihagaSinxronla, skillOmborYoli } from '../src/skill-ombor.ts'
+import { WORK_SKILL_DIR, syncToProject, skillStorePath } from '../src/skill-store.ts'
 
 let db: Database
-let ombor: string
+let store: string
 
 beforeEach(() => {
-  db = bazaOch(':memory:')
-  dbOrnat(db)
-  ombor = mkdtempSync(join(tmpdir(), 'ombor-'))
-  process.env.PLATFORMA_SKILLS = ombor
+  db = openDb(':memory:')
+  setDb(db)
+  store = mkdtempSync(join(tmpdir(), 'store-'))
+  process.env.PLATFORM_SKILLS = store
 })
 
 afterEach(() => {
+  setDb(null)
   db.close()
-  rmSync(ombor, { recursive: true, force: true })
-  delete process.env.PLATFORMA_SKILLS
+  rmSync(store, { recursive: true, force: true })
+  delete process.env.PLATFORM_SKILLS
 })
 
-/** Test uchun manba + bitta skill */
-function manbaVaSkill(nom = 'pdf-fill', yol = `${nom}/SKILL.md`) {
-  const manba = manbaYarat(
-    { tur: 'github', url: `https://github.com/test/${nom}`, owner: 'test', repo: nom, ref: 'main' },
+/** A source plus one skill, for the tests */
+function sourceAndSkill(name = 'pdf-fill', path = `${name}/SKILL.md`) {
+  const source = createSkillSource(
+    { kind: 'github', url: `https://github.com/test/${name}`, owner: 'test', repo: name, ref: 'main' },
     db,
   )
-  skilllarniSinxronla(
-    manba.id,
-    [{ yol, nom, tavsif: `${nom} tavsifi`, ogohlantirishlar: [] }],
+  syncSkills(
+    source.id,
+    [{ path, name, description: `${name} description`, warnings: [] }],
     'sha1',
     db,
   )
-  const skill = skilllarOqi(db).find((s) => s.yol === yol)!
-  return { manba, skill }
+  const skill = readSkills(db).find((s) => s.path === path)!
+  return { source, skill }
 }
 
 // ---------------------------------------------------------------------------
 
-describe('manzilniAjrat', () => {
-  test('to\'liq URL', () => {
-    expect(manzilniAjrat('https://github.com/anthropics/skills')).toEqual({
+describe('parseGithubRef', () => {
+  test('a full URL', () => {
+    expect(parseGithubRef('https://github.com/anthropics/skills')).toEqual({
       owner: 'anthropics',
       repo: 'skills',
       ref: '',
     })
   })
 
-  test('qisqa shakl', () => {
-    expect(manzilniAjrat('anthropics/skills')).toEqual({
+  test('the short form', () => {
+    expect(parseGithubRef('anthropics/skills')).toEqual({
       owner: 'anthropics',
       repo: 'skills',
       ref: '',
     })
   })
 
-  test('.git qo\'shimchasi olib tashlanadi', () => {
-    expect(manzilniAjrat('github.com/a/b.git')?.repo).toBe('b')
+  test('the .git suffix is stripped', () => {
+    expect(parseGithubRef('github.com/a/b.git')?.repo).toBe('b')
   })
 
-  test('/tree/<branch> dan ref olinadi', () => {
-    expect(manzilniAjrat('https://github.com/a/b/tree/dev')?.ref).toBe('dev')
+  test('the ref is taken from /tree/<branch>', () => {
+    expect(parseGithubRef('https://github.com/a/b/tree/dev')?.ref).toBe('dev')
   })
 
-  test('SSH shakli', () => {
-    expect(manzilniAjrat('git@github.com:a/b.git')).toEqual({ owner: 'a', repo: 'b', ref: '' })
+  test('the SSH form', () => {
+    expect(parseGithubRef('git@github.com:a/b.git')).toEqual({ owner: 'a', repo: 'b', ref: '' })
   })
 
-  test('noto\'g\'ri manzil null', () => {
-    expect(manzilniAjrat('')).toBeNull()
-    expect(manzilniAjrat('shunchaki-matn')).toBeNull()
-    // `owner` yoki `repo` da yo'l belgilari — API URL'iga sizib ketmasin
-    expect(manzilniAjrat('../etc/passwd')).toBeNull()
-    expect(manzilniAjrat('a b/c')).toBeNull()
+  test('an invalid address gives null', () => {
+    expect(parseGithubRef('')).toBeNull()
+    expect(parseGithubRef('just-text')).toBeNull()
+    // Path characters in `owner` or `repo` — they must not leak into the API URL
+    expect(parseGithubRef('../etc/passwd')).toBeNull()
+    expect(parseGithubRef('a b/c')).toBeNull()
   })
 
-  test('ortiqcha yo\'l bo\'laklari e\'tiborsiz qoladi', () => {
-    // `tree`/`blob` bo'lmagan qo'shimcha bo'laklar ref bermaydi, ya'ni
-    // `..` API so'roviga tushmaydi
-    expect(manzilniAjrat('a/b/../../etc')).toEqual({ owner: 'a', repo: 'b', ref: '' })
+  test('extra path segments are ignored', () => {
+    // Segments that are not `tree`/`blob` give no ref, so `..` never reaches
+    // the API request
+    expect(parseGithubRef('a/b/../../etc')).toEqual({ owner: 'a', repo: 'b', ref: '' })
   })
 
-  test('ref da `..` bo\'lsa rad etiladi', () => {
-    // Ref URL'ga qo'shiladi — u yerda yo'l chiqishi xavfli
-    expect(manzilniAjrat('https://github.com/a/b/tree/../../../etc')).toBeNull()
+  test('a `..` in the ref is rejected', () => {
+    // The ref is appended to the URL — path traversal there is dangerous
+    expect(parseGithubRef('https://github.com/a/b/tree/../../../etc')).toBeNull()
   })
 })
 
 // ---------------------------------------------------------------------------
 
-describe('manba va katalog', () => {
-  test('manba yaratiladi va o\'qiladi', () => {
-    const m = manbaYarat(
-      { tur: 'github', url: 'https://github.com/a/b', owner: 'a', repo: 'b', ref: 'main' },
+describe('sources and the catalog', () => {
+  test('a source is created and read back', () => {
+    const s = createSkillSource(
+      { kind: 'github', url: 'https://github.com/a/b', owner: 'a', repo: 'b', ref: 'main' },
       db,
     )
-    expect(manbalarOqi(db)).toHaveLength(1)
-    expect(m.owner).toBe('a')
+    expect(readSkillSources(db)).toHaveLength(1)
+    expect(s.owner).toBe('a')
   })
 
-  test('takroriy ulash mavjudini qaytaradi (xato emas)', () => {
-    const bir = manbaYarat(
-      { tur: 'github', url: 'https://github.com/a/b', owner: 'a', repo: 'b', ref: 'main' },
+  test('connecting twice returns the existing one (not an error)', () => {
+    const one = createSkillSource(
+      { kind: 'github', url: 'https://github.com/a/b', owner: 'a', repo: 'b', ref: 'main' },
       db,
     )
-    const ikki = manbaYarat(
-      { tur: 'github', url: 'boshqa-url', owner: 'a', repo: 'b', ref: 'main' },
+    const two = createSkillSource(
+      { kind: 'github', url: 'another-url', owner: 'a', repo: 'b', ref: 'main' },
       db,
     )
-    expect(ikki.id).toBe(bir.id)
-    expect(manbalarOqi(db)).toHaveLength(1)
+    expect(two.id).toBe(one.id)
+    expect(readSkillSources(db)).toHaveLength(1)
   })
 
-  test('sinxronlash: qo\'shildi / yangilandi / o\'chirildi', () => {
-    const m = manbaYarat(
-      { tur: 'github', url: 'u', owner: 'a', repo: 'b', ref: 'main' },
+  test('syncing: added / updated / deleted', () => {
+    const s = createSkillSource(
+      { kind: 'github', url: 'u', owner: 'a', repo: 'b', ref: 'main' },
       db,
     )
 
-    const bir = skilllarniSinxronla(
-      m.id,
+    const first = syncSkills(
+      s.id,
       [
-        { yol: 'x/SKILL.md', nom: 'x', tavsif: 'X', ogohlantirishlar: [] },
-        { yol: 'y/SKILL.md', nom: 'y', tavsif: 'Y', ogohlantirishlar: [] },
+        { path: 'x/SKILL.md', name: 'x', description: 'X', warnings: [] },
+        { path: 'y/SKILL.md', name: 'y', description: 'Y', warnings: [] },
       ],
       'sha1',
       db,
     )
-    expect(bir).toEqual({ qoshildi: 2, yangilandi: 0, ochirildi: 0 })
+    expect(first).toEqual({ added: 2, updated: 0, deleted: 0 })
 
-    // `y` repo'dan ketdi, `z` qo'shildi, `x` qoldi
-    const ikki = skilllarniSinxronla(
-      m.id,
+    // `y` left the repo, `z` was added, `x` stayed
+    const second = syncSkills(
+      s.id,
       [
-        { yol: 'x/SKILL.md', nom: 'x', tavsif: 'X yangi', ogohlantirishlar: [] },
-        { yol: 'z/SKILL.md', nom: 'z', tavsif: 'Z', ogohlantirishlar: [] },
+        { path: 'x/SKILL.md', name: 'x', description: 'X new', warnings: [] },
+        { path: 'z/SKILL.md', name: 'z', description: 'Z', warnings: [] },
       ],
       'sha2',
       db,
     )
-    expect(ikki).toEqual({ qoshildi: 1, yangilandi: 1, ochirildi: 1 })
-    expect(skilllarOqi(db).find((s) => s.nom === 'x')?.tavsif).toBe('X yangi')
+    expect(second).toEqual({ added: 1, updated: 1, deleted: 1 })
+    expect(readSkills(db).find((s) => s.name === 'x')?.description).toBe('X new')
   })
 
-  test('sinxronlashda o\'rnatish SAQLANADI — id o\'zgarmaydi', () => {
-    const { manba, skill } = manbaVaSkill()
-    skillOrnat(skill.id, 'global', null, db)
+  test('the install SURVIVES a sync — the id does not change', () => {
+    const { source, skill } = sourceAndSkill()
+    installSkill(skill.id, 'global', null, db)
 
-    skilllarniSinxronla(
-      manba.id,
-      [{ yol: skill.yol, nom: skill.nom, tavsif: 'yangi tavsif', ogohlantirishlar: [] }],
+    syncSkills(
+      source.id,
+      [{ path: skill.path, name: skill.name, description: 'new description', warnings: [] }],
       'sha2',
       db,
     )
 
-    const keyin = skillOqi(skill.id, db)
-    expect(keyin?.tavsif).toBe('yangi tavsif')
-    expect(keyin?.ornatilgan).toHaveLength(1) // o'rnatish yo'qolmadi
+    const after = readSkill(skill.id, db)
+    expect(after?.description).toBe('new description')
+    expect(after?.installs).toHaveLength(1) // the install was not lost
   })
 
-  test('manba o\'chirilsa skilllari ham ketadi (CASCADE)', () => {
-    const { manba } = manbaVaSkill()
-    expect(skilllarOqi(db)).toHaveLength(1)
+  test('removing a source removes its skills too (CASCADE)', () => {
+    const { source } = sourceAndSkill()
+    expect(readSkills(db)).toHaveLength(1)
 
-    manbaOchir(manba.id, db)
-    expect(skilllarOqi(db)).toHaveLength(0)
+    deleteSkillSource(source.id, db)
+    expect(readSkills(db)).toHaveLength(0)
   })
 
-  test('allowedTools va ogohlantirishlar saqlanadi', () => {
-    const m = manbaYarat({ tur: 'github', url: 'u', owner: 'a', repo: 'b', ref: '' }, db)
-    skilllarniSinxronla(
-      m.id,
+  test('allowedTools and warnings are stored', () => {
+    const s = createSkillSource({ kind: 'github', url: 'u', owner: 'a', repo: 'b', ref: '' }, db)
+    syncSkills(
+      s.id,
       [
         {
-          yol: 'x/SKILL.md',
-          nom: 'x',
-          tavsif: 'X',
+          path: 'x/SKILL.md',
+          name: 'x',
+          description: 'X',
           allowedTools: ['read', 'bash'],
-          ogohlantirishlar: ['nom mos emas'],
+          warnings: ['the name does not match'],
         },
       ],
       null,
       db,
     )
-    const s = skilllarOqi(db)[0]
-    expect(s?.allowedTools).toEqual(['read', 'bash'])
-    expect(s?.ogohlantirishlar).toEqual(['nom mos emas'])
+    const skill = readSkills(db)[0]
+    expect(skill?.allowedTools).toEqual(['read', 'bash'])
+    expect(skill?.warnings).toEqual(['the name does not match'])
   })
 })
 
 // ---------------------------------------------------------------------------
 
-describe('qamrov (o\'rnatish)', () => {
-  test('global o\'rnatish', () => {
-    const { skill } = manbaVaSkill()
-    skillOrnat(skill.id, 'global', null, db)
+describe('scope (installing)', () => {
+  test('a global install', () => {
+    const { skill } = sourceAndSkill()
+    installSkill(skill.id, 'global', null, db)
 
-    expect(skillOqi(skill.id, db)?.ornatilgan).toEqual([{ qamrov: 'global', projectId: undefined }])
+    expect(readSkill(skill.id, db)?.installs).toEqual([{ scope: 'global', projectId: undefined }])
   })
 
-  test('bir skill BIR NECHA loyihaga o\'rnatiladi', () => {
-    const { skill } = manbaVaSkill()
-    const l1 = loyihaYarat('bir', '/tmp/bir', db)
-    const l2 = loyihaYarat('ikki', '/tmp/ikki', db)
+  test('one skill installs into SEVERAL projects', () => {
+    const { skill } = sourceAndSkill()
+    const p1 = createProject('one', '/tmp/one', db)
+    const p2 = createProject('two', '/tmp/two', db)
 
-    skillOrnat(skill.id, 'loyiha', l1.id, db)
-    skillOrnat(skill.id, 'loyiha', l2.id, db)
+    installSkill(skill.id, 'project', p1.id, db)
+    installSkill(skill.id, 'project', p2.id, db)
 
-    expect(skillOqi(skill.id, db)?.ornatilgan).toHaveLength(2)
+    expect(readSkill(skill.id, db)?.installs).toHaveLength(2)
   })
 
-  test('takroriy o\'rnatish idempotent', () => {
-    const { skill } = manbaVaSkill()
-    skillOrnat(skill.id, 'global', null, db)
-    skillOrnat(skill.id, 'global', null, db)
+  test('installing twice is idempotent', () => {
+    const { skill } = sourceAndSkill()
+    installSkill(skill.id, 'global', null, db)
+    installSkill(skill.id, 'global', null, db)
 
-    expect(skillOqi(skill.id, db)?.ornatilgan).toHaveLength(1)
+    expect(readSkill(skill.id, db)?.installs).toHaveLength(1)
   })
 
-  test('o\'rnatishni bekor qilish', () => {
-    const { skill } = manbaVaSkill()
-    skillOrnat(skill.id, 'global', null, db)
-    expect(skillOrnatishniOchir(skill.id, 'global', null, db)).toBe(true)
-    expect(skillOqi(skill.id, db)?.ornatilgan).toEqual([])
+  test('uninstalling', () => {
+    const { skill } = sourceAndSkill()
+    installSkill(skill.id, 'global', null, db)
+    expect(uninstallSkill(skill.id, 'global', null, db)).toBe(true)
+    expect(readSkill(skill.id, db)?.installs).toEqual([])
   })
 
-  test('faolSkilllar: global + loyihaniki qaytadi', () => {
-    const { skill: global } = manbaVaSkill('global-skill')
-    const { skill: loyihali } = manbaVaSkill('loyiha-skill')
-    const { skill: begona } = manbaVaSkill('begona-skill')
+  test("activeSkills: the global ones plus the project's own", () => {
+    const { skill: global } = sourceAndSkill('global-skill')
+    const { skill: scoped } = sourceAndSkill('project-skill')
+    const { skill: other } = sourceAndSkill('other-skill')
 
-    const l1 = loyihaYarat('bir', '/tmp/bir', db)
-    const l2 = loyihaYarat('ikki', '/tmp/ikki', db)
+    const p1 = createProject('one', '/tmp/one', db)
+    const p2 = createProject('two', '/tmp/two', db)
 
-    skillOrnat(global.id, 'global', null, db)
-    skillOrnat(loyihali.id, 'loyiha', l1.id, db)
-    skillOrnat(begona.id, 'loyiha', l2.id, db)
+    installSkill(global.id, 'global', null, db)
+    installSkill(scoped.id, 'project', p1.id, db)
+    installSkill(other.id, 'project', p2.id, db)
 
-    const faol = faolSkilllar(l1.id, db).map((s) => s.nom).sort()
-    expect(faol).toEqual(['global-skill', 'loyiha-skill'])
+    const active = activeSkills(p1.id, db).map((s) => s.name).sort()
+    expect(active).toEqual(['global-skill', 'project-skill'])
   })
 
-  test('loyihasiz sessiyada faqat global', () => {
-    const { skill: global } = manbaVaSkill('global-skill')
-    const { skill: loyihali } = manbaVaSkill('loyiha-skill')
-    const l1 = loyihaYarat('bir', '/tmp/bir', db)
+  test('a session without a project sees only the global ones', () => {
+    const { skill: global } = sourceAndSkill('global-skill')
+    const { skill: scoped } = sourceAndSkill('project-skill')
+    const p1 = createProject('one', '/tmp/one', db)
 
-    skillOrnat(global.id, 'global', null, db)
-    skillOrnat(loyihali.id, 'loyiha', l1.id, db)
+    installSkill(global.id, 'global', null, db)
+    installSkill(scoped.id, 'project', p1.id, db)
 
-    expect(faolSkilllar(null, db).map((s) => s.nom)).toEqual(['global-skill'])
+    expect(activeSkills(null, db).map((s) => s.name)).toEqual(['global-skill'])
   })
 
-  test('o\'rnatilmagan skill faol emas', () => {
-    manbaVaSkill()
-    expect(faolSkilllar(null, db)).toEqual([])
+  test('a skill that is not installed is not active', () => {
+    sourceAndSkill()
+    expect(activeSkills(null, db)).toEqual([])
   })
 })
 
 // ---------------------------------------------------------------------------
 
-describe('loyihagaSinxronla — disk', () => {
-  let ish: string
+describe('syncToProject — disk', () => {
+  let work: string
 
   beforeEach(() => {
-    ish = mkdtempSync(join(tmpdir(), 'ish-'))
+    work = mkdtempSync(join(tmpdir(), 'work-'))
   })
 
   afterEach(() => {
-    rmSync(ish, { recursive: true, force: true })
+    rmSync(work, { recursive: true, force: true })
   })
 
-  /** Ombor ga skill fayllarini qo'yadi (o'rnatish natijasini taqlid qiladi) */
-  function omborgaYoz(manbaId: string, skillId: string, mazmun: string) {
-    const yol = skillOmborYoli(manbaId, skillId)
-    mkdirSync(yol, { recursive: true })
-    writeFileSync(join(yol, 'SKILL.md'), mazmun)
+  /** Puts skill files into the store (imitating the result of an install) */
+  function writeToStore(sourceId: string, skillId: string, content: string) {
+    const path = skillStorePath(sourceId, skillId)
+    mkdirSync(path, { recursive: true })
+    writeFileSync(join(path, 'SKILL.md'), content)
   }
 
-  test('ombordan ish papkasiga NUSXALANADI (symlink emas)', () => {
-    const { manba, skill } = manbaVaSkill()
-    omborgaYoz(manba.id, skill.id, '---\nname: pdf-fill\ndescription: t\n---')
+  test('it is COPIED from the store into the working directory (not symlinked)', () => {
+    const { source, skill } = sourceAndSkill()
+    writeToStore(source.id, skill.id, '---\nname: pdf-fill\ndescription: t\n---')
 
-    const natija = loyihagaSinxronla(ish, [skill])
-    expect(natija.nusxalandi).toBe(1)
+    const result = syncToProject(work, [skill])
+    expect(result.copied).toBe(1)
 
-    const nishon = join(ish, ISH_SKILL_PAPKASI, 'pdf-fill', 'SKILL.md')
-    expect(existsSync(nishon)).toBe(true)
-    expect(readFileSync(nishon, 'utf8')).toContain('pdf-fill')
+    const target = join(work, WORK_SKILL_DIR, 'pdf-fill', 'SKILL.md')
+    expect(existsSync(target)).toBe(true)
+    expect(readFileSync(target, 'utf8')).toContain('pdf-fill')
   })
 
-  test('nusxa mustaqil — ish papkasidagini o\'zgartirish omborga tegmaydi', () => {
-    // Symlink bo'lganda bu test yiqilardi: bir loyihadagi agent
-    // ombordagi aslini buzib, hamma loyihaga zarar qilardi
-    const { manba, skill } = manbaVaSkill()
-    omborgaYoz(manba.id, skill.id, 'ASL')
-    loyihagaSinxronla(ish, [skill])
+  test('the copy is independent — editing it in the working directory does not touch the store', () => {
+    // With a symlink this test would fail: an agent in one project would
+    // damage the original in the store and harm every project
+    const { source, skill } = sourceAndSkill()
+    writeToStore(source.id, skill.id, 'ORIGINAL')
+    syncToProject(work, [skill])
 
-    writeFileSync(join(ish, ISH_SKILL_PAPKASI, 'pdf-fill', 'SKILL.md'), 'BUZILGAN')
+    writeFileSync(join(work, WORK_SKILL_DIR, 'pdf-fill', 'SKILL.md'), 'DAMAGED')
 
-    const omborFayli = join(skillOmborYoli(manba.id, skill.id), 'SKILL.md')
-    expect(readFileSync(omborFayli, 'utf8')).toBe('ASL')
+    const storeFile = join(skillStorePath(source.id, skill.id), 'SKILL.md')
+    expect(readFileSync(storeFile, 'utf8')).toBe('ORIGINAL')
   })
 
-  test('bazada yo\'q skill diskdan O\'CHIRILADI', () => {
-    const { manba, skill } = manbaVaSkill()
-    omborgaYoz(manba.id, skill.id, 'x')
-    loyihagaSinxronla(ish, [skill])
-    expect(existsSync(join(ish, ISH_SKILL_PAPKASI, 'pdf-fill'))).toBe(true)
+  test('a skill that is not in the database is DELETED from disk', () => {
+    const { source, skill } = sourceAndSkill()
+    writeToStore(source.id, skill.id, 'x')
+    syncToProject(work, [skill])
+    expect(existsSync(join(work, WORK_SKILL_DIR, 'pdf-fill'))).toBe(true)
 
-    // Endi skill o'rnatilmagan — sinxronlash uni olib tashlashi kerak
-    const natija = loyihagaSinxronla(ish, [])
-    expect(natija.ochirildi).toBe(1)
-    expect(existsSync(join(ish, ISH_SKILL_PAPKASI, 'pdf-fill'))).toBe(false)
+    // The skill is no longer installed — the sync must take it away
+    const result = syncToProject(work, [])
+    expect(result.deleted).toBe(1)
+    expect(existsSync(join(work, WORK_SKILL_DIR, 'pdf-fill'))).toBe(false)
   })
 
-  test('qo\'lda qo\'yilgan papka ham o\'chiriladi — papka BOSHQARILADI', () => {
-    mkdirSync(join(ish, ISH_SKILL_PAPKASI, 'qolbola'), { recursive: true })
-    const natija = loyihagaSinxronla(ish, [])
-    expect(natija.ochirildi).toBe(1)
-    expect(existsSync(join(ish, ISH_SKILL_PAPKASI, 'qolbola'))).toBe(false)
+  test('a hand-placed directory is deleted too — the directory IS MANAGED', () => {
+    mkdirSync(join(work, WORK_SKILL_DIR, 'homemade'), { recursive: true })
+    const result = syncToProject(work, [])
+    expect(result.deleted).toBe(1)
+    expect(existsSync(join(work, WORK_SKILL_DIR, 'homemade'))).toBe(false)
   })
 
-  test('ombor yangilanса nusxa ham yangilanadi', () => {
-    const { manba, skill } = manbaVaSkill()
-    omborgaYoz(manba.id, skill.id, 'ESKI')
-    loyihagaSinxronla(ish, [skill])
+  test('when the store is updated the copy is updated too', () => {
+    const { source, skill } = sourceAndSkill()
+    writeToStore(source.id, skill.id, 'OLD')
+    syncToProject(work, [skill])
 
-    omborgaYoz(manba.id, skill.id, 'YANGI')
-    loyihagaSinxronla(ish, [skill])
+    writeToStore(source.id, skill.id, 'NEW')
+    syncToProject(work, [skill])
 
-    expect(readFileSync(join(ish, ISH_SKILL_PAPKASI, 'pdf-fill', 'SKILL.md'), 'utf8')).toBe('YANGI')
+    expect(readFileSync(join(work, WORK_SKILL_DIR, 'pdf-fill', 'SKILL.md'), 'utf8')).toBe('NEW')
   })
 
-  test('ombor da yo\'q skill jim o\'tkazib yuboriladi', () => {
-    const { skill } = manbaVaSkill()
-    // omborga hech narsa yozilmadi
-    const natija = loyihagaSinxronla(ish, [skill])
-    expect(natija.nusxalandi).toBe(0)
+  test('a skill missing from the store is skipped silently', () => {
+    const { skill } = sourceAndSkill()
+    // nothing was written to the store
+    const result = syncToProject(work, [skill])
+    expect(result.copied).toBe(0)
   })
 
-  test('ichki papkalar ham nusxalanadi (scripts/ va h.k.)', () => {
-    const { manba, skill } = manbaVaSkill()
-    const omborYol = skillOmborYoli(manba.id, skill.id)
-    mkdirSync(join(omborYol, 'scripts'), { recursive: true })
-    writeFileSync(join(omborYol, 'SKILL.md'), 'x')
-    writeFileSync(join(omborYol, 'scripts', 'ish.sh'), 'echo hi')
+  test('nested directories are copied too (scripts/ and so on)', () => {
+    const { source, skill } = sourceAndSkill()
+    const storePath = skillStorePath(source.id, skill.id)
+    mkdirSync(join(storePath, 'scripts'), { recursive: true })
+    writeFileSync(join(storePath, 'SKILL.md'), 'x')
+    writeFileSync(join(storePath, 'scripts', 'run.sh'), 'echo hi')
 
-    loyihagaSinxronla(ish, [skill])
+    syncToProject(work, [skill])
 
-    expect(existsSync(join(ish, ISH_SKILL_PAPKASI, 'pdf-fill', 'scripts', 'ish.sh'))).toBe(true)
+    expect(existsSync(join(work, WORK_SKILL_DIR, 'pdf-fill', 'scripts', 'run.sh'))).toBe(true)
   })
 
-  test('xavfli nomli skill papka nomiga aylanmaydi', () => {
-    const { manba, skill } = manbaVaSkill()
-    omborgaYoz(manba.id, skill.id, 'x')
+  test('a dangerous name does not become a directory name', () => {
+    const { source, skill } = sourceAndSkill()
+    writeToStore(source.id, skill.id, 'x')
 
-    // Nom bazada `../../evil` bo'lsa ham papka ish papkasidan chiqmasin
-    const yovuz = { ...skill, nom: '../../evil' }
-    loyihagaSinxronla(ish, [yovuz])
+    // Even if the name in the database is `../../evil`, the directory must not
+    // escape the working directory
+    const evil = { ...skill, name: '../../evil' }
+    syncToProject(work, [evil])
 
-    expect(existsSync(join(ish, '..', '..', 'evil'))).toBe(false)
+    expect(existsSync(join(work, '..', '..', 'evil'))).toBe(false)
   })
 })

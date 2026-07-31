@@ -1,8 +1,9 @@
-// Kredensial ombori yangilangan tokenni manba fayliga qaytaradimi?
+// Does the credential store write the refreshed token back to the source file?
 //
-// Bu eng muhim halqa: pi-ai refresh qilganda natijani `modify` orqali yozadi,
-// biz esa o'sha yerdan ~/.codex/auth.json ni yangilaymiz. Bu ishlamasa
-// rotatsiyadan keyin terminaldagi `codex` o'lik token bilan qoladi.
+// This is the most important link: when pi-ai refreshes, it writes the result
+// through `modify`, and from there we update ~/.codex/auth.json. If this does
+// not work, `codex` in the terminal is left with a dead token after a
+// rotation.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -11,117 +12,117 @@ import { join } from 'node:path'
 import type { Credential } from '@earendil-works/pi-ai'
 import { FileCredentialStore } from '../src/credentials.ts'
 
-let uy: string
-let omborYoli: string
+let home: string
+let storePath: string
 
 beforeEach(() => {
-  uy = mkdtempSync(join(tmpdir(), 'platforma-ombor-'))
-  omborYoli = join(uy, 'ombor', 'ai-auth.json')
-  mkdirSync(join(uy, '.codex'), { recursive: true })
+  home = mkdtempSync(join(tmpdir(), 'platforma-store-'))
+  storePath = join(home, 'store', 'ai-auth.json')
+  mkdirSync(join(home, '.codex'), { recursive: true })
   writeFileSync(
-    join(uy, '.codex', 'auth.json'),
+    join(home, '.codex', 'auth.json'),
     JSON.stringify({
       auth_mode: 'chatgpt',
-      tokens: { access_token: 'eski-a', refresh_token: 'eski-r', id_token: 'eski-id' },
+      tokens: { access_token: 'old-a', refresh_token: 'old-r', id_token: 'old-id' },
     }),
     { mode: 0o600 },
   )
 })
 
 afterEach(() => {
-  rmSync(uy, { recursive: true, force: true })
+  rmSync(home, { recursive: true, force: true })
 })
 
-function codexOqi(): Record<string, any> {
-  return JSON.parse(readFileSync(join(uy, '.codex', 'auth.json'), 'utf8'))
+function readCodex(): Record<string, any> {
+  return JSON.parse(readFileSync(join(home, '.codex', 'auth.json'), 'utf8'))
 }
 
-const yangi: Credential = {
+const fresh: Credential = {
   type: 'oauth',
-  access: 'rotatsiyalangan-a',
-  refresh: 'rotatsiyalangan-r',
+  access: 'rotated-a',
+  refresh: 'rotated-r',
   expires: Date.now() + 86_400_000,
 }
 
-describe('FileCredentialStore manba sinxronizatsiyasi', () => {
-  test('openai-codex yangilanganda ~/.codex/auth.json ham yangilanadi', async () => {
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+describe('FileCredentialStore source syncing', () => {
+  test('when openai-codex is updated ~/.codex/auth.json is updated too', async () => {
+    const store = new FileCredentialStore(storePath, { home })
 
-    await ombor.modify('openai-codex', async () => yangi)
+    await store.modify('openai-codex', async () => fresh)
 
-    expect(codexOqi().tokens.refresh_token).toBe('rotatsiyalangan-r')
-    expect(codexOqi().tokens.access_token).toBe('rotatsiyalangan-a')
+    expect(readCodex().tokens.refresh_token).toBe('rotated-r')
+    expect(readCodex().tokens.access_token).toBe('rotated-a')
   })
 
-  test('sinxronizatsiya id_token va auth_mode ni buzmaydi', async () => {
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+  test('the sync does not break id_token or auth_mode', async () => {
+    const store = new FileCredentialStore(storePath, { home })
 
-    await ombor.modify('openai-codex', async () => yangi)
+    await store.modify('openai-codex', async () => fresh)
 
-    expect(codexOqi().tokens.id_token).toBe('eski-id')
-    expect(codexOqi().auth_mode).toBe('chatgpt')
+    expect(readCodex().tokens.id_token).toBe('old-id')
+    expect(readCodex().auth_mode).toBe('chatgpt')
   })
 
-  test('boshqa provider codex fayliga tegmaydi', async () => {
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+  test('another provider does not touch the codex file', async () => {
+    const store = new FileCredentialStore(storePath, { home })
 
-    await ombor.modify('anthropic', async () => yangi)
+    await store.modify('anthropic', async () => fresh)
 
-    expect(codexOqi().tokens.refresh_token).toBe('eski-r')
+    expect(readCodex().tokens.refresh_token).toBe('old-r')
   })
 
-  test('api_key turidagi kredensial codex fayliga yozilmaydi', async () => {
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+  test('an api_key credential is not written to the codex file', async () => {
+    const store = new FileCredentialStore(storePath, { home })
 
-    const kalit: Credential = { type: 'api_key', key: 'sk-test' }
-    await ombor.modify('openai-codex', async () => kalit)
+    const key: Credential = { type: 'api_key', key: 'sk-test' }
+    await store.modify('openai-codex', async () => key)
 
-    expect(codexOqi().tokens.refresh_token).toBe('eski-r')
+    expect(readCodex().tokens.refresh_token).toBe('old-r')
   })
 
-  test('o\'zgarishsiz qoldirilsa (undefined) codex fayliga yozilmaydi', async () => {
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+  test('when it is left unchanged (undefined) nothing is written to the codex file', async () => {
+    const store = new FileCredentialStore(storePath, { home })
 
-    await ombor.modify('openai-codex', async () => undefined)
+    await store.modify('openai-codex', async () => undefined)
 
-    expect(codexOqi().tokens.refresh_token).toBe('eski-r')
+    expect(readCodex().tokens.refresh_token).toBe('old-r')
   })
 
-  test('manbagaSinxron: false bo\'lsa codex fayli tegilmaydi', async () => {
-    const ombor = new FileCredentialStore(omborYoli, { uy, manbagaSinxron: false })
+  test('with syncToSource: false the codex file is not touched', async () => {
+    const store = new FileCredentialStore(storePath, { home, syncToSource: false })
 
-    await ombor.modify('openai-codex', async () => yangi)
+    await store.modify('openai-codex', async () => fresh)
 
-    expect(codexOqi().tokens.refresh_token).toBe('eski-r')
+    expect(readCodex().tokens.refresh_token).toBe('old-r')
   })
 
-  test('codex fayli yo\'q bo\'lsa ham ombor ishlayveradi', async () => {
-    rmSync(join(uy, '.codex'), { recursive: true, force: true })
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+  test('the store keeps working even when the codex file is missing', async () => {
+    rmSync(join(home, '.codex'), { recursive: true, force: true })
+    const store = new FileCredentialStore(storePath, { home })
 
-    const natija = await ombor.modify('openai-codex', async () => yangi)
+    const result = await store.modify('openai-codex', async () => fresh)
 
-    expect(natija).toEqual(yangi)
-    expect(await ombor.read('openai-codex')).toEqual(yangi)
+    expect(result).toEqual(fresh)
+    expect(await store.read('openai-codex')).toEqual(fresh)
   })
 
-  test('codex fayli buzuq bo\'lsa ham ombor o\'z ishini bajaradi', async () => {
-    writeFileSync(join(uy, '.codex', 'auth.json'), '{buzuq')
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+  test('the store does its own job even when the codex file is broken', async () => {
+    writeFileSync(join(home, '.codex', 'auth.json'), '{broken')
+    const store = new FileCredentialStore(storePath, { home })
 
-    const natija = await ombor.modify('openai-codex', async () => yangi)
+    const result = await store.modify('openai-codex', async () => fresh)
 
-    expect(natija).toEqual(yangi)
-    expect(await ombor.read('openai-codex')).toEqual(yangi)
+    expect(result).toEqual(fresh)
+    expect(await store.read('openai-codex')).toEqual(fresh)
   })
 
-  test('ketma-ket ikkita refresh — oxirgi token manbada qoladi', async () => {
-    const ombor = new FileCredentialStore(omborYoli, { uy })
+  test('two refreshes in a row — the last token stays in the source', async () => {
+    const store = new FileCredentialStore(storePath, { home })
 
-    await ombor.modify('openai-codex', async () => yangi)
-    const ikkinchi: Credential = { ...yangi, access: 'ikkinchi-a', refresh: 'ikkinchi-r' }
-    await ombor.modify('openai-codex', async () => ikkinchi)
+    await store.modify('openai-codex', async () => fresh)
+    const second: Credential = { ...fresh, access: 'second-a', refresh: 'second-r' }
+    await store.modify('openai-codex', async () => second)
 
-    expect(codexOqi().tokens.refresh_token).toBe('ikkinchi-r')
+    expect(readCodex().tokens.refresh_token).toBe('second-r')
   })
 })

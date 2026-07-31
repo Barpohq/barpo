@@ -1,8 +1,8 @@
-// MCP HTTP transport — `Bun.serve` bilan haqiqiy server orqali.
+// The MCP HTTP transport — through a real server run with `Bun.serve`.
 //
-// Ikkala variant tekshiriladi: `streamable-http` (oddiy JSON javob) va
-// `sse` (`text/event-stream`). Ular bitta transport sinfi bilan ishlanadi —
-// farq faqat javob formatida, shuning uchun ikkalasi ham sinalishi kerak.
+// Both variants are checked: `streamable-http` (an ordinary JSON response) and
+// `sse` (`text/event-stream`). They are handled by one transport class — the
+// only difference is the response format, so both have to be exercised.
 
 import { afterEach, describe, expect, test } from 'bun:test'
 import { McpClient } from '../src/mcp-client.ts'
@@ -15,75 +15,75 @@ afterEach(() => {
   server = undefined
 })
 
-interface SoxtaSozlama {
-  /** SSE formatida javob berish */
+interface FakeConfig {
+  /** Answer in the SSE format */
   sse?: boolean
-  /** `Mcp-Session-Id` sarlavhasini qaytarish */
-  sessiya?: string
-  /** Bu metodlarga HTTP xatosi qaytarish */
-  xatoMetodlari?: string[]
-  /** Javob tanasini buzish */
-  axlat?: boolean
+  /** Return an `Mcp-Session-Id` header */
+  session?: string
+  /** Return an HTTP error for these methods */
+  errorMethods?: string[]
+  /** Corrupt the response body */
+  garbage?: boolean
 }
 
-interface Kuzatuv {
-  metodlar: string[]
-  sessiyaSarlavhalari: (string | null)[]
-  sarlavhalar: Record<string, string>[]
+interface Trace {
+  methods: string[]
+  sessionHeaders: (string | null)[]
+  headers: Record<string, string>[]
 }
 
-/** Soxta MCP HTTP server ko'taradi, url va kuzatuv qaytaradi */
-function serverKotar(soz: SoxtaSozlama = {}): { url: string; kuzatuv: Kuzatuv } {
-  const kuzatuv: Kuzatuv = { metodlar: [], sessiyaSarlavhalari: [], sarlavhalar: [] }
+/** Brings up a fake MCP HTTP server, returns the url and the trace */
+function startServer(config: FakeConfig = {}): { url: string; trace: Trace } {
+  const trace: Trace = { methods: [], sessionHeaders: [], headers: [] }
 
   server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const xabar = (await req.json()) as { id?: number; method?: string; params?: unknown }
-      kuzatuv.metodlar.push(xabar.method ?? '')
-      kuzatuv.sessiyaSarlavhalari.push(req.headers.get('Mcp-Session-Id'))
-      kuzatuv.sarlavhalar.push(Object.fromEntries(req.headers.entries()))
+      const message = (await req.json()) as { id?: number; method?: string; params?: unknown }
+      trace.methods.push(message.method ?? '')
+      trace.sessionHeaders.push(req.headers.get('Mcp-Session-Id'))
+      trace.headers.push(Object.fromEntries(req.headers.entries()))
 
-      const sarlavhalar: Record<string, string> = {}
-      if (soz.sessiya) sarlavhalar['Mcp-Session-Id'] = soz.sessiya
+      const headers: Record<string, string> = {}
+      if (config.session) headers['Mcp-Session-Id'] = config.session
 
-      if (soz.xatoMetodlari?.includes(xabar.method ?? '')) {
-        return new Response('server rad etdi', { status: 400, headers: sarlavhalar })
+      if (config.errorMethods?.includes(message.method ?? '')) {
+        return new Response('the server refused', { status: 400, headers })
       }
 
-      // Xabarnoma — javob tanasi yo'q
-      if (xabar.id === undefined) {
-        return new Response(null, { status: 202, headers: sarlavhalar })
+      // A notification — no response body
+      if (message.id === undefined) {
+        return new Response(null, { status: 202, headers })
       }
 
-      if (soz.axlat) {
-        return new Response('bu JSON emas', {
+      if (config.garbage) {
+        return new Response('this is not JSON', {
           status: 200,
-          headers: { ...sarlavhalar, 'Content-Type': 'application/json' },
+          headers: { ...headers, 'Content-Type': 'application/json' },
         })
       }
 
-      const javob = javobQur(xabar)
+      const answer = buildAnswer(message)
 
-      if (soz.sse) {
-        return new Response(`event: message\ndata: ${JSON.stringify(javob)}\n\n`, {
+      if (config.sse) {
+        return new Response(`event: message\ndata: ${JSON.stringify(answer)}\n\n`, {
           status: 200,
-          headers: { ...sarlavhalar, 'Content-Type': 'text/event-stream' },
+          headers: { ...headers, 'Content-Type': 'text/event-stream' },
         })
       }
 
-      return new Response(JSON.stringify(javob), {
+      return new Response(JSON.stringify(answer), {
         status: 200,
-        headers: { ...sarlavhalar, 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
       })
     },
   })
 
-  return { url: `http://localhost:${server.port}/mcp`, kuzatuv }
+  return { url: `http://localhost:${server.port}/mcp`, trace }
 }
 
-function javobQur(xabar: { id?: number; method?: string; params?: unknown }): unknown {
-  const { id, method } = xabar
+function buildAnswer(message: { id?: number; method?: string; params?: unknown }): unknown {
+  const { id, method } = message
   if (method === 'initialize') {
     return {
       jsonrpc: '2.0',
@@ -91,7 +91,7 @@ function javobQur(xabar: { id?: number; method?: string; params?: unknown }): un
       result: {
         protocolVersion: '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'masofaviy-soxta', version: '2.0' },
+        serverInfo: { name: 'remote-fake', version: '2.0' },
       },
     }
   }
@@ -100,200 +100,201 @@ function javobQur(xabar: { id?: number; method?: string; params?: unknown }): un
       jsonrpc: '2.0',
       id,
       result: {
-        tools: [{ name: 'qidir', description: 'Masofaviy qidiruv', inputSchema: { type: 'object' } }],
+        tools: [{ name: 'search', description: 'Remote search', inputSchema: { type: 'object' } }],
       },
     }
   }
   if (method === 'tools/call') {
-    const p = xabar.params as { name?: string; arguments?: { soz?: string } }
+    const p = message.params as { name?: string; arguments?: { word?: string } }
     return {
       jsonrpc: '2.0',
       id,
-      result: { content: [{ type: 'text', text: `topildi: ${p?.arguments?.soz ?? ''}` }] },
+      result: { content: [{ type: 'text', text: `found: ${p?.arguments?.word ?? ''}` }] },
     }
   }
-  return { jsonrpc: '2.0', id, error: { code: -32601, message: `noma'lum metod: ${method}` } }
+  return { jsonrpc: '2.0', id, error: { code: -32601, message: `unknown method: ${method}` } }
 }
 
-function klientYarat(url: string, sarlavhalar: Record<string, string> = {}): McpClient {
+function createClient(url: string, headers: Record<string, string> = {}): McpClient {
   return new McpClient({
     transport: 'http',
     url,
-    sarlavhalar,
+    headers,
     handshakeTimeoutMs: 5000,
-    chaqiruvTimeoutMs: 5000,
+    callTimeoutMs: 5000,
   })
 }
 
 // ---------------------------------------------------------------------------
 
-describe('streamable-http (oddiy JSON)', () => {
-  test("to'liq oqim ishlaydi", async () => {
-    const { url } = serverKotar()
-    const klient = klientYarat(url)
+describe('streamable-http (plain JSON)', () => {
+  test('the whole flow works', async () => {
+    const { url } = startServer()
+    const client = createClient(url)
 
-    await klient.ulan()
-    expect(klient.malumot?.serverInfo?.name).toBe('masofaviy-soxta')
+    await client.connect()
+    expect(client.info?.serverInfo?.name).toBe('remote-fake')
 
-    const toollar = await klient.toollarniOl()
-    expect(toollar.map((t) => t.name)).toEqual(['qidir'])
+    const tools = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['search'])
 
-    const natija = await klient.chaqir('qidir', { soz: 'mcp' })
-    expect(natija.content[0]?.text).toBe('topildi: mcp')
+    const result = await client.call('search', { word: 'mcp' })
+    expect(result.content[0]?.text).toBe('found: mcp')
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 
-  test('initialize dan keyin xabarnoma yuboriladi', async () => {
-    const { url, kuzatuv } = serverKotar()
-    const klient = klientYarat(url)
-    await klient.ulan()
+  test('a notification is sent after initialize', async () => {
+    const { url, trace } = startServer()
+    const client = createClient(url)
+    await client.connect()
 
-    expect(kuzatuv.metodlar).toEqual(['initialize', 'notifications/initialized'])
-    await klient.uz()
+    expect(trace.methods).toEqual(['initialize', 'notifications/initialized'])
+    await client.disconnect()
   }, 15_000)
 
-  test('sarlavhalar (kredensial) har so\'rovga qo\'shiladi', async () => {
-    const { url, kuzatuv } = serverKotar()
-    const klient = klientYarat(url, { Authorization: 'Bearer maxfiy-token' })
+  test('the headers (credentials) are added to every request', async () => {
+    const { url, trace } = startServer()
+    const client = createClient(url, { Authorization: 'Bearer secret-token' })
 
-    await klient.ulan()
-    await klient.chaqir('qidir', {})
+    await client.connect()
+    await client.call('search', {})
 
-    for (const s of kuzatuv.sarlavhalar) {
-      expect(s.authorization).toBe('Bearer maxfiy-token')
+    for (const h of trace.headers) {
+      expect(h.authorization).toBe('Bearer secret-token')
     }
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 })
 
 describe('sse (text/event-stream)', () => {
-  test("to'liq oqim ishlaydi", async () => {
-    const { url } = serverKotar({ sse: true })
-    const klient = klientYarat(url)
+  test('the whole flow works', async () => {
+    const { url } = startServer({ sse: true })
+    const client = createClient(url)
 
-    await klient.ulan()
-    const toollar = await klient.toollarniOl()
-    expect(toollar.map((t) => t.name)).toEqual(['qidir'])
+    await client.connect()
+    const tools = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['search'])
 
-    const natija = await klient.chaqir('qidir', { soz: 'sse' })
-    expect(natija.content[0]?.text).toBe('topildi: sse')
+    const result = await client.call('search', { word: 'sse' })
+    expect(result.content[0]?.text).toBe('found: sse')
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 })
 
 describe('Mcp-Session-Id', () => {
-  test('server bergan sessiya id keyingi so\'rovlarga qo\'shiladi', async () => {
-    const { url, kuzatuv } = serverKotar({ sessiya: 'sessiya-abc' })
-    const klient = klientYarat(url)
+  test('the session id the server gave is added to the following requests', async () => {
+    const { url, trace } = startServer({ session: 'session-abc' })
+    const client = createClient(url)
 
-    await klient.ulan()
-    await klient.chaqir('qidir', {})
+    await client.connect()
+    await client.call('search', {})
 
-    // Birinchi so'rovda sessiya hali yo'q, keyingilarida bo'lishi kerak
-    expect(kuzatuv.sessiyaSarlavhalari[0]).toBeNull()
-    expect(kuzatuv.sessiyaSarlavhalari.slice(1).every((s) => s === 'sessiya-abc')).toBe(true)
+    // On the first request there is no session yet, on the later ones there
+    // must be one
+    expect(trace.sessionHeaders[0]).toBeNull()
+    expect(trace.sessionHeaders.slice(1).every((s) => s === 'session-abc')).toBe(true)
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 
-  test('sessiya id bermagan server ham ishlaydi', async () => {
-    const { url, kuzatuv } = serverKotar()
-    const klient = klientYarat(url)
+  test('a server that gives no session id works too', async () => {
+    const { url, trace } = startServer()
+    const client = createClient(url)
 
-    await klient.ulan()
-    await klient.chaqir('qidir', {})
+    await client.connect()
+    await client.call('search', {})
 
-    expect(kuzatuv.sessiyaSarlavhalari.every((s) => s === null)).toBe(true)
-    await klient.uz()
+    expect(trace.sessionHeaders.every((s) => s === null)).toBe(true)
+    await client.disconnect()
   }, 15_000)
 })
 
-describe('xato holatlari', () => {
-  test('HTTP xatosi tushunarli xabar beradi', async () => {
-    const { url } = serverKotar({ xatoMetodlari: ['initialize'] })
-    const klient = klientYarat(url)
+describe('error cases', () => {
+  test('an HTTP error gives an understandable message', async () => {
+    const { url } = startServer({ errorMethods: ['initialize'] })
+    const client = createClient(url)
 
-    await expect(klient.ulan()).rejects.toThrow(/400/)
+    await expect(client.connect()).rejects.toThrow(/400/)
   }, 15_000)
 
-  test('javob tanasi xato sababini xato matniga qo\'shadi', async () => {
-    const { url } = serverKotar({ xatoMetodlari: ['initialize'] })
-    const klient = klientYarat(url)
+  test('the response body adds the reason to the error text', async () => {
+    const { url } = startServer({ errorMethods: ['initialize'] })
+    const client = createClient(url)
 
-    await expect(klient.ulan()).rejects.toThrow(/server rad etdi/)
+    await expect(client.connect()).rejects.toThrow(/the server refused/)
   }, 15_000)
 
-  test('XABARNOMA xatosi handshake\'ni YIQITMAYDI', async () => {
-    // Ba'zi serverlar `notifications/initialized` ga 4xx qaytaradi —
-    // `initialize` muvaffaqiyatli bo'lgani uchun ulanish tirik qolishi kerak
-    const { url } = serverKotar({ xatoMetodlari: ['notifications/initialized'] })
-    const klient = klientYarat(url)
+  test('A NOTIFICATION error DOES NOT BRING DOWN the handshake', async () => {
+    // Some servers return 4xx for `notifications/initialized` — since
+    // `initialize` succeeded the connection has to stay alive
+    const { url } = startServer({ errorMethods: ['notifications/initialized'] })
+    const client = createClient(url)
 
-    await klient.ulan()
-    expect(klient.tayyormi).toBe(true)
+    await client.connect()
+    expect(client.isReady).toBe(true)
 
-    const natija = await klient.chaqir('qidir', { soz: 'baribir ishlaydi' })
-    expect(natija.content[0]?.text).toBe('topildi: baribir ishlaydi')
+    const result = await client.call('search', { word: 'works anyway' })
+    expect(result.content[0]?.text).toBe('found: works anyway')
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 
-  test('JSON bo\'lmagan javob xato beradi', async () => {
-    const { url } = serverKotar({ axlat: true })
-    const klient = klientYarat(url)
+  test('a non-JSON response gives an error', async () => {
+    const { url } = startServer({ garbage: true })
+    const client = createClient(url)
 
-    await expect(klient.ulan()).rejects.toThrow(/JSON emas/)
+    await expect(client.connect()).rejects.toThrow(/not JSON/)
   }, 15_000)
 
-  test('mavjud bo\'lmagan manzil xato beradi', async () => {
-    // 1 port — ulanish rad etiladi
-    const klient = klientYarat('http://localhost:1/mcp')
-    await expect(klient.ulan()).rejects.toThrow()
+  test('a non-existent address gives an error', async () => {
+    // Port 1 — the connection is refused
+    const client = createClient('http://localhost:1/mcp')
+    await expect(client.connect()).rejects.toThrow()
   }, 15_000)
 
-  test('url\'siz http ulanmaydi', async () => {
-    const klient = new McpClient({ transport: 'http' })
-    await expect(klient.ulan()).rejects.toThrow(/url/)
+  test('http does not connect without a url', async () => {
+    const client = new McpClient({ transport: 'http' })
+    await expect(client.connect()).rejects.toThrow(/url/)
   })
 
-  test('yopilgan transportga yozib bo\'lmaydi', async () => {
+  test('a closed transport cannot be written to', async () => {
     const transport = createHttpTransport('http://localhost:1/mcp')
-    await transport.yop()
-    await expect(transport.yubor({ jsonrpc: '2.0', method: 'x' })).rejects.toThrow(/closed/)
+    await transport.close()
+    await expect(transport.send({ jsonrpc: '2.0', method: 'x' })).rejects.toThrow(/closed/)
   })
 })
 
 describe('parseSseMessages', () => {
-  test('bitta data qatorini o\'qiydi', () => {
-    const xabarlar = parseSseMessages('event: message\ndata: {"jsonrpc":"2.0","id":1}\n\n')
-    expect(xabarlar).toEqual([{ jsonrpc: '2.0', id: 1 }])
+  test('it reads a single data line', () => {
+    const messages = parseSseMessages('event: message\ndata: {"jsonrpc":"2.0","id":1}\n\n')
+    expect(messages).toEqual([{ jsonrpc: '2.0', id: 1 }])
   })
 
-  test('bir nechta hodisani o\'qiydi', () => {
-    const matn = 'data: {"jsonrpc":"2.0","id":1}\n\ndata: {"jsonrpc":"2.0","id":2}\n\n'
-    expect(parseSseMessages(matn)).toEqual([
+  test('it reads several events', () => {
+    const text = 'data: {"jsonrpc":"2.0","id":1}\n\ndata: {"jsonrpc":"2.0","id":2}\n\n'
+    expect(parseSseMessages(text)).toEqual([
       { jsonrpc: '2.0', id: 1 },
       { jsonrpc: '2.0', id: 2 },
     ])
   })
 
-  test('data bo\'lmagan qatorlarni tashlaydi', () => {
-    const matn = 'event: ping\nid: 42\nretry: 1000\ndata: {"jsonrpc":"2.0","id":1}\n\n'
-    expect(parseSseMessages(matn)).toEqual([{ jsonrpc: '2.0', id: 1 }])
+  test('it drops the lines that are not data', () => {
+    const text = 'event: ping\nid: 42\nretry: 1000\ndata: {"jsonrpc":"2.0","id":1}\n\n'
+    expect(parseSseMessages(text)).toEqual([{ jsonrpc: '2.0', id: 1 }])
   })
 
-  test('JSON bo\'lmagan data ni tashlaydi, qolganini o\'qiydi', () => {
-    const matn = 'data: axlat\n\ndata: {"jsonrpc":"2.0","id":2}\n\n'
-    expect(parseSseMessages(matn)).toEqual([{ jsonrpc: '2.0', id: 2 }])
+  test('it drops non-JSON data and reads the rest', () => {
+    const text = 'data: garbage\n\ndata: {"jsonrpc":"2.0","id":2}\n\n'
+    expect(parseSseMessages(text)).toEqual([{ jsonrpc: '2.0', id: 2 }])
   })
 
-  test('[DONE] belgisini tashlaydi', () => {
+  test('it drops the [DONE] marker', () => {
     expect(parseSseMessages('data: [DONE]\n\n')).toEqual([])
   })
 
-  test('bo\'sh matn bo\'sh ro\'yxat', () => {
+  test('empty text gives an empty list', () => {
     expect(parseSseMessages('')).toEqual([])
     expect(parseSseMessages('\n\n\n')).toEqual([])
   })

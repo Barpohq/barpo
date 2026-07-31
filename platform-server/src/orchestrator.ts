@@ -542,7 +542,7 @@ export async function streamReply(
 
         case 'done':
           // The text collected during the stream should match the one in
-          // `tugadi`, but the latter is more reliable (the provider may correct
+          // `done`, but the latter is more reliable (the provider may correct
           // it at the end)
           collected = event.text || collected
           // The next turn continues from this context — with the tool results.
@@ -728,7 +728,7 @@ export async function setMode(
  * `chat.status` (`GET /api/chat/running`).
  */
 export function pendingPermissions(sessionId: string): PermissionRequest[] {
-  return permissionManager(sessionId).kutayotganSorovlar
+  return permissionManager(sessionId).pendingRequests
 }
 
 /** Answering a permission request — arrives over WS or REST */
@@ -737,7 +737,7 @@ export function answerPermission(
   requestId: string,
   answer: PermissionAnswer,
 ): boolean {
-  const delivered = permissionManager(sessionId).javobBer(requestId, answer)
+  const delivered = permissionManager(sessionId).answer(requestId, answer)
   if (delivered) {
     auditWrite(
       'user',
@@ -797,10 +797,10 @@ function prepareHistory(sessionId: string): StoredMessage[] {
         agentMessages: m.agentMessages,
         // Only the fields the agent needs — `id`, `mime` and `size` give it
         // nothing and would fill the prompt with noise
-        biriktirmalar: m.attachments?.map((a) => ({
-          tur: a.kind,
-          aslNom: a.originalName,
-          yol: a.path,
+        attachments: m.attachments?.map((a) => ({
+          kind: a.kind,
+          originalName: a.originalName,
+          path: a.path,
         })),
       }))
   )

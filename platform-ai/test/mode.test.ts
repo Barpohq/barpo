@@ -1,7 +1,7 @@
-// Rejim boshqaruvchisi — fallback mexanizmi.
+// The mode manager — the fallback mechanism.
 //
-// Auto rejim uch holatda o'chadi: klassifikator nosoz, 3 ketma-ket blok,
-// 20 jami blok. O'chgach avtomatik tiklanmaydi.
+// Auto mode turns off in three cases: the classifier is broken, 3 blocks in a
+// row, 20 blocks in total. Once off it does not restore itself automatically.
 
 import { afterEach, describe, expect, test } from 'bun:test'
 import {
@@ -18,161 +18,161 @@ afterEach(() => {
   clearModes()
 })
 
-describe('boshlang\'ich holat', () => {
-  test('standart rejim tasdiq', () => {
-    const r = new ModeManager('s1')
-    expect(r.rejim).toBe('tasdiq')
-    expect(r.sabab).toBeUndefined()
+describe('initial state', () => {
+  test('the default mode is confirm', () => {
+    const m = new ModeManager('s1')
+    expect(m.mode).toBe('confirm')
+    expect(m.reason).toBeUndefined()
   })
 
-  test('tasdiq rejimida bloklar hisoblanmaydi', () => {
-    const r = new ModeManager('s1')
-    r.blokBoldi()
-    r.blokBoldi()
-    r.blokBoldi()
-    expect(r.rejim).toBe('tasdiq')
-    expect(r.hisoblagichlar.ketmaKet).toBe(0)
-  })
-})
-
-describe('rejim almashtirish', () => {
-  test('auto ga o\'tish kuzatuvchiga xabar beradi', () => {
-    const r = new ModeManager('s1')
-    const olingan: ModeChange[] = []
-    r.kuzat((o) => olingan.push(o))
-
-    r.ornat('auto')
-    expect(r.rejim).toBe('auto')
-    expect(olingan).toHaveLength(1)
-    expect(olingan[0]?.rejim).toBe('auto')
-  })
-
-  test('bir xil rejimga qayta o\'rnatish xabar bermaydi', () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
-    const olingan: ModeChange[] = []
-    r.kuzat((o) => olingan.push(o))
-    r.ornat('auto')
-    expect(olingan).toHaveLength(0)
-  })
-
-  test('auto ga qaytish hisoblagichlarni tozalaydi', () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
-    r.blokBoldi()
-    r.blokBoldi()
-    expect(r.hisoblagichlar.jami).toBe(2)
-
-    r.ornat('tasdiq')
-    r.ornat('auto')
-    expect(r.hisoblagichlar).toEqual({ ketmaKet: 0, jami: 0 })
+  test('blocks are not counted in confirm mode', () => {
+    const m = new ModeManager('s1')
+    m.blocked()
+    m.blocked()
+    m.blocked()
+    expect(m.mode).toBe('confirm')
+    expect(m.counters.consecutive).toBe(0)
   })
 })
 
-describe('ketma-ket blok chegarasi', () => {
-  test(`${CONSECUTIVE_BLOCK_LIMIT} ketma-ket blok auto ni o'chiradi`, () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
+describe('switching modes', () => {
+  test('switching to auto notifies the listener', () => {
+    const m = new ModeManager('s1')
+    const received: ModeChange[] = []
+    m.subscribe((c) => received.push(c))
+
+    m.set('auto')
+    expect(m.mode).toBe('auto')
+    expect(received).toHaveLength(1)
+    expect(received[0]?.mode).toBe('auto')
+  })
+
+  test('setting the same mode again does not notify', () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
+    const received: ModeChange[] = []
+    m.subscribe((c) => received.push(c))
+    m.set('auto')
+    expect(received).toHaveLength(0)
+  })
+
+  test('going back to auto clears the counters', () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
+    m.blocked()
+    m.blocked()
+    expect(m.counters.total).toBe(2)
+
+    m.set('confirm')
+    m.set('auto')
+    expect(m.counters).toEqual({ consecutive: 0, total: 0 })
+  })
+})
+
+describe('the consecutive block limit', () => {
+  test(`${CONSECUTIVE_BLOCK_LIMIT} blocks in a row turn auto off`, () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
 
     for (let i = 1; i < CONSECUTIVE_BLOCK_LIMIT; i += 1) {
-      expect(r.blokBoldi()).toBe(false)
-      expect(r.rejim).toBe('auto')
+      expect(m.blocked()).toBe(false)
+      expect(m.mode).toBe('auto')
     }
-    expect(r.blokBoldi()).toBe(true)
-    expect(r.rejim).toBe('tasdiq')
-    expect(r.sabab).toContain('in a row')
+    expect(m.blocked()).toBe(true)
+    expect(m.mode).toBe('confirm')
+    expect(m.reason).toContain('in a row')
   })
 
-  test('ruxsat ketma-ket hisoblagichni nolga qaytaradi', () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
+  test('an allow resets the consecutive counter to zero', () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
 
-    r.blokBoldi()
-    r.blokBoldi()
-    r.ruxsatBerildi()
-    expect(r.hisoblagichlar.ketmaKet).toBe(0)
+    m.blocked()
+    m.blocked()
+    m.allowed()
+    expect(m.counters.consecutive).toBe(0)
 
-    // Endi yana 3 ta kerak
-    r.blokBoldi()
-    r.blokBoldi()
-    expect(r.rejim).toBe('auto')
-    r.blokBoldi()
-    expect(r.rejim).toBe('tasdiq')
+    // Now 3 more are needed
+    m.blocked()
+    m.blocked()
+    expect(m.mode).toBe('auto')
+    m.blocked()
+    expect(m.mode).toBe('confirm')
   })
 
-  test('ruxsat jami hisoblagichni tozalamaydi', () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
-    r.blokBoldi()
-    r.ruxsatBerildi()
-    expect(r.hisoblagichlar.jami).toBe(1)
+  test('an allow does not clear the total counter', () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
+    m.blocked()
+    m.allowed()
+    expect(m.counters.total).toBe(1)
   })
 })
 
-describe('jami blok chegarasi', () => {
-  test(`${TOTAL_BLOCK_LIMIT} jami blok auto ni o'chiradi`, () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
+describe('the total block limit', () => {
+  test(`${TOTAL_BLOCK_LIMIT} blocks in total turn auto off`, () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
 
-    // Har blokdan keyin ruxsat — ketma-ket chegara ishlamasin
+    // An allow after every block — so the consecutive limit does not fire
     for (let i = 0; i < TOTAL_BLOCK_LIMIT - 1; i += 1) {
-      r.blokBoldi()
-      r.ruxsatBerildi()
+      m.blocked()
+      m.allowed()
     }
-    expect(r.rejim).toBe('auto')
+    expect(m.mode).toBe('auto')
 
-    r.blokBoldi()
-    expect(r.rejim).toBe('tasdiq')
-    expect(r.sabab).toContain('in total')
+    m.blocked()
+    expect(m.mode).toBe('confirm')
+    expect(m.reason).toContain('in total')
   })
 })
 
-describe('klassifikator nosozligi', () => {
-  test('auto darhol o\'chadi', () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
-    r.klassifikatorNosoz('model topilmadi')
+describe('classifier failure', () => {
+  test('auto turns off immediately', () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
+    m.classifierFailed('no model found')
 
-    expect(r.rejim).toBe('tasdiq')
-    expect(r.sabab).toContain('model topilmadi')
+    expect(m.mode).toBe('confirm')
+    expect(m.reason).toContain('no model found')
   })
 
-  test('tasdiq rejimida ta\'sir qilmaydi', () => {
-    const r = new ModeManager('s1')
-    r.klassifikatorNosoz('xato')
-    expect(r.sabab).toBeUndefined()
+  test('it has no effect in confirm mode', () => {
+    const m = new ModeManager('s1')
+    m.classifierFailed('error')
+    expect(m.reason).toBeUndefined()
   })
 
-  test('o\'chgach avtomatik tiklanmaydi', () => {
-    const r = new ModeManager('s1')
-    r.ornat('auto')
-    r.klassifikatorNosoz('timeout')
+  test('once off it does not restore itself automatically', () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
+    m.classifierFailed('timeout')
 
-    // Vaqt o'tishi yoki muvaffaqiyatli amal rejimni qaytarmaydi
-    r.ruxsatBerildi()
-    expect(r.rejim).toBe('tasdiq')
+    // Neither the passing of time nor a successful action brings the mode back
+    m.allowed()
+    expect(m.mode).toBe('confirm')
 
-    // Faqat qo'lda
-    r.ornat('auto')
-    expect(r.rejim).toBe('auto')
-    expect(r.sabab).toBeUndefined()
+    // Only by hand
+    m.set('auto')
+    expect(m.mode).toBe('auto')
+    expect(m.reason).toBeUndefined()
   })
 })
 
-describe('reestr', () => {
-  test('bir sessiya uchun bir boshqaruvchi', () => {
+describe('registry', () => {
+  test('one manager per session', () => {
     expect(modeManager('s1')).toBe(modeManager('s1'))
   })
 
-  test('sessiyalar ajratilgan', () => {
-    modeManager('s1').ornat('auto')
-    expect(modeManager('s2').rejim).toBe('tasdiq')
+  test('sessions are isolated', () => {
+    modeManager('s1').set('auto')
+    expect(modeManager('s2').mode).toBe('confirm')
   })
 
-  test('yopilgach yangi boshqaruvchi', () => {
+  test('a new manager after closing', () => {
     const a = modeManager('s1')
-    a.ornat('auto')
+    a.set('auto')
     closeModeManager('s1')
-    expect(modeManager('s1').rejim).toBe('tasdiq')
+    expect(modeManager('s1').mode).toBe('confirm')
   })
 })

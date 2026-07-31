@@ -1,203 +1,203 @@
-// `SKILL.md` tahlili — frontmatter va yumshoq validatsiya.
+// Parsing `SKILL.md` — the frontmatter and the lenient validation.
 //
-// Asosiy qoida sinaladi: FAQAT `description` yo'qligi skillni rad etadi,
-// qolgan hamma spec buzilishi ogohlantirish bo'lib qaytadi va skill
-// baribir yuklanadi.
+// The core rule is what is tested: ONLY a missing `description` rejects the
+// skill; every other spec violation comes back as a warning and the skill
+// loads anyway.
 
 import { describe, expect, test } from 'bun:test'
 import { NAME_LIMIT, parseSkillFile, DESCRIPTION_LIMIT } from '../src/skill-file.ts'
 
 describe('frontmatter', () => {
-  test('oddiy skill to\'liq o\'qiladi', () => {
-    const n = parseSkillFile(
-      ['---', 'name: pdf-fill', 'description: PDF forma to\'ldiradi', '---', '', '# Ko\'rsatma'].join('\n'),
+  test('an ordinary skill is read in full', () => {
+    const r = parseSkillFile(
+      ['---', 'name: pdf-fill', 'description: Fills in a PDF form', '---', '', '# Instructions'].join('\n'),
       'pdf-fill',
     )
-    expect(n?.nom).toBe('pdf-fill')
-    expect(n?.tavsif).toBe("PDF forma to'ldiradi")
-    expect(n?.matn).toBe("# Ko'rsatma")
-    expect(n?.ogohlantirishlar).toEqual([])
+    expect(r?.name).toBe('pdf-fill')
+    expect(r?.description).toBe('Fills in a PDF form')
+    expect(r?.text).toBe('# Instructions')
+    expect(r?.warnings).toEqual([])
   })
 
-  test('frontmatter yo\'q bo\'lsa null', () => {
-    expect(parseSkillFile('# Shunchaki markdown', 'x')).toBeNull()
+  test('null when there is no frontmatter', () => {
+    expect(parseSkillFile('# Just markdown', 'x')).toBeNull()
   })
 
-  test('description yo\'q bo\'lsa null — YAGONA qat\'iy talab', () => {
-    expect(parseSkillFile(['---', 'name: x', '---', 'matn'].join('\n'), 'x')).toBeNull()
+  test('null when description is missing — THE ONLY strict requirement', () => {
+    expect(parseSkillFile(['---', 'name: x', '---', 'text'].join('\n'), 'x')).toBeNull()
   })
 
-  test('bo\'sh description ham rad etiladi', () => {
+  test('an empty description is rejected too', () => {
     expect(
       parseSkillFile(['---', 'name: x', 'description: "   "', '---'].join('\n'), 'x'),
     ).toBeNull()
   })
 
-  test('nom yo\'q bo\'lsa papka nomidan olinadi', () => {
-    const n = parseSkillFile(['---', 'description: tavsif', '---'].join('\n'), 'papka-nomi')
-    expect(n?.nom).toBe('papka-nomi')
-    // Papka nomidan olinganda "mos emas" ogohlantirishi CHIQMAYDI
-    expect(n?.ogohlantirishlar).toEqual([])
+  test('a missing name is taken from the folder name', () => {
+    const r = parseSkillFile(['---', 'description: a description', '---'].join('\n'), 'folder-name')
+    expect(r?.name).toBe('folder-name')
+    // When taken from the folder name the "does not match" warning is NOT emitted
+    expect(r?.warnings).toEqual([])
   })
 
-  test('qo\'shtirnoqli qiymatlar tozalanadi', () => {
-    const n = parseSkillFile(
-      ['---', 'name: "pdf-fill"', "description: 'Tavsif matni'", '---'].join('\n'),
+  test('quoted values are cleaned up', () => {
+    const r = parseSkillFile(
+      ['---', 'name: "pdf-fill"', "description: 'Description text'", '---'].join('\n'),
       'pdf-fill',
     )
-    expect(n?.nom).toBe('pdf-fill')
-    expect(n?.tavsif).toBe('Tavsif matni')
+    expect(r?.name).toBe('pdf-fill')
+    expect(r?.description).toBe('Description text')
   })
 
-  test('izohlar tashlanadi', () => {
-    const n = parseSkillFile(
-      ['---', '# bu izoh', 'name: x # yon izoh', 'description: tavsif', '---'].join('\n'),
+  test('comments are dropped', () => {
+    const r = parseSkillFile(
+      ['---', '# this is a comment', 'name: x # a trailing comment', 'description: a description', '---'].join('\n'),
       'x',
     )
-    expect(n?.nom).toBe('x')
+    expect(r?.name).toBe('x')
   })
 
-  test('CRLF va BOM bilan ham ishlaydi', () => {
-    const n = parseSkillFile('﻿---\r\nname: x\r\ndescription: tavsif\r\n---\r\nmatn', 'x')
-    expect(n?.nom).toBe('x')
-    expect(n?.tavsif).toBe('tavsif')
+  test('it works with CRLF and a BOM too', () => {
+    const r = parseSkillFile('﻿---\r\nname: x\r\ndescription: a description\r\n---\r\ntext', 'x')
+    expect(r?.name).toBe('x')
+    expect(r?.description).toBe('a description')
   })
 })
 
-describe('blok skalari (|, >) — anthropics/skills da uchraydi', () => {
-  test('`|-` ko\'p qatorli tavsif to\'liq o\'qiladi', () => {
-    // `claude-api` skilli aynan shu shaklda. Ilgari tavsif "|-" bo'lib
-    // qolardi va model skillni qachon ishlatishni bilmasdi.
-    const n = parseSkillFile(
+describe('block scalars (|, >) — they turn up in anthropics/skills', () => {
+  test('a `|-` multi-line description is read in full', () => {
+    // The `claude-api` skill has exactly this shape. The description used to
+    // come out as "|-" and the model did not know when to use the skill.
+    const r = parseSkillFile(
       [
         '---',
         'name: claude-api',
         'description: |-',
-        '  Birinchi qator matni.',
-        '  Ikkinchi qator matni.',
+        '  First line of text.',
+        '  Second line of text.',
         'license: MIT',
         '---',
         '',
-        '# Tana',
+        '# Body',
       ].join('\n'),
       'claude-api',
     )
-    expect(n?.tavsif).toBe('Birinchi qator matni.\nIkkinchi qator matni.')
-    expect(n?.litsenziya).toBe('MIT')
-    expect(n?.matn).toBe('# Tana')
+    expect(r?.description).toBe('First line of text.\nSecond line of text.')
+    expect(r?.license).toBe('MIT')
+    expect(r?.text).toBe('# Body')
   })
 
-  test('`|` chomping\'siz ham ishlaydi', () => {
-    const n = parseSkillFile(
-      ['---', 'name: x', 'description: |', '  Matn shu yerda.', '---'].join('\n'),
+  test('`|` works without chomping too', () => {
+    const r = parseSkillFile(
+      ['---', 'name: x', 'description: |', '  The text is here.', '---'].join('\n'),
       'x',
     )
-    expect(n?.tavsif).toBe('Matn shu yerda.')
+    expect(r?.description).toBe('The text is here.')
   })
 
-  test('`>` buklangan blok bitta satrga qo\'shiladi', () => {
-    const n = parseSkillFile(
-      ['---', 'name: x', 'description: >-', '  Bir', '  ikki', '---'].join('\n'),
+  test('a `>` folded block is joined onto one line', () => {
+    const r = parseSkillFile(
+      ['---', 'name: x', 'description: >-', '  One', '  two', '---'].join('\n'),
       'x',
     )
-    expect(n?.tavsif).toBe('Bir ikki')
+    expect(r?.description).toBe('One two')
   })
 
-  test('blok ichidagi bo\'sh qator abzasni ajratadi', () => {
-    const n = parseSkillFile(
-      ['---', 'name: x', 'description: |-', '  Bir', '', '  Ikki', '---'].join('\n'),
+  test('an empty line inside a block separates paragraphs', () => {
+    const r = parseSkillFile(
+      ['---', 'name: x', 'description: |-', '  One', '', '  Two', '---'].join('\n'),
       'x',
     )
-    expect(n?.tavsif).toContain('Bir')
-    expect(n?.tavsif).toContain('Ikki')
+    expect(r?.description).toContain('One')
+    expect(r?.description).toContain('Two')
   })
 
-  test('blokdan keyingi kalitlar to\'g\'ri o\'qiladi', () => {
-    const n = parseSkillFile(
+  test('the keys after a block are read correctly', () => {
+    const r = parseSkillFile(
       [
         '---',
         'description: |-',
-        '  Tavsif matni',
-        'name: keyingi-kalit',
+        '  Description text',
+        'name: next-key',
         'allowed-tools: [read]',
         '---',
       ].join('\n'),
-      'papka',
+      'folder',
     )
-    expect(n?.tavsif).toBe('Tavsif matni')
-    expect(n?.nom).toBe('keyingi-kalit')
-    expect(n?.allowedTools).toEqual(['read'])
+    expect(r?.description).toBe('Description text')
+    expect(r?.name).toBe('next-key')
+    expect(r?.allowedTools).toEqual(['read'])
   })
 
-  test('bo\'sh blok skill\'ni yiqitmaydi', () => {
-    // description bo'sh qoladi → null (tavsifsiz skill qabul qilinmaydi)
+  test('an empty block does not bring the skill down', () => {
+    // the description stays empty → null (a skill without a description is not accepted)
     expect(parseSkillFile(['---', 'name: x', 'description: |-', '---'].join('\n'), 'x')).toBeNull()
   })
 })
 
 describe('allowed-tools', () => {
-  test('inline ro\'yxat', () => {
-    const n = parseSkillFile(
-      ['---', 'name: x', 'description: t', 'allowed-tools: [read, bash]', '---'].join('\n'),
+  test('an inline list', () => {
+    const r = parseSkillFile(
+      ['---', 'name: x', 'description: d', 'allowed-tools: [read, bash]', '---'].join('\n'),
       'x',
     )
-    expect(n?.allowedTools).toEqual(['read', 'bash'])
+    expect(r?.allowedTools).toEqual(['read', 'bash'])
   })
 
-  test('blok ro\'yxat', () => {
-    const n = parseSkillFile(
-      ['---', 'name: x', 'description: t', 'allowed-tools:', '  - read', '  - write', '---'].join('\n'),
+  test('a block list', () => {
+    const r = parseSkillFile(
+      ['---', 'name: x', 'description: d', 'allowed-tools:', '  - read', '  - write', '---'].join('\n'),
       'x',
     )
-    expect(n?.allowedTools).toEqual(['read', 'write'])
+    expect(r?.allowedTools).toEqual(['read', 'write'])
   })
 
-  test('vergul bilan ajratilgan satr', () => {
-    const n = parseSkillFile(
-      ['---', 'name: x', 'description: t', 'allowed-tools: read, bash', '---'].join('\n'),
+  test('a comma-separated string', () => {
+    const r = parseSkillFile(
+      ['---', 'name: x', 'description: d', 'allowed-tools: read, bash', '---'].join('\n'),
       'x',
     )
-    expect(n?.allowedTools).toEqual(['read', 'bash'])
+    expect(r?.allowedTools).toEqual(['read', 'bash'])
   })
 
-  test('yo\'q bo\'lsa undefined', () => {
-    const n = parseSkillFile(['---', 'name: x', 'description: t', '---'].join('\n'), 'x')
-    expect(n?.allowedTools).toBeUndefined()
+  test('undefined when absent', () => {
+    const r = parseSkillFile(['---', 'name: x', 'description: d', '---'].join('\n'), 'x')
+    expect(r?.allowedTools).toBeUndefined()
   })
 })
 
-describe('YUMSHOQ validatsiya — buzilgan skill baribir yuklanadi', () => {
-  test('katta harfli nom ogohlantirish beradi, lekin yuklanadi', () => {
-    const n = parseSkillFile(['---', 'name: PDF-Fill', 'description: t', '---'].join('\n'), 'PDF-Fill')
-    expect(n).not.toBeNull()
-    expect(n?.nom).toBe('PDF-Fill')
-    expect(n?.ogohlantirishlar.some((x) => x.includes('lowercase'))).toBe(true)
+describe('LENIENT validation — a broken skill still loads', () => {
+  test('an uppercase name warns, but loads', () => {
+    const r = parseSkillFile(['---', 'name: PDF-Fill', 'description: d', '---'].join('\n'), 'PDF-Fill')
+    expect(r).not.toBeNull()
+    expect(r?.name).toBe('PDF-Fill')
+    expect(r?.warnings.some((x) => x.includes('lowercase'))).toBe(true)
   })
 
-  test('ketma-ket tire ogohlantiriladi', () => {
-    const n = parseSkillFile(['---', 'name: a--b', 'description: t', '---'].join('\n'), 'a--b')
-    expect(n?.ogohlantirishlar.some((x) => x.includes('repeated'))).toBe(true)
+  test('a repeated dash is warned about', () => {
+    const r = parseSkillFile(['---', 'name: a--b', 'description: d', '---'].join('\n'), 'a--b')
+    expect(r?.warnings.some((x) => x.includes('repeated'))).toBe(true)
   })
 
-  test('uzun nom kesiladi', () => {
-    const uzun = 'a'.repeat(NAME_LIMIT + 20)
-    const n = parseSkillFile(['---', `name: ${uzun}`, 'description: t', '---'].join('\n'), uzun)
-    expect(n?.nom.length).toBe(NAME_LIMIT)
-    expect(n?.ogohlantirishlar.some((x) => x.includes('longer than'))).toBe(true)
+  test('a long name is truncated', () => {
+    const long = 'a'.repeat(NAME_LIMIT + 20)
+    const r = parseSkillFile(['---', `name: ${long}`, 'description: d', '---'].join('\n'), long)
+    expect(r?.name.length).toBe(NAME_LIMIT)
+    expect(r?.warnings.some((x) => x.includes('longer than'))).toBe(true)
   })
 
-  test('uzun tavsif kesiladi — prompt shishib ketmasin', () => {
-    const uzun = 'b'.repeat(DESCRIPTION_LIMIT + 500)
-    const n = parseSkillFile(['---', 'name: x', `description: ${uzun}`, '---'].join('\n'), 'x')
-    expect(n!.tavsif.length).toBeLessThanOrEqual(DESCRIPTION_LIMIT + 1)
-    expect(n?.ogohlantirishlar.some((x) => x.includes('longer than'))).toBe(true)
+  test('a long description is truncated — the prompt must not balloon', () => {
+    const long = 'b'.repeat(DESCRIPTION_LIMIT + 500)
+    const r = parseSkillFile(['---', 'name: x', `description: ${long}`, '---'].join('\n'), 'x')
+    expect(r!.description.length).toBeLessThanOrEqual(DESCRIPTION_LIMIT + 1)
+    expect(r?.warnings.some((x) => x.includes('longer than'))).toBe(true)
   })
 
-  test('nom papka nomiga mos kelmasa ogohlantirish (lekin rad etilmaydi)', () => {
-    // pi ataylab shunday: bir papka bir necha vosita bilan bo'lishilganda
-    // qat'iy talab halal beradi
-    const n = parseSkillFile(['---', 'name: boshqa', 'description: t', '---'].join('\n'), 'papka')
-    expect(n?.nom).toBe('boshqa')
-    expect(n?.ogohlantirishlar.some((x) => x.includes('papka'))).toBe(true)
+  test('a name that does not match the folder name warns (but is not rejected)', () => {
+    // pi is deliberately like this: a strict requirement gets in the way when
+    // a folder is shared between several tools
+    const r = parseSkillFile(['---', 'name: other', 'description: d', '---'].join('\n'), 'folder')
+    expect(r?.name).toBe('other')
+    expect(r?.warnings.some((x) => x.includes('folder'))).toBe(true)
   })
 })

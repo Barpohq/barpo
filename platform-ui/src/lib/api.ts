@@ -392,7 +392,7 @@ export async function fetchProjects(): Promise<Project[]> {
 
 /**
  * New project. Only the name is sent — the server creates the folder itself
- * (`~/.platforma/loyihalar/<slug>/`); the client cannot supply a path.
+ * (`~/.platforma/projects/<slug>/`); the client cannot supply a path.
  */
 export async function createProject(name: string): Promise<Project> {
   const response = await request<{ project: Project }>('/api/projects', {

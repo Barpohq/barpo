@@ -1,268 +1,269 @@
-// MCP serverlar: baza qatlami.
+// MCP servers: the database layer.
 //
-// Tarmoq so'rovlari (registry, GitHub) SINALMAYDI — ular tashqi xizmatga
-// bog'liq. Bu yerda ular kelgandan KEYINGI mantiq tekshiriladi: katalog
-// UPSERT'i, qamrov, o'rnatish id'lari (kredensial kaliti shundan quriladi).
+// Network requests (registry, GitHub) are NOT EXERCISED — they depend on an
+// external service. What is checked here is the logic that runs AFTER they
+// return: the catalog UPSERT, the scope, and the install ids (the credential
+// key is built from them).
 //
-// `skilllar.test.ts` bilan bir xil naqsh — MCP modeli ham shu shaklda.
+// The same pattern as `skills.test.ts` — the MCP model has the same shape.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { McpKatalogYozuvi } from '@platforma/shared'
-import { bazaOch, dbOrnat } from '../src/db.ts'
+import type { McpCatalogEntry } from '@platforma/shared'
+import { openDb, setDb } from '../src/db.ts'
 import {
-  faolMcpServerlar,
-  loyihaYarat,
-  mcpManbaOchir,
-  mcpManbalarOqi,
-  mcpManbaYarat,
-  mcpServerlarniSinxronla,
-  mcpServerlarOqi,
-  mcpServerOqi,
-  mcpServerOrnat,
-  mcpServerOrnatishniOchir,
+  activeMcpServers,
+  createProject,
+  deleteMcpSource,
+  readMcpSources,
+  createMcpSource,
+  syncMcpServers,
+  readMcpServers,
+  readMcpServer,
+  installMcpServer,
+  uninstallMcpServer,
 } from '../src/repo.ts'
 
 let db: Database
 
 beforeEach(() => {
-  db = bazaOch(':memory:')
-  dbOrnat(db)
+  db = openDb(':memory:')
+  setDb(db)
 })
 
 afterEach(() => {
-  dbOrnat(null)
+  setDb(null)
   db.close()
 })
 
-type XomYozuv = Omit<McpKatalogYozuvi, 'id' | 'manbaId' | 'createdAt'>
+type RawEntry = Omit<McpCatalogEntry, 'id' | 'sourceId' | 'createdAt'>
 
-/** stdio server yozuvi — testlarda eng ko'p ishlatiladigan shakl */
-function stdioYozuv(nom = 'github', qoshimcha: Partial<XomYozuv> = {}): XomYozuv {
+/** A stdio server entry — the shape used most often in the tests */
+function stdioEntry(name = 'github', extra: Partial<RawEntry> = {}): RawEntry {
   return {
-    nom,
-    tavsif: `${nom} vositalari`,
+    name,
+    description: `${name} tools`,
     transport: 'stdio',
-    buyruq: 'npx',
-    argumentlar: ['-y', `@example/${nom}`],
-    sozlamalar: [],
-    ...qoshimcha,
+    command: 'npx',
+    args: ['-y', `@example/${name}`],
+    settings: [],
+    ...extra,
   }
 }
 
-/** Manba + bitta server yaratadi, server id'sini qaytaradi */
-function manbaVaServer(nom = 'github') {
-  const manba = mcpManbaYarat({
-    tur: 'qolda',
-    manbaNomi: nom,
+/** Creates a source plus one server, returning the server id */
+function sourceAndServer(name = 'github') {
+  const source = createMcpSource({
+    kind: 'manual',
+    sourceName: name,
     owner: null,
     repo: null,
     ref: '',
   })
-  mcpServerlarniSinxronla(manba.id, [stdioYozuv(nom)])
-  const server = mcpServerlarOqi().find((s) => s.nom === nom)
-  if (!server) throw new Error('server yaratilmadi')
-  return { manba, server }
+  syncMcpServers(source.id, [stdioEntry(name)])
+  const server = readMcpServers().find((s) => s.name === name)
+  if (!server) throw new Error('the server was not created')
+  return { source, server }
 }
 
-describe('manbalar', () => {
-  test('takroriy ulash mavjudini qaytaradi', () => {
-    const a = mcpManbaYarat({ tur: 'github', manbaNomi: 'o/r', owner: 'o', repo: 'r', ref: '' })
-    const b = mcpManbaYarat({ tur: 'github', manbaNomi: 'o/r', owner: 'o', repo: 'r', ref: '' })
+describe('sources', () => {
+  test('connecting twice returns the existing one', () => {
+    const a = createMcpSource({ kind: 'github', sourceName: 'o/r', owner: 'o', repo: 'r', ref: '' })
+    const b = createMcpSource({ kind: 'github', sourceName: 'o/r', owner: 'o', repo: 'r', ref: '' })
     expect(b.id).toBe(a.id)
-    expect(mcpManbalarOqi()).toHaveLength(1)
+    expect(readMcpSources()).toHaveLength(1)
   })
 
-  test('turi boshqa bo\'lsa alohida manba', () => {
-    mcpManbaYarat({ tur: 'github', manbaNomi: 'x', owner: 'o', repo: 'r', ref: '' })
-    mcpManbaYarat({ tur: 'qolda', manbaNomi: 'x', owner: null, repo: null, ref: '' })
-    expect(mcpManbalarOqi()).toHaveLength(2)
+  test('a different kind means a separate source', () => {
+    createMcpSource({ kind: 'github', sourceName: 'x', owner: 'o', repo: 'r', ref: '' })
+    createMcpSource({ kind: 'manual', sourceName: 'x', owner: null, repo: null, ref: '' })
+    expect(readMcpSources()).toHaveLength(2)
   })
 
-  test('ref boshqa bo\'lsa alohida manba', () => {
-    mcpManbaYarat({ tur: 'github', manbaNomi: 'o/r', owner: 'o', repo: 'r', ref: '' })
-    mcpManbaYarat({ tur: 'github', manbaNomi: 'o/r', owner: 'o', repo: 'r', ref: 'dev' })
-    expect(mcpManbalarOqi()).toHaveLength(2)
+  test('a different ref means a separate source', () => {
+    createMcpSource({ kind: 'github', sourceName: 'o/r', owner: 'o', repo: 'r', ref: '' })
+    createMcpSource({ kind: 'github', sourceName: 'o/r', owner: 'o', repo: 'r', ref: 'dev' })
+    expect(readMcpSources()).toHaveLength(2)
   })
 
-  test("manba o'chsa serverlari ham ketadi (CASCADE)", () => {
-    const { manba } = manbaVaServer()
-    expect(mcpServerlarOqi()).toHaveLength(1)
-    expect(mcpManbaOchir(manba.id)).toBe(true)
-    expect(mcpServerlarOqi()).toHaveLength(0)
+  test('removing a source removes its servers too (CASCADE)', () => {
+    const { source } = sourceAndServer()
+    expect(readMcpServers()).toHaveLength(1)
+    expect(deleteMcpSource(source.id)).toBe(true)
+    expect(readMcpServers()).toHaveLength(0)
   })
 })
 
-describe('sinxronlash', () => {
-  test('qo\'shildi / yangilandi / o\'chirildi hisoblanadi', () => {
-    const manba = mcpManbaYarat({
-      tur: 'github',
-      manbaNomi: 'o/r',
+describe('syncing', () => {
+  test('added / updated / deleted are counted', () => {
+    const source = createMcpSource({
+      kind: 'github',
+      sourceName: 'o/r',
       owner: 'o',
       repo: 'r',
       ref: '',
     })
 
-    const birinchi = mcpServerlarniSinxronla(manba.id, [stdioYozuv('a'), stdioYozuv('b')])
-    expect(birinchi).toEqual({ qoshildi: 2, yangilandi: 0, ochirildi: 0 })
+    const first = syncMcpServers(source.id, [stdioEntry('a'), stdioEntry('b')])
+    expect(first).toEqual({ added: 2, updated: 0, deleted: 0 })
 
-    // 'a' qoldi (yangilandi), 'b' yo'qoldi, 'c' qo'shildi
-    const ikkinchi = mcpServerlarniSinxronla(manba.id, [stdioYozuv('a'), stdioYozuv('c')])
-    expect(ikkinchi).toEqual({ qoshildi: 1, yangilandi: 1, ochirildi: 1 })
-    expect(mcpServerlarOqi().map((s) => s.nom)).toEqual(['a', 'c'])
+    // 'a' stayed (updated), 'b' vanished, 'c' was added
+    const second = syncMcpServers(source.id, [stdioEntry('a'), stdioEntry('c')])
+    expect(second).toEqual({ added: 1, updated: 1, deleted: 1 })
+    expect(readMcpServers().map((s) => s.name)).toEqual(['a', 'c'])
   })
 
-  test("UPSERT id'ni saqlaydi — o'rnatish yo'qolmaydi", () => {
-    const { manba, server } = manbaVaServer()
-    mcpServerOrnat(server.id, 'global', null, {})
+  test('the UPSERT keeps the id — the install is not lost', () => {
+    const { source, server } = sourceAndServer()
+    installMcpServer(server.id, 'global', null, {})
 
-    // Tavsif o'zgargan holda qayta sinxronlash
-    mcpServerlarniSinxronla(manba.id, [stdioYozuv('github', { tavsif: 'yangi tavsif' })])
+    // Re-sync with a changed description
+    syncMcpServers(source.id, [stdioEntry('github', { description: 'new description' })])
 
-    const keyin = mcpServerOqi(server.id)
-    expect(keyin?.id).toBe(server.id)
-    expect(keyin?.tavsif).toBe('yangi tavsif')
-    expect(keyin?.ornatilgan).toHaveLength(1)
+    const after = readMcpServer(server.id)
+    expect(after?.id).toBe(server.id)
+    expect(after?.description).toBe('new description')
+    expect(after?.installs).toHaveLength(1)
   })
 
-  test('oxirgi sinxron vaqti yoziladi', () => {
-    const { manba } = manbaVaServer()
-    const yangilangan = mcpManbalarOqi().find((m) => m.id === manba.id)
-    expect(yangilangan?.oxirgiSinxron).toBeTruthy()
+  test('the last sync time is recorded', () => {
+    const { source } = sourceAndServer()
+    const updated = readMcpSources().find((s) => s.id === source.id)
+    expect(updated?.lastSync).toBeTruthy()
   })
 
-  test('argumentlar va sozlamalar JSON bo\'lib aylanib keladi', () => {
-    const manba = mcpManbaYarat({ tur: 'qolda', manbaNomi: 'x', owner: null, repo: null, ref: '' })
-    mcpServerlarniSinxronla(manba.id, [
-      stdioYozuv('x', {
-        argumentlar: ['-y', '@a/b', '--flag'],
-        sozlamalar: [
-          { nom: 'TOKEN', majburiy: true, maxfiy: true, izoh: 'kirish tokeni' },
-          { nom: 'BASE_URL', majburiy: false, maxfiy: false, standart: 'https://a.b' },
+  test('args and settings round-trip through JSON', () => {
+    const source = createMcpSource({ kind: 'manual', sourceName: 'x', owner: null, repo: null, ref: '' })
+    syncMcpServers(source.id, [
+      stdioEntry('x', {
+        args: ['-y', '@a/b', '--flag'],
+        settings: [
+          { name: 'TOKEN', required: true, secret: true, hint: 'access token' },
+          { name: 'BASE_URL', required: false, secret: false, default: 'https://a.b' },
         ],
       }),
     ])
 
-    const server = mcpServerlarOqi()[0]
-    expect(server?.argumentlar).toEqual(['-y', '@a/b', '--flag'])
-    expect(server?.sozlamalar).toHaveLength(2)
-    expect(server?.sozlamalar[0]).toMatchObject({ nom: 'TOKEN', maxfiy: true, majburiy: true })
+    const server = readMcpServers()[0]
+    expect(server?.args).toEqual(['-y', '@a/b', '--flag'])
+    expect(server?.settings).toHaveLength(2)
+    expect(server?.settings[0]).toMatchObject({ name: 'TOKEN', secret: true, required: true })
   })
 
-  test('http transport url bilan saqlanadi', () => {
-    const manba = mcpManbaYarat({ tur: 'qolda', manbaNomi: 'h', owner: null, repo: null, ref: '' })
-    mcpServerlarniSinxronla(manba.id, [
+  test('an http transport is stored with its url', () => {
+    const source = createMcpSource({ kind: 'manual', sourceName: 'h', owner: null, repo: null, ref: '' })
+    syncMcpServers(source.id, [
       {
-        nom: 'masofaviy',
-        tavsif: '',
+        name: 'remote',
+        description: '',
         transport: 'http',
         url: 'https://mcp.example.com/mcp',
-        sozlamalar: [],
+        settings: [],
       },
     ])
-    const server = mcpServerlarOqi()[0]
+    const server = readMcpServers()[0]
     expect(server?.transport).toBe('http')
     expect(server?.url).toBe('https://mcp.example.com/mcp')
-    expect(server?.buyruq).toBeUndefined()
+    expect(server?.command).toBeUndefined()
   })
 
-  test('stdio buyruqsiz bazaga tushmaydi (CHECK)', () => {
-    const manba = mcpManbaYarat({ tur: 'qolda', manbaNomi: 'b', owner: null, repo: null, ref: '' })
+  test('stdio without a command does not reach the database (CHECK)', () => {
+    const source = createMcpSource({ kind: 'manual', sourceName: 'b', owner: null, repo: null, ref: '' })
     expect(() =>
-      mcpServerlarniSinxronla(manba.id, [
-        { nom: 'buzuq', tavsif: '', transport: 'stdio', sozlamalar: [] },
+      syncMcpServers(source.id, [
+        { name: 'broken', description: '', transport: 'stdio', settings: [] },
       ]),
     ).toThrow()
   })
 
-  test('http url\'siz bazaga tushmaydi (CHECK)', () => {
-    const manba = mcpManbaYarat({ tur: 'qolda', manbaNomi: 'b', owner: null, repo: null, ref: '' })
+  test('http without a url does not reach the database (CHECK)', () => {
+    const source = createMcpSource({ kind: 'manual', sourceName: 'b', owner: null, repo: null, ref: '' })
     expect(() =>
-      mcpServerlarniSinxronla(manba.id, [
-        { nom: 'buzuq', tavsif: '', transport: 'http', sozlamalar: [] },
+      syncMcpServers(source.id, [
+        { name: 'broken', description: '', transport: 'http', settings: [] },
       ]),
     ).toThrow()
   })
 })
 
-describe("o'rnatish", () => {
-  test('global o\'rnatish id qaytaradi va takrorlanmaydi', () => {
-    const { server } = manbaVaServer()
-    const id1 = mcpServerOrnat(server.id, 'global', null, {})
-    const id2 = mcpServerOrnat(server.id, 'global', null, {})
+describe('installing', () => {
+  test('a global install returns an id and is not duplicated', () => {
+    const { server } = sourceAndServer()
+    const id1 = installMcpServer(server.id, 'global', null, {})
+    const id2 = installMcpServer(server.id, 'global', null, {})
     expect(id2).toBe(id1)
-    expect(mcpServerOqi(server.id)?.ornatilgan).toHaveLength(1)
+    expect(readMcpServer(server.id)?.installs).toHaveLength(1)
   })
 
-  test('qayta o\'rnatish sozlama qiymatlarini yangilaydi', () => {
-    const { server } = manbaVaServer()
-    const id = mcpServerOrnat(server.id, 'global', null, { BASE_URL: 'https://a' })
-    const yangiId = mcpServerOrnat(server.id, 'global', null, { BASE_URL: 'https://b' })
+  test('re-installing updates the setting values', () => {
+    const { server } = sourceAndServer()
+    const id = installMcpServer(server.id, 'global', null, { BASE_URL: 'https://a' })
+    const newId = installMcpServer(server.id, 'global', null, { BASE_URL: 'https://b' })
 
-    expect(yangiId).toBe(id)
-    const ornatish = mcpServerOqi(server.id)?.ornatilgan[0]
-    expect(ornatish?.sozlamaQiymatlari).toEqual({ BASE_URL: 'https://b' })
+    expect(newId).toBe(id)
+    const install = readMcpServer(server.id)?.installs[0]
+    expect(install?.settingValues).toEqual({ BASE_URL: 'https://b' })
   })
 
-  test('bir server global va loyihada alohida o\'rnatiladi', () => {
-    const { server } = manbaVaServer()
-    const loyiha = loyihaYarat('test', '/tmp/test-loyiha')
+  test('one server installs separately at global and project scope', () => {
+    const { server } = sourceAndServer()
+    const project = createProject('test', '/tmp/test-project')
 
-    const globalId = mcpServerOrnat(server.id, 'global', null, {})
-    const loyihaId = mcpServerOrnat(server.id, 'loyiha', loyiha.id, { BASE_URL: 'https://l' })
+    const globalId = installMcpServer(server.id, 'global', null, {})
+    const projectId = installMcpServer(server.id, 'project', project.id, { BASE_URL: 'https://p' })
 
-    expect(loyihaId).not.toBe(globalId)
-    expect(mcpServerOqi(server.id)?.ornatilgan).toHaveLength(2)
+    expect(projectId).not.toBe(globalId)
+    expect(readMcpServer(server.id)?.installs).toHaveLength(2)
   })
 
-  test("o'rnatishni bekor qilish id qaytaradi", () => {
-    const { server } = manbaVaServer()
-    const id = mcpServerOrnat(server.id, 'global', null, {})
+  test('uninstalling returns the id', () => {
+    const { server } = sourceAndServer()
+    const id = installMcpServer(server.id, 'global', null, {})
 
-    expect(mcpServerOrnatishniOchir(server.id, 'global', null)).toBe(id)
-    expect(mcpServerOrnatishniOchir(server.id, 'global', null)).toBeNull()
-    expect(mcpServerOqi(server.id)?.ornatilgan).toHaveLength(0)
+    expect(uninstallMcpServer(server.id, 'global', null)).toBe(id)
+    expect(uninstallMcpServer(server.id, 'global', null)).toBeNull()
+    expect(readMcpServer(server.id)?.installs).toHaveLength(0)
   })
 })
 
-describe('faolMcpServerlar', () => {
-  test('faqat global — loyihasiz sessiya', () => {
-    const { server } = manbaVaServer('a')
-    const { server: b } = manbaVaServer('b')
-    mcpServerOrnat(server.id, 'global', null, {})
+describe('activeMcpServers', () => {
+  test('global only — a session without a project', () => {
+    const { server } = sourceAndServer('a')
+    const { server: b } = sourceAndServer('b')
+    installMcpServer(server.id, 'global', null, {})
 
-    const faol = faolMcpServerlar(null)
-    expect(faol.map((s) => s.nom)).toEqual(['a'])
-    expect(faol.find((s) => s.id === b.id)).toBeUndefined()
+    const active = activeMcpServers(null)
+    expect(active.map((s) => s.name)).toEqual(['a'])
+    expect(active.find((s) => s.id === b.id)).toBeUndefined()
   })
 
-  test('global + loyiha birlashadi, takrorlanmaydi', () => {
-    const { server: a } = manbaVaServer('a')
-    const { server: b } = manbaVaServer('b')
-    const loyiha = loyihaYarat('test', '/tmp/test-loyiha-2')
+  test('global + project are merged, without duplicates', () => {
+    const { server: a } = sourceAndServer('a')
+    const { server: b } = sourceAndServer('b')
+    const project = createProject('test', '/tmp/test-project-2')
 
-    mcpServerOrnat(a.id, 'global', null, {})
-    // `a` ikki joyda ham o'rnatilgan — ro'yxatda BIR MARTA chiqishi kerak
-    mcpServerOrnat(a.id, 'loyiha', loyiha.id, {})
-    mcpServerOrnat(b.id, 'loyiha', loyiha.id, {})
+    installMcpServer(a.id, 'global', null, {})
+    // `a` is installed in both places — it must appear ONCE in the list
+    installMcpServer(a.id, 'project', project.id, {})
+    installMcpServer(b.id, 'project', project.id, {})
 
-    const faol = faolMcpServerlar(loyiha.id)
-    expect(faol.map((s) => s.nom)).toEqual(['a', 'b'])
+    const active = activeMcpServers(project.id)
+    expect(active.map((s) => s.name)).toEqual(['a', 'b'])
   })
 
-  test('boshqa loyihaning serveri kirmaydi', () => {
-    const { server } = manbaVaServer('a')
-    const l1 = loyihaYarat('bir', '/tmp/l1')
-    const l2 = loyihaYarat('ikki', '/tmp/l2')
-    mcpServerOrnat(server.id, 'loyiha', l1.id, {})
+  test("another project's server is not included", () => {
+    const { server } = sourceAndServer('a')
+    const p1 = createProject('one', '/tmp/p1')
+    const p2 = createProject('two', '/tmp/p2')
+    installMcpServer(server.id, 'project', p1.id, {})
 
-    expect(faolMcpServerlar(l2.id)).toHaveLength(0)
-    expect(faolMcpServerlar(l1.id)).toHaveLength(1)
+    expect(activeMcpServers(p2.id)).toHaveLength(0)
+    expect(activeMcpServers(p1.id)).toHaveLength(1)
   })
 
-  test("o'rnatilmagan server faol emas", () => {
-    manbaVaServer('a')
-    expect(faolMcpServerlar(null)).toHaveLength(0)
-    expect(mcpServerlarOqi()).toHaveLength(1)
+  test('a server that is not installed is not active', () => {
+    sourceAndServer('a')
+    expect(activeMcpServers(null)).toHaveLength(0)
+    expect(readMcpServers()).toHaveLength(1)
   })
 })

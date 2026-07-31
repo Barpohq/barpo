@@ -279,7 +279,7 @@ export function streamError(messages: readonly unknown[]): string | undefined {
  * above this is not text but a flag: mentioning the tool when it does not
  * exist would push the model towards a capability it does not have.
  */
-export const AGENT_SISTEM_PROMPT = (
+export const AGENT_SYSTEM_PROMPT = (
   workDir: string,
   projectContext?: string,
   skills?: string,
@@ -426,7 +426,7 @@ export async function* agentStream(
   // We pass the config values down to the managers. They are held in a
   // per-session registry and the config was not yet known when they were
   // created.
-  options.permission.kutishMuddatiniOrnat(config.permission.waitSeconds * 1000)
+  options.permission.setWaitTimeout(config.permission.waitSeconds * 1000)
   options.mode?.setLimits(
     config.permission.consecutiveBlockLimit,
     config.permission.totalBlockLimit,
@@ -434,13 +434,13 @@ export async function* agentStream(
 
   // Permission requests are pushed onto the stream — the orchestrator relays
   // them to the WS
-  const unsubscribeRequests = options.permission.kuzat((request) =>
+  const unsubscribeRequests = options.permission.subscribe((request) =>
     emit({ kind: 'permission_required', request }),
   )
-  const unsubscribeVerdicts = options.permission.qarorlarniKuzat((v) =>
+  const unsubscribeVerdicts = options.permission.subscribeVerdicts((v) =>
     emit({ kind: 'classifier', verdict: v.verdict, note: v.note }),
   )
-  const unsubscribeDecisions = options.permission.ruxsatQarorlariniKuzat((decision) =>
+  const unsubscribeDecisions = options.permission.subscribeDecisions((decision) =>
     emit({ kind: 'permission_decision', decision }),
   )
   const unsubscribeMode = options.mode?.subscribe((change) =>
@@ -454,15 +454,15 @@ export async function* agentStream(
   // The context is wired up only when `mode` is given; otherwise it is
   // confirm mode.
   if (options.mode) {
-    options.permission.klassifikatorniUla({
-      rejim: options.mode,
-      suhbat: classifierHistory(options.classifierHistory ?? textHistory(messages)),
+    options.permission.setClassifierContext({
+      mode: options.mode,
+      conversation: classifierHistory(options.classifierHistory ?? textHistory(messages)),
       workDir: options.workDir,
       signal: options.signal,
       model: config.permission.classifierModel,
     })
   } else {
-    options.permission.klassifikatorniUla(undefined)
+    options.permission.setClassifierContext(undefined)
   }
 
   // The MCP manager is created inside `run`, but `cleanup()` has to be able to
@@ -475,7 +475,7 @@ export async function* agentStream(
     unsubscribeVerdicts()
     unsubscribeDecisions()
     unsubscribeMode?.()
-    options.permission.klassifikatorniUla(undefined)
+    options.permission.setClassifierContext(undefined)
     // LEAVE NO ZOMBIE PROCESSES. `cleanup()` is synchronous (`finally` blocks
     // call it) while closing MCP is async — so we DO NOT AWAIT the result, we
     // only kick it off. The error is swallowed: cleanup has to run to the end
@@ -498,8 +498,8 @@ export async function* agentStream(
 
       const environment = new RestrictedEnv({
         workDir: options.workDir,
-        ruxsat: options.permission,
-        buyruqTimeoutMs: config.agent.tools.bashTimeoutSeconds * 1000,
+        permission: options.permission,
+        commandTimeoutMs: config.agent.tools.bashTimeoutSeconds * 1000,
       })
       const toolContext = { env: environment }
 
@@ -544,7 +544,7 @@ export async function* agentStream(
       }
       const prompt = attachmentNote(
         messages[lastUser]!.text,
-        messages[lastUser]!.biriktirmalar,
+        messages[lastUser]!.attachments,
       )
 
       // The last user message is handed to `prompt()` — it must not be
@@ -567,14 +567,14 @@ export async function* agentStream(
           config.agent.compaction,
           options.signal,
         )
-        if (result.holat === 'siqildi') {
-          context = result.xabarlar
+        if (result.status === 'compacted') {
+          context = result.messages
           emit({
             kind: 'compacted',
-            previousTokens: result.oldingiTokenlar,
+            previousTokens: result.previousTokens,
             newTokens: contextTokens(context),
           })
-        } else if (result.holat === 'nosoz') {
+        } else if (result.status === 'failed') {
           // Summarising did not work — we fall back to hard trimming. Context
           // is lost, but the session keeps working (the alternative being the
           // request failing with a context window error).
@@ -640,7 +640,7 @@ export async function* agentStream(
 
       const agent = new Agent({
         initialState: {
-          systemPrompt: AGENT_SISTEM_PROMPT(
+          systemPrompt: AGENT_SYSTEM_PROMPT(
             options.workDir,
             projectContext ? contextToPrompt(projectContext) : undefined,
             skills ?? undefined,
@@ -903,16 +903,16 @@ export function attachmentNote(
 ): string {
   if (!attachments?.length) return text
 
-  const hasImage = attachments.some((b) => b.tur === 'rasm')
-  const lines = attachments.map((b) => `- ${b.yol}`)
+  const hasImage = attachments.some((a) => a.kind === 'image')
+  const lines = attachments.map((a) => `- ${a.path}`)
 
   const heading =
     attachments.length === 1
-      ? `The user attached one ${attachments[0]!.tur === 'rasm' ? 'image' : 'file'} to this message:`
+      ? `The user attached one ${attachments[0]!.kind === 'image' ? 'image' : 'file'} to this message:`
       : 'The user attached these files to this message:'
 
   // The instruction is IN ENGLISH — so is the system prompt
-  // (`AGENT_SISTEM_PROMPT`). The reply language is detected from the user's
+  // (`AGENT_SYSTEM_PROMPT`). The reply language is detected from the user's
   // language, while instructions are given to the model in English.
   const hint = hasImage
     ? 'Use the `read` tool on a path above when you need its contents. Reading an image path shows you the image itself.'

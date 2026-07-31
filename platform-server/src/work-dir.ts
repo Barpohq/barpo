@@ -2,11 +2,11 @@
 //
 // There are two kinds of directory:
 //
-//   1) SESSION directory — ~/.platforma/ishlar/<sessionId>/
+//   1) SESSION directory — ~/.platforma/work/<sessionId>/
 //      A conversation not attached to a project runs here: files created in
 //      one conversation must not bleed into another.
 //
-//   2) PROJECT directory — ~/.platforma/loyihalar/<slug>/
+//   2) PROJECT directory — ~/.platforma/projects/<slug>/
 //      A conversation attached to a project runs here. ALL of a project's
 //      chats share one directory, so the user can open several conversations
 //      over the same codebase.
@@ -22,14 +22,14 @@ import { join } from 'node:path'
 export function worksRoot(): string {
   const env = process.env.PLATFORM_WORKS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'ishlar')
+  return join(homedir(), '.platforma', 'work')
 }
 
 /** The root of every project directory */
 export function projectsRoot(): string {
   const env = process.env.PLATFORM_PROJECTS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'loyihalar')
+  return join(homedir(), '.platforma', 'projects')
 }
 
 /**
@@ -116,15 +116,15 @@ export function sessionWorkDir(sessionId: string, projectFolder?: string | null)
 // the work directory is shared (see `sessionWorkDir`) — without the split, the
 // files of every conversation in a project would end up mixed in one directory.
 //
-// `sessiyalar/<sid>/fayllar/` — the per-kind subdirectory is DELIBERATE: in
+// `sessions/<sid>/files/` — the per-kind subdirectory is DELIBERATE: in
 // future, other session-scoped things (exports, snapshots and so on) get their
 // own directory and do not get mixed up with uploads.
 
 /** The root of session-scoped data — relative to the work directory */
-export const SESSION_DIR = '.platforma/sessiyalar'
+export const SESSION_DIR = '.platforma/sessions'
 
 /** The directory for files uploaded within a session */
-export const FILES_DIR = 'fayllar'
+export const FILES_DIR = 'files'
 
 /**
  * Creates the session's upload directory.

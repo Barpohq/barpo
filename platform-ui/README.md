@@ -1,161 +1,213 @@
-# AI Platforma — UI demo
+# AI Platform — UI
 
-**Dastur yaratadigan dastur**ning interfeysi: chat orqali yangi servis
-buyurtma qilinadi, platforma uni orqa fonda quradi, tayyor ilova esa o'z
-dashboardini platformaga **o'zi qo'shadi** (sidebar'dagi "Ilovalar" bo'limi).
+The interface of **the program that builds programs**: a new service is
+ordered through chat, the platform builds it in the background, and the
+finished app **adds its own dashboard** to the platform (the "Apps" section in
+the sidebar).
 
-**Chat qismi backendga ulangan** — haqiqiy LLM bilan ishlaydi (`Chat.tsx`,
-`lib/api.ts`, `lib/ws.ts`). Qolgan sahifalar hali `data/mock.ts` dan
-o'qiydi; ular uchun backend endpointlari tayyor, faqat `fetch` yozilishi
-kerak.
+Most of the UI is wired to the backend — chat, conversations, agents, servers,
+skills, MCP servers and the app dashboards all talk to real endpoints
+(`lib/api.ts`, `lib/ws.ts`). Three pages still read from `data/mock.ts`:
+`Audit.tsx`, `Dashboard.tsx` and `Workflow.tsx` — for them the endpoints are
+ready, only the `fetch` has to be written.
 
-Qurilish stsenariylari (bot yasash, sayt deploy qilish) `mock.ts` da
-`buildPlans` sifatida saqlanib turibdi — orchestrator qurilish oqimini
-ulaganda ishlatiladi.
-
-## Ishga tushirish
+## Getting started
 
 ```sh
 bun install
 bun run dev
 ```
 
-## Tuzilma
+## Structure
 
 ```
 src/
-  data/mock.ts     — hali ulanmagan sahifalar uchun mock ma'lumot
+  data/mock.ts     — mock data for the pages that are not wired up yet,
+                     plus the `AppManifest` / `Widget` types
   lib/
-    api.ts         — REST chaqiruvlari (/api/models, /api/chat/...)
-    ws.ts          — yagona WebSocket klienti (avtomatik qayta ulanish)
-    model-saqlash.ts — oxirgi tanlangan model localStorage'da
+    api.ts         — REST calls (models, chat, projects, skills, MCP, servers, apps)
+    ws.ts          — a single WebSocket client (reconnects automatically)
+    apps.ts        — the installed apps in the sidebar (REST + WS)
+    app-states.ts  — polling the live state of a dashboard
+    running.ts     — the agent streams running in the background (REST + WS)
+    conversations.ts — the conversation list shared by the sidebar and its page
+    hash-path.ts   — URL hash ↔ app state (pure functions, tested)
+    date.ts        — date grouping and formatting for the conversation list
+    toast.ts       — the toast context and hook
+    audit-label.ts — display labels for audit level/result values
+    model-storage.ts   — the last selected model, in localStorage
+    sidebar-storage.ts — whether the sidebar's Chat accordion is open
   components/
-    ModelTanlagich.tsx — qidiruvli model tanlash (provider bo'yicha guruhlangan)
-    ToolKartasi.tsx    — agent bajargan tool (holat, diff, klassifikator yorlig'i)
-    RuxsatKartasi.tsx  — xavfli amal uchun ruxsat so'rovi (3 tugma)
-    RejimAlmashtirgich.tsx — ⏸ tasdiq / ⏵⏵ auto
-    RejimKartasi.tsx   — auto o'chganda sabab + "Qayta yoqish"
-  ui.tsx           — umumiy komponentlar (Card, StatTile, LevelBadge, Meter...)
-  App.tsx          — qobiq: header, Pro rejim tugmasi, sidebar, status lenta
+    ModelPicker.tsx    — searchable model picker (grouped by provider)
+    ProjectPicker.tsx  — the project (working directory) a conversation binds to
+    AttachmentChip.tsx — a file or image attached to the chat
+    ToolCard.tsx       — a tool the agent ran (status, diff, classifier label)
+    PermissionCard.tsx — a permission request for a dangerous action (3 buttons)
+    ModeToggle.tsx     — ⏸ confirm / ⏵⏵ auto
+    ModeCard.tsx       — the reason auto turned off + "Re-enable"
+    ConversationList.tsx — the sidebar's expandable Chat section
+    StreamIndicator.tsx  — a live indicator next to a running session
+    Markdown.tsx       — assistant replies rendered as markdown (GFM, no raw HTML)
+    Toast.tsx          — the toast provider and its appearance
+    AiView.tsx         — runs an AI-written view inside the host React tree
+    SettingsForm.tsx   — an app's settings form, rendered from a schema
+    ActionButtons.tsx  — an app's action buttons (restart, stop, …)
+  ui.tsx           — shared components (Card, StatTile, LevelBadge, Meter…)
+  App.tsx          — the shell: header, Pro mode button, sidebar, status strip
   pages/
-    Chat.tsx       — haqiqiy LLM chat: model tanlash, streaming javob, xato holati
-    AppView.tsx    — ilova manifestini dinamik render qiluvchi (vidjet sxemalari)
-    Servers.tsx    — 5 server, daemon holati, ruxsat darajalari
-    Skills.tsx     — skill do'koni, ruxsat modali (Android modeli)
-    Audit.tsx      — append-only audit log, filtrlash
-    Terminal.tsx   — tmux/Claude Code sessiyasi ko'rinishi, tasdiq oqimi
+    Chat.tsx          — the real LLM chat: model picker, streaming reply, error states
+    Conversations.tsx — every conversation, with search and a project filter
+    Agents.tsx        — the agent streams running in the background, with a stop button
+    AppView.tsx       — renders an app manifest dynamically (widget schemas)
+    Servers.tsx       — real SSH server management, live metrics
+    Skills.tsx        — skill sources, catalog and installation (with scopes)
+    Mcp.tsx           — MCP servers: registry / GitHub / manual sources, settings
+    Audit.tsx         — append-only audit log, filtering
+    Terminal.tsx      — a view of the tmux/Claude Code session, the approval flow
 ```
 
-Menyu ataylab minimal: **Chat · Serverlar · Skill do'koni · Audit log ·
-Terminal + Ilovalar**. Platforma oddiy PC'ga o'rnatib ishlatiladigan darajada
-sodda — server ishlatmaydiganlar uchun ortiqcha texnik sahifalar yo'q.
-(`pages/Dashboard.tsx`, `Agents.tsx`, `Workflow.tsx` fayllari saqlab qo'yilgan
-lekin menyuga ulanmagan — kerak bo'lsa `App.tsx` da bir qatorda qaytariladi.)
+The menu is deliberately short: **Chat · Agents · Servers · Skill store · MCP
+servers · Audit log · Terminal + Apps**. The platform is meant to be simple
+enough to install on an ordinary PC — no surplus technical pages for people who
+do not run servers. (`pages/Dashboard.tsx` and `Workflow.tsx` are kept but not
+wired into the menu; one line in `App.tsx` brings them back if needed.)
 
-## Dizayn qarorlari
+## Design decisions
 
-- **Progressive disclosure** — default holat faqat chat; "PRO REJIM" tugmasi
-  sidebar, status lenta va barcha texnik sahifalarni ochadi (02-ai-platform.md
-  §3.5 falsafasi).
-- Rang palitrasi: siyoh-ko'k fon + lazur aksent + oltin (xarajat). Grafik
-  seriyalari (`--color-s1..s4`) dataviz validatoridan o'tgan (CVD-safe).
-- Shriftlar: Bricolage Grotesque (sarlavha) · Manrope (matn) · JetBrains Mono
-  (loglar, raqamlar) — hammasi lokal (@fontsource), CDN kerak emas.
-- Mock raqamlar roadmapdagi real natijalardan olingan (247 klaster, 151 qabul,
-  $0.037/post, approval 96%).
+- **Progressive disclosure** — the default state is chat only; the "PRO MODE"
+  button reveals the sidebar, the status strip and every technical page (the
+  philosophy from 02-ai-platform.md §3.5).
+- Colour palette: ink-blue background + azure accent + gold (cost). The chart
+  series (`--color-s1..s4`) passed the dataviz validator (CVD-safe).
+- Fonts: Bricolage Grotesque (headings) · Manrope (body) · JetBrains Mono
+  (logs, numbers) — all local (@fontsource), no CDN required.
+- The mock numbers come from real results on the roadmap (247 clusters,
+  151 accepted, $0.037/post, 96% approval).
 
-## Navigatsiya (deep-link)
+## Navigation (deep links)
 
-URL hash orqali istalgan sahifaga to'g'ridan-to'g'ri kirish mumkin:
-`/#pro/dashboard`, `/#pro/audit`, `/#pro/terminal` va h.k.
-
-## Dinamik ilova modullari — arxitektura
-
-Demo "server-driven UI" modelini ishlatadi va real versiyada ham shu tavsiya
-etiladi:
-
-1. **Manifest** — har bir yaratilgan servis o'zi bilan JSON manifest olib
-   keladi: nom, ikon, backend servis manzili va **dashboard vidjetlari sxema
-   sifatida** (`AppManifest` tipi, `src/data/mock.ts`).
-2. **Host renderer** — `pages/AppView.tsx` sxemani UI'ga aylantiradi
-   (stats / bars / table / logs / note / deploy / git vidjetlari). Yangi
-   ilova uchun frontend **qayta build qilinmaydi** — faqat data keladi.
-   Qurilish rejalari `BuildPlan` tipida (`src/data/mock.ts`) — qadamlar,
-   ixtiyoriy deploy tanlovi va tayyor manifest.
-3. **Registratsiya** — real platformada orchestrator yangi manifestni
-   WebSocket orqali yuboradi, UI `installApp()` bilan sidebar'ga qo'shadi
-   (demo'da xuddi shu funksiya chat build oqimidan chaqiriladi).
-
-Nega iframe/module-federation emas? Sxema-vidjet modeli xavfsizroq (AI
-yozgan kod host UI kontekstida ishlamaydi — prompt injection himoyasi),
-soddaroq va bir xil dizayn tizimini kafolatlaydi. Vidjet turlari yetmay
-qolganda ikkita yo'l bor: yangi vidjet turini host'ga qo'shish (nazorat
-ostida) yoki murakkab ilovalar uchun sandbox iframe qatlami.
-
-## Chat qanday ishlaydi
+The URL hash addresses any page directly:
 
 ```
-xabar yuborish   →  POST /api/chat/send  →  202 { messageId }
-javob            →  WS: chat.delta × N                    (matn)
-                     WS: chat.tool                        (tool kartalari)
-                     WS: chat.permission                  (ruxsat so'rovi)
-                     WS: chat.klassifikator               (auto rejim qarori)
-                     WS: chat.rejim                       (rejim o'zgardi)
-                  →  chat.done | chat.error
+(empty)              — plain mode, new conversation
+#chat/<uuid>         — plain mode, an open conversation
+#pro/chat            — pro mode, the chat page
+#pro/chat/<uuid>     — pro mode, an open conversation
+#pro/servers         — pro mode, another page (#pro/audit, #pro/terminal, …)
+#pro/app:<id>        — pro mode, an installed app
 ```
 
-Ikkiga bo'linganining sababi: so'rov qabul qilinganini (yoki rad etilganini,
-masalan 409 — provider qulfi) darhol bilish kerak, javob esa uzoq davom
-etadi va uni HTTP javobida ushlab turish shart emas.
+Only a proper UUID is accepted as a session id — otherwise arbitrary text like
+`chat/xyz` would be read as a session and the UI would try to load a
+conversation that does not exist. Parsing lives in `lib/hash-path.ts` as pure
+functions, covered by tests.
 
-Model tanlagich `/api/models` dan ro'yxat oladi — bu foydalanuvchi
-kompyuterida aniqlangan providerlar (mahalliy Ollama, muhit kalitlari,
-`~/.claude` va `~/.codex` obunalari). Modellar provider bo'yicha
-guruhlanadi, bepullari tepada.
+## Dynamic app modules — architecture
 
-**Provider qulfi:** birinchi xabar yuborilgach sessiya provideriga
-bog'lanadi va tanlagich qulflanadi (🔒). Boshqa provider kerak bo'lsa
-"+ yangi suhbat". Sababi: har provider suhbat tarixini o'z formatida saqlaydi
-(thinking bloklari, tool id'lari), o'rtada almashtirish kontekstni buzadi.
+The UI uses a "server-driven UI" model, and that is the recommendation for the
+real version too:
 
-WebSocket (`lib/ws.ts`) butun ilova uchun bitta — sahifa almashganda
-uzilmaydi, aloqa uzilsa avtomatik qayta ulanadi va obunalarni tiklaydi.
+1. **Manifest** — every service that gets built brings a JSON manifest with it:
+   name, icon, backend service address and **its dashboard widgets as a schema**
+   (the `AppManifest` type, `src/data/mock.ts`).
+2. **Host renderer** — `pages/AppView.tsx` turns the schema into UI
+   (stats / bars / table / logs / note / deploy / git widgets). The frontend is
+   **not rebuilt** for a new app — only data arrives. Widget text may contain
+   `{{state.path}}` templates, which are filled in from the live state polled by
+   `lib/app-states.ts`. Beyond the widgets, an app can also ship a settings form
+   (`SettingsForm.tsx`, schema-driven), action buttons (`ActionButtons.tsx`) and
+   an AI-written view (`AiView.tsx`).
+3. **Registration** — the orchestrator sends a new manifest over the WebSocket
+   and the UI adds it to the sidebar with `installApp()`.
 
-### Tool kartalari va ruxsat
+Why not iframes or module federation? The schema-widget model is safer
+(AI-written code does not run in the host UI context — a defence against prompt
+injection), simpler and guarantees a single design system. When the widget
+types run out there are two ways forward: add a new widget type to the host
+(under review) or add a sandboxed iframe layer for complex apps.
 
-`chat.tool` bitta `id` uchun bir necha marta keladi (ishlamoqda → tugadi),
-UI mavjud kartani almashtiradi. `edit` uchun diff ko'rsatiladi, `bash` ning
-uzun chiqishi yig'ilgan holda turadi va bosilganda ochiladi.
+## How chat works
 
-`chat.permission` kelganda ruxsat kartasi chiqadi — agent javob kelguncha
-kutib turadi. Javob darhol UI'da ko'rsatiladi (server tasdiqlashini
-kutmasdan), yuborilmasa toast bilan xabar beriladi.
+```
+send a message  →  POST /api/chat/send  →  202 { messageId }
+the reply       →  WS: chat.delta × N                    (text)
+                    WS: chat.tool                        (tool cards)
+                    WS: chat.permission                  (permission request)
+                    WS: chat.classifier                  (auto mode decision)
+                    WS: chat.mode                        (the mode changed)
+                    WS: chat.status                      (a stream started/finished)
+                 →  chat.done | chat.error
+```
 
-### Ruxsat rejimi
+The reason for the split: whether the request was accepted (or rejected — a 409
+provider lock, say) has to be known immediately, whereas the reply takes a long
+time and there is no need to hold an HTTP response open for it.
 
-Model tanlagich yonidagi almashtirgich ikki holatni beradi:
+The model picker gets its list from `/api/models` — the providers detected on
+the user's machine (a local Ollama, environment keys, `~/.claude` and `~/.codex`
+subscriptions). Models are grouped by provider, with the free ones on top.
 
-| Yorliq | Ma'nosi |
+**Provider lock:** once the first message is sent the session binds to its
+provider and the picker locks (🔒). Use "+ new conversation" for a different
+provider. The reason: each provider stores conversation history in its own
+format (thinking blocks, tool ids), and switching mid-way corrupts the context.
+
+**Project lock:** the same rule applies to the project (the working directory).
+It can only be chosen before the conversation starts — the agent may already
+have created files there, and moving it mid-way would break the context.
+
+The WebSocket (`lib/ws.ts`) is shared by the whole app — it survives page
+changes and, if the connection drops, reconnects and restores its subscriptions
+automatically.
+
+### Tool cards and permission
+
+`chat.tool` arrives several times for the same `id` (running → done) and the UI
+replaces the existing card. `edit` shows a diff; long `bash` output stays
+collapsed and opens on click.
+
+When `chat.permission` arrives a permission card appears — the agent waits for
+the answer. The answer is shown in the UI immediately (without waiting for the
+server to confirm); if it fails to send, a toast reports it. `chat.status`
+serves as a fallback path here: unlike `chat.permission` it is not filtered by
+session, so if the server says "awaiting permission" and no card is present, the
+UI fetches the pending requests over REST.
+
+### Permission mode
+
+The toggle next to the model picker offers two states:
+
+| Label | Meaning |
 |---|---|
-| `⏸ tasdiq` | har xavfli amal so'raladi (standart) |
-| `⏵⏵ auto` | klassifikator hal qiladi — so'rovlar keskin kamayadi |
+| `⏸ confirm` | every dangerous action is asked about (the default) |
+| `⏵⏵ auto` | the classifier decides — the number of prompts drops sharply |
 
-Auto rejimda klassifikator qarori tool kartasi ostida bir qatorli yorliq
-bo'lib ko'rinadi (`chat.klassifikator`). Qaror amal *xavflimi* emas,
-*foydalanuvchi so'raganidan chetga chiqdimi* degan savolga javob beradi.
+In auto mode the classifier's decision appears as a one-line label under the
+tool card (`chat.classifier`). The decision answers not "is this action
+*dangerous*?" but "did it go *beyond what the user asked for*?".
 
-Auto o'z-o'zidan o'chishi mumkin — klassifikator ishlamasa yoki ketma-ket
-bloklasa. O'shanda chatda `RejimKartasi` chiqadi: sabab va "Qayta yoqish"
-tugmasi. Almashtirgich ham gold rangga o'tadi. Avtomatik tiklanmaydi —
-rejimning o'z-o'zidan o'zgarishi chalkash bo'lardi.
+Auto can turn itself off — if the classifier breaks or blocks repeatedly. When
+it does, a `ModeCard` appears in the chat with the reason and a "Re-enable"
+button, and the toggle turns gold. It never comes back on its own: a mode
+changing by itself would be confusing.
 
-## Qolgan backend ulash rejasi
+## Running agents
 
-1. `src/data/mock.ts` dagi qolgan eksportlar — har biri bitta API
-   endpoint'ga mos (`/api/servers`, `/api/audit`, `/api/apps`, ... — bular
-   backendda **allaqachon tayyor**, faqat `lib/api.ts` ga funksiya qo'shilishi
-   kerak).
-2. `builder.create` — orchestrator'da Claude Code'ni tmux sessiyasida ishga
-   tushiradigan haqiqiy endpoint bo'ladi; qurilish qadamlari `build.*`
-   eventlari orqali keladi (protokolda tayyor).
-3. Approval kartalar Telegram approval flow bilan bitta backend'dan oziqlanadi.
+A stream started in chat keeps running on the server even after the page is
+closed (the orchestrator is fire-and-forget). `lib/running.ts` tracks them from
+two sources — the initial list over REST, later changes from `chat.status`
+events. They surface in three places: a live indicator next to the conversation
+in the sidebar, a counter badge next to "Agents", and the `Agents` page with its
+stop button.
+
+## Remaining backend work
+
+1. The remaining exports in `src/data/mock.ts` — `auditLog` (`Audit.tsx`),
+   `costDays` / `modelCosts` / `llmCalls` (`Dashboard.tsx`), `workflowSteps`
+   (`Workflow.tsx`) and `tmuxLines` (`Terminal.tsx`). Each maps to a single API
+   endpoint that is **already available** on the backend; only a function in
+   `lib/api.ts` is missing.
+2. `builder.create` — the real endpoint in the orchestrator that launches Claude
+   Code in a tmux session; the build steps arrive as `build.*` events (already
+   defined in the protocol).
+3. Approval cards and the Telegram approval flow are fed by the same backend.

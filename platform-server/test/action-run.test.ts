@@ -1,456 +1,462 @@
-// Amal va sozlama bajarish qatlami.
+// The action and settings execution layer.
 //
-// Uch narsa majburlanadi:
-//   1) QULF — bir xil amal ikki marta parallel ishlamaydi (ikki restart)
-//   2) SIR OQMASLIGI — token xato matnida ham, natijada ham ko'rinmaydi
-//   3) XATO IZOLYATSIYASI — AI kodi yiqilsa natija `ok: false`, throw emas
+// Three things are enforced:
+//   1) THE LOCK — the same action does not run twice in parallel (two restarts)
+//   2) NO SECRET LEAKS — a token shows up neither in the error text nor in the result
+//   3) ERROR ISOLATION — if the AI code crashes the result is `ok: false`, not a throw
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { AppAmali, AppSozlamalari } from '@platforma/shared'
+import type { AppAction, AppSettings } from '@platforma/shared'
 import {
-  AMAL_TIMEOUT_MS,
-  amalBandmi,
-  amalniBajar,
-  qulflarniTozala,
-  sirlarniTozala,
-  sozlamalarniOqi,
-  sozlamalarniYoz,
-  sshFabrikasiniOrnat,
-} from '../src/amal-bajar.ts'
-import type { IlovaSshApi } from '../src/ilova-ssh.ts'
+  ACTION_TIMEOUT_MS,
+  clearLocks,
+  isActionBusy,
+  readAppSettings,
+  redactSecretValues,
+  runAction,
+  setSshFactory,
+  writeAppSettings,
+} from '../src/action-run.ts'
+import type { AppSshApi } from '../src/app-ssh.ts'
 
-const kontekst = { appId: 'telegram-bot', sozlama: {} }
+const context = { appId: 'telegram-bot', setting: {} }
 
-/** Soxta ssh — chaqiruvlarni yozib boradi */
-let sshChaqiruvlari: { turi: string; arg: unknown }[]
+/** A fake ssh — it records the calls */
+let sshCalls: { kind: string; arg: unknown }[]
 
-function soxtaSsh(ustama: Partial<IlovaSshApi> = {}): IlovaSshApi {
+function fakeSsh(overrides: Partial<AppSshApi> = {}): AppSshApi {
   return {
-    async buyruq(argv) {
-      sshChaqiruvlari.push({ turi: 'buyruq', arg: argv })
-      return { kod: 0, stdout: '', stderr: '' }
+    async command(argv: string[]) {
+      sshCalls.push({ kind: 'command', arg: argv })
+      return { code: 0, stdout: '', stderr: '' }
     },
-    async envYoz(yol, qiymatlar) {
-      sshChaqiruvlari.push({ turi: 'envYoz', arg: { yol, qiymatlar } })
+    async commandRaw(argv: string[]) {
+      sshCalls.push({ kind: 'commandRaw', arg: argv })
+      return { code: 0, stdout: '', stderr: '' }
     },
-    async faylOqi() {
+    async writeEnv(path: string, values: Record<string, string>) {
+      sshCalls.push({ kind: 'writeEnv', arg: { path, values } })
+    },
+    async readFile() {
       return null
     },
-    ...ustama,
+    ...overrides,
   }
 }
 
 beforeEach(() => {
-  sshChaqiruvlari = []
-  qulflarniTozala()
-  sshFabrikasiniOrnat(() => soxtaSsh())
+  sshCalls = []
+  clearLocks()
+  setSshFactory(() => fakeSsh())
 })
 
 afterEach(() => {
-  sshFabrikasiniOrnat(null)
-  qulflarniTozala()
+  setSshFactory(null)
+  clearLocks()
 })
 
-function amal(kod: string, ustama: Partial<AppAmali> = {}): AppAmali {
-  return { nom: 'restart', yorliq: 'Restart', kod, ...ustama }
+function action(code: string, overrides: Partial<AppAction> = {}): AppAction {
+  return { name: 'restart', label: 'Restart', code, ...overrides }
 }
 
-describe('amalniBajar — asosiy oqim', () => {
-  test('muvaffaqiyatli amal `ok: true` qaytaradi', async () => {
-    const n = await amalniBajar(
-      amal('module.exports = async () => ({ xabar: "Bajarildi" })'),
-      kontekst,
+describe('runAction — the main flow', () => {
+  test('a successful action returns `ok: true`', async () => {
+    const r = await runAction(
+      action('module.exports = async () => ({ message: "Done" })'),
+      context,
     )
 
-    expect(n.ok).toBe(true)
-    expect(n.xabar).toBe('Bajarildi')
-    expect(n.vaqt).toMatch(/^\d{4}-/)
+    expect(r.ok).toBe(true)
+    expect(r.message).toBe('Done')
+    expect(r.time).toMatch(/^\d{4}-/)
   })
 
-  test('satr qaytargan kod ham qabul qilinadi', async () => {
-    // AI turli shaklda qaytaradi — rad etish amal ALLAQACHON bajarilgandan
-    // keyin bo'lardi.
-    const n = await amalniBajar(amal('module.exports = async () => "Tayyor"'), kontekst)
-    expect(n.xabar).toBe('Tayyor')
+  test('code returning a string is accepted too', async () => {
+    // The AI returns it in various shapes — rejecting would happen AFTER the
+    // action has ALREADY run.
+    const r = await runAction(action('module.exports = async () => "Ready"'), context)
+    expect(r.message).toBe('Ready')
   })
 
-  test('hech narsa qaytarmagan kod ham muvaffaqiyatli', async () => {
-    const n = await amalniBajar(amal('module.exports = async () => {}'), kontekst)
-    expect(n.ok).toBe(true)
-    expect(n.xabar).toBeUndefined()
+  test('code returning nothing still succeeds', async () => {
+    const r = await runAction(action('module.exports = async () => {}'), context)
+    expect(r.ok).toBe(true)
+    expect(r.message).toBeUndefined()
   })
 
-  test('`ssh` kodga beriladi va server nomi bilan chaqiriladi', async () => {
-    await amalniBajar(
-      amal('module.exports = async ({ ssh }) => { await ssh("helsinki-1").buyruq(["docker","restart","bot"]) }'),
-      kontekst,
+  test('`ssh` is handed to the code and called with the server name', async () => {
+    await runAction(
+      action('module.exports = async ({ ssh }) => { await ssh("helsinki-1").command(["docker","restart","bot"]) }'),
+      context,
     )
 
-    expect(sshChaqiruvlari).toHaveLength(1)
-    expect(sshChaqiruvlari[0]!.arg).toEqual(['docker', 'restart', 'bot'])
+    expect(sshCalls).toHaveLength(1)
+    expect(sshCalls[0]!.arg).toEqual(['docker', 'restart', 'bot'])
   })
 
-  test('`sozlama` kodga beriladi', async () => {
-    const n = await amalniBajar(
-      amal('module.exports = async ({ sozlama }) => ({ xabar: sozlama.rejim })'),
-      { appId: 'bot', sozlama: { rejim: 'webhook' } },
+  test('`setting` is handed to the code', async () => {
+    const r = await runAction(
+      action('module.exports = async ({ setting }) => ({ message: setting.mode })'),
+      { appId: 'bot', setting: { mode: 'webhook' } },
     )
-    expect(n.xabar).toBe('webhook')
+    expect(r.message).toBe('webhook')
   })
 
-  test('`appId` kodga beriladi', async () => {
-    const n = await amalniBajar(
-      amal('module.exports = async ({ appId }) => ({ xabar: appId })'),
-      kontekst,
+  test('`appId` is handed to the code', async () => {
+    const r = await runAction(
+      action('module.exports = async ({ appId }) => ({ message: appId })'),
+      context,
     )
-    expect(n.xabar).toBe('telegram-bot')
+    expect(r.message).toBe('telegram-bot')
   })
 })
 
-describe('xato izolyatsiyasi — AI kodi platformani yiqitmasin', () => {
-  test('yiqilgan kod XATO TASHLAMAYDI', async () => {
-    const n = await amalniBajar(
-      amal('module.exports = async () => { throw new Error("yiqildi") }'),
-      kontekst,
+describe('error isolation — the AI code must not take the platform down', () => {
+  test('crashing code DOES NOT THROW', async () => {
+    const r = await runAction(
+      action('module.exports = async () => { throw new Error("crashed") }'),
+      context,
     )
 
-    expect(n.ok).toBe(false)
-    expect(n.xato).toContain('yiqildi')
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('crashed')
   })
 
-  test('sintaksis xatosi publish paytida emas, bajarishda ushlanadi', async () => {
-    const n = await amalniBajar(amal('module.exports = async () => { ('), kontekst)
-    expect(n.ok).toBe(false)
-    expect(n.xato).toBeTruthy()
+  test('a syntax error is caught at run time, not at publish time', async () => {
+    const r = await runAction(action('module.exports = async () => { ('), context)
+    expect(r.ok).toBe(false)
+    expect(r.error).toBeTruthy()
   })
 
-  test('funksiya qaytarmagan kod rad etiladi', async () => {
-    const n = await amalniBajar(amal('const x = 1'), kontekst)
-    expect(n.ok).toBe(false)
-    expect(n.xato).toContain('module.exports')
+  test('code that does not return a function is rejected', async () => {
+    const r = await runAction(action('const x = 1'), context)
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('module.exports')
   })
 
-  test('bo\'sh kod rad etiladi', async () => {
-    const n = await amalniBajar(amal('   '), kontekst)
-    expect(n.ok).toBe(false)
+  test('empty code is rejected', async () => {
+    const r = await runAction(action('   '), context)
+    expect(r.ok).toBe(false)
   })
 
-  test('`ssh` noto\'g\'ri ishlatilsa tushunarli xato', async () => {
-    sshFabrikasiniOrnat(null)
-    const n = await amalniBajar(
-      amal('module.exports = async ({ ssh }) => { await ssh("").buyruq(["x"]) }'),
-      kontekst,
+  test('misusing `ssh` gives an understandable error', async () => {
+    setSshFactory(null)
+    const r = await runAction(
+      action('module.exports = async ({ ssh }) => { await ssh("").command(["x"]) }'),
+      context,
     )
-    expect(n.ok).toBe(false)
-    expect(n.xato).toMatch(/server name/i)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/server name/i)
   })
 
-  test('timeout chegarasi belgilangan', () => {
-    // 20s (state) yetmaydi: restart + healthcheck uzunroq.
-    expect(AMAL_TIMEOUT_MS).toBeGreaterThan(20_000)
+  test('the timeout limit is set', () => {
+    // 20s (state) is not enough: restart + healthcheck takes longer.
+    expect(ACTION_TIMEOUT_MS).toBeGreaterThan(20_000)
   })
 })
 
-describe('qulf — ikki restart bir-birini bosmasin', () => {
-  test('parallel chaqiruv BITTA bajarilishga aylanadi', async () => {
-    let sanoq = 0
-    sshFabrikasiniOrnat(() =>
-      soxtaSsh({
-        async buyruq(argv) {
-          sanoq++
-          await new Promise((y) => setTimeout(y, 30))
-          sshChaqiruvlari.push({ turi: 'buyruq', arg: argv })
-          return { kod: 0, stdout: '', stderr: '' }
+describe('the lock — two restarts must not tread on each other', () => {
+  test('parallel calls collapse into ONE run', async () => {
+    let count = 0
+    setSshFactory(() =>
+      fakeSsh({
+        async command(argv: string[]) {
+          count++
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          sshCalls.push({ kind: 'command', arg: argv })
+          return { code: 0, stdout: '', stderr: '' }
         },
       }),
     )
 
-    const a = amal('module.exports = async ({ ssh }) => { await ssh("h").buyruq(["restart"]) }')
+    const a = action('module.exports = async ({ ssh }) => { await ssh("h").command(["restart"]) }')
 
-    // Tugma ikki marta bosildi
-    const [n1, n2] = await Promise.all([
-      amalniBajar(a, kontekst),
-      amalniBajar(a, kontekst),
+    // The button was pressed twice
+    const [r1, r2] = await Promise.all([
+      runAction(a, context),
+      runAction(a, context),
     ])
 
-    // Ikkalasi ham muvaffaqiyatli, LEKIN buyruq bir marta ketgan
-    expect(n1.ok).toBe(true)
-    expect(n2.ok).toBe(true)
-    expect(sanoq).toBe(1)
+    // Both succeed, BUT the command went out only once
+    expect(r1.ok).toBe(true)
+    expect(r2.ok).toBe(true)
+    expect(count).toBe(1)
   })
 
-  test('bajarilgandan keyin qulf ochiladi', async () => {
-    const a = amal('module.exports = async () => ({ xabar: "ok" })')
+  test('the lock is released after the run', async () => {
+    const a = action('module.exports = async () => ({ message: "ok" })')
 
-    await amalniBajar(a, kontekst)
-    expect(amalBandmi('telegram-bot', 'restart')).toBe(false)
+    await runAction(a, context)
+    expect(isActionBusy('telegram-bot', 'restart')).toBe(false)
 
-    // Ikkinchi bosish yangi bajarilish
-    const n = await amalniBajar(a, kontekst)
-    expect(n.ok).toBe(true)
+    // A second press is a new run
+    const r = await runAction(a, context)
+    expect(r.ok).toBe(true)
   })
 
-  test('yiqilgandan keyin ham qulf ochiladi', async () => {
-    const a = amal('module.exports = async () => { throw new Error("x") }')
-    await amalniBajar(a, kontekst)
-    // Aks holda ilova abadiy "band" bo'lib qolardi.
-    expect(amalBandmi('telegram-bot', 'restart')).toBe(false)
+  test('the lock is released after a crash too', async () => {
+    const a = action('module.exports = async () => { throw new Error("x") }')
+    await runAction(a, context)
+    // Otherwise the app would stay "busy" forever.
+    expect(isActionBusy('telegram-bot', 'restart')).toBe(false)
   })
 
-  test('turli amallar bir-birini kutmaydi', async () => {
-    const sekin = amal('module.exports = async () => { await new Promise(y => setTimeout(y, 50)); return "a" }', {
-      nom: 'sekin',
+  test('different actions do not wait for each other', async () => {
+    const slow = action('module.exports = async () => { await new Promise(r => setTimeout(r, 50)); return "a" }', {
+      name: 'slow',
     })
-    const tez = amal('module.exports = async () => "b"', { nom: 'tez' })
+    const fast = action('module.exports = async () => "b"', { name: 'fast' })
 
-    const boshlangan = Date.now()
-    const [, n2] = await Promise.all([
-      amalniBajar(sekin, kontekst),
-      amalniBajar(tez, kontekst),
+    const started = Date.now()
+    const [, r2] = await Promise.all([
+      runAction(slow, context),
+      runAction(fast, context),
     ])
 
-    expect(n2.xabar).toBe('b')
-    // "tez" "sekin" ni kutmagan
-    expect(Date.now() - boshlangan).toBeLessThan(200)
+    expect(r2.message).toBe('b')
+    // "fast" did not wait for "slow"
+    expect(Date.now() - started).toBeLessThan(200)
   })
 
-  test('turli ilovalarning bir xil amali bir-birini kutmaydi', async () => {
-    let sanoq = 0
-    const a = amal(`module.exports = async () => { return "x" }`)
+  test('the same action on different apps does not wait', async () => {
+    let count = 0
+    const a = action(`module.exports = async () => { return "x" }`)
 
     await Promise.all([
-      amalniBajar(a, { appId: 'bot-1', sozlama: {} }).then(() => sanoq++),
-      amalniBajar(a, { appId: 'bot-2', sozlama: {} }).then(() => sanoq++),
+      runAction(a, { appId: 'bot-1', setting: {} }).then(() => count++),
+      runAction(a, { appId: 'bot-2', setting: {} }).then(() => count++),
     ])
 
-    expect(sanoq).toBe(2)
+    expect(count).toBe(2)
   })
 })
 
-describe('sirlarniTozala', () => {
-  test('sir qiymat maskalanadi', () => {
-    expect(sirlarniTozala('Xato: 7891234:AAHsecret rad etildi', ['7891234:AAHsecret'])).toBe(
-      'Xato: ••• rad etildi',
+describe('redactSecretValues', () => {
+  test('a secret value is masked', () => {
+    expect(redactSecretValues('Error: 7891234:AAHsecret was rejected', ['7891234:AAHsecret'])).toBe(
+      'Error: ••• was rejected',
     )
   })
 
-  test('bir necha marta uchrasa hammasi maskalanadi', () => {
-    expect(sirlarniTozala('a SIRLIQIYMAT b SIRLIQIYMAT', ['SIRLIQIYMAT'])).toBe('a ••• b •••')
+  test('every occurrence is masked', () => {
+    expect(redactSecretValues('a SECRETVALUE b SECRETVALUE', ['SECRETVALUE'])).toBe('a ••• b •••')
   })
 
-  // Qisqa qiymatlarni maskalash xabarni o'qishga yaroqsiz qilardi:
-  // `1`, `bot`, `true` matnda tabiiy uchraydi.
-  test('qisqa qiymatlar TOZALANMAYDI', () => {
-    expect(sirlarniTozala('bot ishga tushdi', ['bot'])).toBe('bot ishga tushdi')
-    expect(sirlarniTozala('holat: 1', ['1'])).toBe('holat: 1')
+  // Masking short values would make the message unreadable:
+  // `1`, `bot`, `true` occur naturally in text.
+  test('short values are NOT redacted', () => {
+    expect(redactSecretValues('bot started', ['bot'])).toBe('bot started')
+    expect(redactSecretValues('status: 1', ['1'])).toBe('status: 1')
   })
 
-  test('regex belgilari muammo qilmaydi', () => {
-    // `split`/`join` regex qochirishni butunlay chetlab o'tadi. Qiymat
-    // 8 belgidan uzun bo'lishi kerak (qisqa chegara — yuqoridagi testga q.).
-    expect(sirlarniTozala('x $(a).b*[c]+d y', ['$(a).b*[c]+d'])).toBe('x ••• y')
+  test('regex characters cause no trouble', () => {
+    // `split`/`join` sidesteps regex escaping entirely. The value must be
+    // longer than 8 characters (the short-value limit — see the test above).
+    expect(redactSecretValues('x $(a).b*[c]+d y', ['$(a).b*[c]+d'])).toBe('x ••• y')
   })
 
-  test('sirsiz matn o\'zgarmaydi', () => {
-    expect(sirlarniTozala('oddiy matn', [])).toBe('oddiy matn')
+  test('text without secrets is unchanged', () => {
+    expect(redactSecretValues('plain text', [])).toBe('plain text')
   })
 })
 
-describe('sozlamalarniYoz — sir oqmasligi', () => {
-  const sozlamalar: AppSozlamalari = {
-    maydonlar: [
-      { kalit: 'token', turi: 'sir', yorliq: 'Token' },
-      { kalit: 'rejim', turi: 'matn', yorliq: 'Rejim' },
+describe('writeAppSettings — no secret leaks', () => {
+  const settings: AppSettings = {
+    fields: [
+      { key: 'token', kind: 'secret', label: 'Token' },
+      { key: 'mode', kind: 'text', label: 'Mode' },
     ],
-    yoz: 'module.exports = async ({ qiymatlar, ssh }) => { await ssh("h").envYoz("/opt/bot/.env", { TOKEN: qiymatlar.token }); return { xabar: "Saqlandi" } }',
+    write:
+      'module.exports = async ({ values, ssh }) => { await ssh("h").writeEnv("/opt/bot/.env", { TOKEN: values.token }); return { message: "Saved" } }',
   }
 
-  test('qiymatlar kodga uzatiladi va serverga yoziladi', async () => {
-    const n = await sozlamalarniYoz(sozlamalar, { token: '789:SIRLIQIYMAT' }, kontekst)
+  test('the values are passed to the code and written to the server', async () => {
+    const r = await writeAppSettings(settings, { token: '789:SECRETVALUE' }, context)
 
-    expect(n.ok).toBe(true)
-    expect(n.xabar).toBe('Saqlandi')
-    expect(sshChaqiruvlari[0]!.turi).toBe('envYoz')
-    expect((sshChaqiruvlari[0]!.arg as { qiymatlar: object }).qiymatlar).toEqual({
-      TOKEN: '789:SIRLIQIYMAT',
+    expect(r.ok).toBe(true)
+    expect(r.message).toBe('Saved')
+    expect(sshCalls[0]!.kind).toBe('writeEnv')
+    expect((sshCalls[0]!.arg as { values: object }).values).toEqual({
+      TOKEN: '789:SECRETVALUE',
     })
   })
 
   // ┌──────────────────────────────────────────────────────────────┐
-  // │ ENG MUHIM TEST. Bot "Invalid token: 789..." deb xato bersa,   │
-  // │ o'sha matn auditga, WS'ga va brauzerga borardi.               │
+  // │ THE MOST IMPORTANT TEST. If the bot errors with              │
+  // │ "Invalid token: 789...", that text would travel to the audit │
+  // │ log, to WS and to the browser.                               │
   // └──────────────────────────────────────────────────────────────┘
-  test('XATO MATNIDAGI token maskalanadi', async () => {
-    const n = await sozlamalarniYoz(
+  test('a token IN THE ERROR TEXT is masked', async () => {
+    const r = await writeAppSettings(
       {
-        ...sozlamalar,
-        yoz: 'module.exports = async ({ qiymatlar }) => { throw new Error("Invalid token: " + qiymatlar.token) }',
+        ...settings,
+        write: 'module.exports = async ({ values }) => { throw new Error("Invalid token: " + values.token) }',
       },
-      { token: '789:SIRLIQIYMAT' },
-      kontekst,
+      { token: '789:SECRETVALUE' },
+      context,
     )
 
-    expect(n.ok).toBe(false)
-    expect(n.xato).not.toContain('SIRLIQIYMAT')
-    expect(n.xato).toContain('•••')
+    expect(r.ok).toBe(false)
+    expect(r.error).not.toContain('SECRETVALUE')
+    expect(r.error).toContain('•••')
   })
 
-  test('NATIJADAGI token ham maskalanadi', async () => {
-    const n = await sozlamalarniYoz(
+  test('a token IN THE RESULT is masked too', async () => {
+    const r = await writeAppSettings(
       {
-        ...sozlamalar,
-        yoz: 'module.exports = async ({ qiymatlar }) => ({ xabar: "Yozildi: " + qiymatlar.token })',
+        ...settings,
+        write: 'module.exports = async ({ values }) => ({ message: "Written: " + values.token })',
       },
-      { token: '789:SIRLIQIYMAT' },
-      kontekst,
+      { token: '789:SECRETVALUE' },
+      context,
     )
 
-    expect(n.xabar).not.toContain('SIRLIQIYMAT')
+    expect(r.message).not.toContain('SECRETVALUE')
   })
 
-  test('sirsiz maydon maskalanmaydi', async () => {
-    const n = await sozlamalarniYoz(
+  test('a non-secret field is not masked', async () => {
+    const r = await writeAppSettings(
       {
-        ...sozlamalar,
-        yoz: 'module.exports = async ({ qiymatlar }) => ({ xabar: "Rejim: " + qiymatlar.rejim })',
+        ...settings,
+        write: 'module.exports = async ({ values }) => ({ message: "Mode: " + values.mode })',
       },
-      { rejim: 'webhook-polling' },
-      kontekst,
+      { mode: 'webhook-polling' },
+      context,
     )
-    // Rejim sir emas — foydalanuvchi uni ko'rishi kerak
-    expect(n.xabar).toBe('Rejim: webhook-polling')
+    // The mode is not a secret — the user has to see it
+    expect(r.message).toBe('Mode: webhook-polling')
   })
 
-  test('yiqilgan yozish XATO TASHLAMAYDI', async () => {
-    const n = await sozlamalarniYoz(
-      { ...sozlamalar, yoz: 'module.exports = async () => { throw new Error("disk to\'ldi") }' },
+  test('a failed write DOES NOT THROW', async () => {
+    const r = await writeAppSettings(
+      { ...settings, write: 'module.exports = async () => { throw new Error("disk full") }' },
       {},
-      kontekst,
+      context,
     )
-    expect(n.ok).toBe(false)
-    expect(n.xato).toContain('disk')
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('disk')
   })
 })
 
-describe('sozlamalarniOqi — sir QAYTARILMAYDI', () => {
-  const sozlamalar: AppSozlamalari = {
-    maydonlar: [
-      { kalit: 'token', turi: 'sir', yorliq: 'Token' },
-      { kalit: 'rejim', turi: 'matn', yorliq: 'Rejim' },
-      { kalit: 'admin_id', turi: 'raqam', yorliq: 'Admin' },
+describe('readAppSettings — secrets are NOT RETURNED', () => {
+  const settings: AppSettings = {
+    fields: [
+      { key: 'token', kind: 'secret', label: 'Token' },
+      { key: 'mode', kind: 'text', label: 'Mode' },
+      { key: 'admin_id', kind: 'number', label: 'Admin' },
     ],
-    yoz: 'module.exports = async () => {}',
+    write: 'module.exports = async () => {}',
   }
 
-  test('`oqi` yo\'q bo\'lsa bo\'sh qiymatlar — xato emas', async () => {
-    const n = await sozlamalarniOqi(sozlamalar, kontekst)
-    expect(n.ok).toBe(true)
-    expect(n.qiymatlar).toEqual({})
+  test('without `read` the values are empty — not an error', async () => {
+    const r = await readAppSettings(settings, context)
+    expect(r.ok).toBe(true)
+    expect(r.values).toEqual({})
   })
 
-  test('sirsiz qiymatlar qaytadi', async () => {
-    const n = await sozlamalarniOqi(
-      { ...sozlamalar, oqi: 'module.exports = async () => ({ rejim: "webhook", admin_id: 123 })' },
-      kontekst,
+  test('non-secret values come back', async () => {
+    const r = await readAppSettings(
+      { ...settings, read: 'module.exports = async () => ({ mode: "webhook", admin_id: 123 })' },
+      context,
     )
 
-    expect(n.ok).toBe(true)
-    // Raqam satrga aylantiriladi — forma inputlari satr bilan ishlaydi
-    expect(n.qiymatlar).toEqual({ rejim: 'webhook', admin_id: '123' })
+    expect(r.ok).toBe(true)
+    // A number is turned into a string — form inputs work with strings
+    expect(r.values).toEqual({ mode: 'webhook', admin_id: '123' })
   })
 
   // ┌──────────────────────────────────────────────────────────────┐
-  // │ QATLAMNING ASOSIY QOIDASI. AI tokenni qaytarish TABIIY deb    │
-  // │ o'ylaydi — shuning uchun filtr kodga ishonmaydi.              │
+  // │ THE CORE RULE OF THE LAYER. The AI thinks returning the      │
+  // │ token is NATURAL — so the filter does not trust the code.    │
   // └──────────────────────────────────────────────────────────────┘
-  test('sir kalit QAYTARILSA tashlanadi', async () => {
-    const n = await sozlamalarniOqi(
+  test('a RETURNED secret key is dropped', async () => {
+    const r = await readAppSettings(
       {
-        ...sozlamalar,
-        oqi: 'module.exports = async () => ({ token: "789:SIRLI", rejim: "polling" })',
+        ...settings,
+        read: 'module.exports = async () => ({ token: "789:SECRET", mode: "polling" })',
       },
-      kontekst,
+      context,
     )
 
-    expect(n.qiymatlar.token).toBeUndefined()
-    expect(n.qiymatlar.rejim).toBe('polling')
-    expect(n.tashlangan).toEqual(['token'])
-    // Qiymat bor edi — "serverda o'rnatilgan" deb belgilanadi
-    expect(n.ornatilgan).toEqual(['token'])
+    expect(r.values.token).toBeUndefined()
+    expect(r.values.mode).toBe('polling')
+    expect(r.dropped).toEqual(['token'])
+    // There WAS a value — so it is marked as "set on the server"
+    expect(r.isSet).toEqual(['token'])
   })
 
   // ┌──────────────────────────────────────────────────────────────┐
-  // │ TAVSIYA ETILGAN YO'L: sir uchun BOOLEAN.                      │
+  // │ THE RECOMMENDED ROUTE: a BOOLEAN for a secret.               │
   // │                                                              │
-  // │ Shunda token platforma xotirasiga umuman kelmaydi, lekin      │
-  // │ "✓ o'rnatilgan" belgisi baribir ishlaydi.                     │
+  // │ Then the token never enters the platform's memory at all,    │
+  // │ yet the "✓ set" marker still works.                          │
   // └──────────────────────────────────────────────────────────────┘
-  test('sir uchun `true` — qiymatsiz "o\'rnatilgan"', async () => {
-    const n = await sozlamalarniOqi(
-      { ...sozlamalar, oqi: 'module.exports = async () => ({ token: true, rejim: "x" })' },
-      kontekst,
+  test('`true` for a secret — "set" without a value', async () => {
+    const r = await readAppSettings(
+      { ...settings, read: 'module.exports = async () => ({ token: true, mode: "x" })' },
+      context,
     )
 
-    expect(n.ornatilgan).toEqual(['token'])
-    // Qiymat qaytarilmagani uchun "tashlangan" ham yo'q — AI xatosi emas
-    expect(n.tashlangan).toBeUndefined()
-    expect(n.qiymatlar.token).toBeUndefined()
+    expect(r.isSet).toEqual(['token'])
+    // No value came back, so nothing was "dropped" either — not an AI mistake
+    expect(r.dropped).toBeUndefined()
+    expect(r.values.token).toBeUndefined()
   })
 
-  test('sir uchun `false` — o\'rnatilmagan', async () => {
-    const n = await sozlamalarniOqi(
-      { ...sozlamalar, oqi: 'module.exports = async () => ({ token: false, rejim: "x" })' },
-      kontekst,
+  test('`false` for a secret — not set', async () => {
+    const r = await readAppSettings(
+      { ...settings, read: 'module.exports = async () => ({ token: false, mode: "x" })' },
+      context,
     )
-    expect(n.ornatilgan).toBeUndefined()
-    expect(n.tashlangan).toBeUndefined()
+    expect(r.isSet).toBeUndefined()
+    expect(r.dropped).toBeUndefined()
   })
 
   // ┌──────────────────────────────────────────────────────────────┐
-  // │ REGRESSIYA HIMOYASI. `oqi` odatda `{ token: q.TOKEN }`        │
-  // │ qaytaradi — kalit `.env` da yo'q bo'lsa qiymat `undefined`,    │
-  // │ lekin KALIT obyektda turadi. Uni "bor" deb sanasak            │
-  // │ foydalanuvchi token yo'qligida ham "✓ o'rnatilgan" ko'rardi.   │
+  // │ REGRESSION GUARD. `read` usually returns `{ token: v.TOKEN }` │
+  // │ — when the key is absent from `.env` the value is            │
+  // │ `undefined`, but THE KEY is still in the object. Counting it  │
+  // │ as "present" would show the user "✓ set" with no token.      │
   // └──────────────────────────────────────────────────────────────┘
-  test('BO\'SH sir qiymat "o\'rnatilgan" deb sanalmaydi', async () => {
-    for (const kod of [
-      'module.exports = async () => ({ token: undefined, rejim: "x" })',
-      'module.exports = async () => ({ token: null, rejim: "x" })',
-      'module.exports = async () => ({ token: "", rejim: "x" })',
+  test('an EMPTY secret value is not counted as "set"', async () => {
+    for (const code of [
+      'module.exports = async () => ({ token: undefined, mode: "x" })',
+      'module.exports = async () => ({ token: null, mode: "x" })',
+      'module.exports = async () => ({ token: "", mode: "x" })',
     ]) {
-      const n = await sozlamalarniOqi({ ...sozlamalar, oqi: kod }, kontekst)
-      expect(n.ornatilgan).toBeUndefined()
-      expect(n.qiymatlar.rejim).toBe('x')
+      const r = await readAppSettings({ ...settings, read: code }, context)
+      expect(r.isSet).toBeUndefined()
+      expect(r.values.mode).toBe('x')
     }
   })
 
-  test('sxemada yo\'q kalit ham tashlanadi', async () => {
-    const n = await sozlamalarniOqi(
-      { ...sozlamalar, oqi: 'module.exports = async () => ({ begona: "x", rejim: "y" })' },
-      kontekst,
+  test('a key that is not in the schema is dropped too', async () => {
+    const r = await readAppSettings(
+      { ...settings, read: 'module.exports = async () => ({ stranger: "x", mode: "y" })' },
+      context,
     )
-    // Forma uni ko'rsatmaydi — uzatish ortiqcha ma'lumot oqishi bo'lardi.
-    expect(n.qiymatlar).toEqual({ rejim: 'y' })
+    // The form does not display it — passing it on would be extra data leaking.
+    expect(r.values).toEqual({ mode: 'y' })
   })
 
-  test('obyekt qaytarmagan kod rad etiladi', async () => {
-    for (const kod of [
-      'module.exports = async () => "satr"',
+  test('code that does not return an object is rejected', async () => {
+    for (const code of [
+      'module.exports = async () => "string"',
       'module.exports = async () => [1,2]',
       'module.exports = async () => null',
     ]) {
-      const n = await sozlamalarniOqi({ ...sozlamalar, oqi: kod }, kontekst)
-      expect(n.ok).toBe(false)
+      const r = await readAppSettings({ ...settings, read: code }, context)
+      expect(r.ok).toBe(false)
     }
   })
 
-  test('yiqilgan `oqi` XATO TASHLAMAYDI', async () => {
-    const n = await sozlamalarniOqi(
-      { ...sozlamalar, oqi: 'module.exports = async () => { throw new Error("ssh tushdi") }' },
-      kontekst,
+  test('a crashing `read` DOES NOT THROW', async () => {
+    const r = await readAppSettings(
+      { ...settings, read: 'module.exports = async () => { throw new Error("ssh went down") }' },
+      context,
     )
-    expect(n.ok).toBe(false)
-    expect(n.xato).toContain('ssh')
-    expect(n.qiymatlar).toEqual({})
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('ssh')
+    expect(r.values).toEqual({})
   })
 })

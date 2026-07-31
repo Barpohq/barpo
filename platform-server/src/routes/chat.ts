@@ -171,7 +171,7 @@ chatRoutes.delete('/chat/sessions/:id', (c) => {
 
   // The attached files leave the disk as well. The records are taken by
   // CASCADE, but nothing takes the files — and they sit in the session's OWN
-  // folder (`.platforma/sessiyalar/<id>/`), so even in a project-bound
+  // folder (`.platforma/sessions/<id>/`), so even in a project-bound
   // conversation nothing belonging to anyone else is touched.
   //
   // BEFORE `deleteSession`: afterwards the session row would be needed to work

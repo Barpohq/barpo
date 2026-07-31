@@ -1,204 +1,206 @@
-// Sessiya reestri — TTL va LRU tozalash.
+// The session registry — TTL and LRU cleanup.
 //
-// Bu testlar aynan XOTIRA SIZMASINI tekshiradi: oldin `ruxsat.ts` va
-// `rejim.ts` dagi Map hech qachon kichraymasdi, har yangi sessiya unda
-// abadiy qolardi.
+// These tests check exactly the MEMORY LEAK: the Maps in `permission.ts` and
+// `mode.ts` never used to shrink, and every new session stayed in them
+// forever.
 //
-// Vaqt tashqaridan beriladi (`ol(id, hozir)`) — testlar haqiqiy soatni
-// kutmaydi va shuning uchun barqaror.
+// The time is supplied from outside (`get(id, now)`) — the tests do not wait
+// on the real clock and are stable because of it.
 
 import { describe, expect, test } from 'bun:test'
 import { REGISTRY_LIMIT, REGISTRY_TTL_MS, SessionRegistry } from '../src/registry.ts'
 
-/** Yopilganini yozib oladigan soxta boshqaruvchi */
-class SoxtaBoshqaruvchi {
-  yopilgan = false
+/** A fake manager that records having been closed */
+class FakeManager {
+  closed = false
   constructor(readonly sessionId: string) {}
-  yop(): void {
-    this.yopilgan = true
+  close(): void {
+    this.closed = true
   }
 }
 
-function reestrYarat(ttlMs = REGISTRY_TTL_MS, chegara = REGISTRY_LIMIT) {
-  return new SessionRegistry<SoxtaBoshqaruvchi>(
-    (id) => new SoxtaBoshqaruvchi(id),
+function createRegistry(ttlMs = REGISTRY_TTL_MS, limit = REGISTRY_LIMIT) {
+  return new SessionRegistry<FakeManager>(
+    (id) => new FakeManager(id),
     ttlMs,
-    chegara,
+    limit,
   )
 }
 
-describe('asosiy xulq', () => {
-  test('bir xil sessiya uchun bir xil obyekt', () => {
-    const r = reestrYarat()
-    expect(r.ol('s1')).toBe(r.ol('s1'))
+describe('basic behaviour', () => {
+  test('the same session gives the same object', () => {
+    const registry = createRegistry()
+    expect(registry.get('s1')).toBe(registry.get('s1'))
   })
 
-  test('turli sessiyalar ajratilgan', () => {
-    const r = reestrYarat()
-    expect(r.ol('s1')).not.toBe(r.ol('s2'))
-    expect(r.soni).toBe(2)
+  test('different sessions are isolated', () => {
+    const registry = createRegistry()
+    expect(registry.get('s1')).not.toBe(registry.get('s2'))
+    expect(registry.count).toBe(2)
   })
 
-  test('yop() obyektni yopadi va reestrdan chiqaradi', () => {
-    const r = reestrYarat()
-    const a = r.ol('s1')
-    r.yop('s1')
+  test('close() closes the object and removes it from the registry', () => {
+    const registry = createRegistry()
+    const a = registry.get('s1')
+    registry.close('s1')
 
-    expect(a.yopilgan).toBe(true)
-    expect(r.soni).toBe(0)
-    expect(r.ol('s1')).not.toBe(a) // yangisi yaratiladi
+    expect(a.closed).toBe(true)
+    expect(registry.count).toBe(0)
+    expect(registry.get('s1')).not.toBe(a) // a new one is created
   })
 
-  test("mavjud bo'lmagan sessiyani yopish yiqilmaydi", () => {
-    const r = reestrYarat()
-    expect(() => r.yop('yoq')).not.toThrow()
+  test('closing a session that does not exist does not fail', () => {
+    const registry = createRegistry()
+    expect(() => registry.close('none')).not.toThrow()
   })
 
-  test('tozala() hammasini yopadi', () => {
-    const r = reestrYarat()
-    const a = r.ol('s1')
-    const b = r.ol('s2')
-    r.tozala()
+  test('clear() closes them all', () => {
+    const registry = createRegistry()
+    const a = registry.get('s1')
+    const b = registry.get('s2')
+    registry.clear()
 
-    expect(a.yopilgan).toBe(true)
-    expect(b.yopilgan).toBe(true)
-    expect(r.soni).toBe(0)
+    expect(a.closed).toBe(true)
+    expect(b.closed).toBe(true)
+    expect(registry.count).toBe(0)
   })
 })
 
-describe('TTL — faolsizlik bo\'yicha tozalash', () => {
-  test('TTL o\'tgan sessiya tozalanadi', () => {
-    const r = reestrYarat(1000)
-    const a = r.ol('s1', 0)
-    expect(r.soni).toBe(1)
+describe('TTL — cleanup by inactivity', () => {
+  test('a session whose TTL has passed is cleaned up', () => {
+    const registry = createRegistry(1000)
+    const a = registry.get('s1', 0)
+    expect(registry.count).toBe(1)
 
-    // TTL o'tgach boshqa sessiyaga murojaat — eskisi tozalanadi
-    r.ol('s2', 5000)
+    // A request to another session after the TTL — the old one is cleaned up
+    registry.get('s2', 5000)
 
-    expect(a.yopilgan).toBe(true)
-    expect(r.soni).toBe(1)
+    expect(a.closed).toBe(true)
+    expect(registry.count).toBe(1)
   })
 
-  test('FAOL sessiya tozalanmaydi — har murojaat vaqtni yangilaydi', () => {
-    // Eng muhim kafolat: javob oqayotgan sessiya o'chib ketmasligi kerak
-    const r = reestrYarat(1000)
-    const a = r.ol('s1', 0)
+  test('an ACTIVE session is not cleaned up — every request refreshes the time', () => {
+    // The most important guarantee: a session whose answer is streaming must
+    // not disappear
+    const registry = createRegistry(1000)
+    const a = registry.get('s1', 0)
 
-    // Muntazam murojaat qilib turamiz (agent har tool chaqiruvida shunday qiladi)
+    // We keep making requests (that is what the agent does on every tool call)
     for (let t = 500; t <= 10_000; t += 500) {
-      expect(r.ol('s1', t)).toBe(a)
+      expect(registry.get('s1', t)).toBe(a)
     }
 
-    expect(a.yopilgan).toBe(false)
+    expect(a.closed).toBe(false)
   })
 
-  test('TTL ichida qayta murojaat bir xil obyektni beradi', () => {
-    const r = reestrYarat(1000)
-    const a = r.ol('s1', 0)
-    expect(r.ol('s1', 900)).toBe(a)
-    expect(a.yopilgan).toBe(false)
+  test('a repeat request within the TTL gives the same object', () => {
+    const registry = createRegistry(1000)
+    const a = registry.get('s1', 0)
+    expect(registry.get('s1', 900)).toBe(a)
+    expect(a.closed).toBe(false)
   })
 
-  test('TTL o\'tgan sessiyaga murojaat YANGI obyekt beradi', () => {
-    const r = reestrYarat(1000)
-    const a = r.ol('s1', 0)
-    const b = r.ol('s1', 5000)
+  test('a request to a session whose TTL has passed gives a NEW object', () => {
+    const registry = createRegistry(1000)
+    const a = registry.get('s1', 0)
+    const b = registry.get('s1', 5000)
 
     expect(b).not.toBe(a)
-    expect(a.yopilgan).toBe(true)
+    expect(a.closed).toBe(true)
   })
 
-  test('eskirganlarniTozala tozalangan sonni qaytaradi', () => {
-    const r = reestrYarat(1000)
-    r.ol('s1', 0)
-    r.ol('s2', 0)
-    r.ol('s3', 0)
-    expect(r.soni).toBe(3)
+  test('sweepStale returns how many were cleaned up', () => {
+    const registry = createRegistry(1000)
+    registry.get('s1', 0)
+    registry.get('s2', 0)
+    registry.get('s3', 0)
+    expect(registry.count).toBe(3)
 
-    // TTL o'tgan uchtasi ham tozalanadi
-    expect(r.eskirganlarniTozala(5000)).toBe(3)
-    expect(r.soni).toBe(0)
+    // All three whose TTL has passed get cleaned up
+    expect(registry.sweepStale(5000)).toBe(3)
+    expect(registry.count).toBe(0)
   })
 
-  test('ol() ichida ham eskirganlar tozalanadi', () => {
-    // `ol()` avval eskirganlarni chiqaradi — alohida taymer kerak emas
-    const r = reestrYarat(1000)
-    r.ol('s1', 0)
-    r.ol('s2', 0)
-    expect(r.soni).toBe(2)
+  test('stale entries are cleaned up inside get() too', () => {
+    // `get()` evicts the stale ones first — no separate timer is needed
+    const registry = createRegistry(1000)
+    registry.get('s1', 0)
+    registry.get('s2', 0)
+    expect(registry.count).toBe(2)
 
-    r.ol('s3', 4000) // TTL o'tdi → s1 va s2 shu yerda tozalanadi
+    registry.get('s3', 4000) // the TTL passed → s1 and s2 are cleaned up here
 
-    expect(r.soni).toBe(1)
-    expect(r.eskirganlarniTozala(4000)).toBe(0) // tozalanadigan qolmadi
+    expect(registry.count).toBe(1)
+    expect(registry.sweepStale(4000)).toBe(0) // nothing left to clean up
   })
 
-  test('bir necha eski sessiya birdan tozalanadi', () => {
-    const r = reestrYarat(1000)
-    for (let i = 0; i < 50; i += 1) r.ol(`eski-${i}`, 0)
-    expect(r.soni).toBe(50)
+  test('several old sessions are cleaned up at once', () => {
+    const registry = createRegistry(1000)
+    for (let i = 0; i < 50; i += 1) registry.get(`old-${i}`, 0)
+    expect(registry.count).toBe(50)
 
-    r.ol('yangi', 5000)
+    registry.get('new', 5000)
 
-    expect(r.soni).toBe(1) // faqat yangi qoldi
-  })
-})
-
-describe('LRU — soni bo\'yicha chegara', () => {
-  test('chegaradan oshsa eng eskisi chiqariladi', () => {
-    const r = reestrYarat(REGISTRY_TTL_MS, 3)
-    const a = r.ol('s1', 0)
-    r.ol('s2', 1)
-    r.ol('s3', 2)
-    r.ol('s4', 3) // chegaradan oshdi
-
-    expect(a.yopilgan).toBe(true)
-    expect(r.soni).toBe(3)
-  })
-
-  test('yaqinda ishlatilgan sessiya saqlanadi', () => {
-    // LRU "eng eski YARATILGAN" emas, "eng uzoq TEGILMAGAN" bo'yicha ishlaydi
-    const r = reestrYarat(REGISTRY_TTL_MS, 3)
-    const a = r.ol('s1', 0)
-    r.ol('s2', 1)
-    r.ol('s3', 2)
-
-    r.ol('s1', 3) // s1 ga qayta murojaat — endi u eng yangi
-    r.ol('s4', 4) // chegaradan oshdi → s2 chiqishi kerak, s1 emas
-
-    expect(a.yopilgan).toBe(false)
-    expect(r.ol('s1', 5)).toBe(a)
-  })
-
-  test('chegara qat\'iy ushlab turadi (ko\'p sessiya anomaliyasi)', () => {
-    const r = reestrYarat(REGISTRY_TTL_MS, 10)
-    // Skript 1000 ta sessiya ochdi — TTL ulgurmaydi, LRU ushlaydi
-    for (let i = 0; i < 1000; i += 1) r.ol(`s${i}`, i)
-
-    expect(r.soni).toBe(10)
+    expect(registry.count).toBe(1) // only the new one is left
   })
 })
 
-describe('mustahkamlik', () => {
-  test('yop() xatosi tozalashni to\'xtatmaydi', () => {
-    const r = new SessionRegistry<{ yop(): void }>(
+describe('LRU — the limit on the count', () => {
+  test('the oldest is evicted when the limit is exceeded', () => {
+    const registry = createRegistry(REGISTRY_TTL_MS, 3)
+    const a = registry.get('s1', 0)
+    registry.get('s2', 1)
+    registry.get('s3', 2)
+    registry.get('s4', 3) // the limit was exceeded
+
+    expect(a.closed).toBe(true)
+    expect(registry.count).toBe(3)
+  })
+
+  test('a recently used session is kept', () => {
+    // The LRU works by "least recently TOUCHED", not "oldest CREATED"
+    const registry = createRegistry(REGISTRY_TTL_MS, 3)
+    const a = registry.get('s1', 0)
+    registry.get('s2', 1)
+    registry.get('s3', 2)
+
+    registry.get('s1', 3) // s1 is requested again — now it is the newest
+    registry.get('s4', 4) // the limit was exceeded → s2 must go, not s1
+
+    expect(a.closed).toBe(false)
+    expect(registry.get('s1', 5)).toBe(a)
+  })
+
+  test('the limit holds firmly (the many-sessions anomaly)', () => {
+    const registry = createRegistry(REGISTRY_TTL_MS, 10)
+    // A script opened 1000 sessions — the TTL cannot keep up, the LRU holds
+    for (let i = 0; i < 1000; i += 1) registry.get(`s${i}`, i)
+
+    expect(registry.count).toBe(10)
+  })
+})
+
+describe('robustness', () => {
+  test('a close() error does not stop the cleanup', () => {
+    const registry = new SessionRegistry<{ close(): void }>(
       () => ({
-        yop() {
-          throw new Error('yopishda xato')
+        close() {
+          throw new Error('error while closing')
         },
       }),
       1000,
       100,
     )
-    r.ol('s1', 0)
-    r.ol('s2', 0)
+    registry.get('s1', 0)
+    registry.get('s2', 0)
 
-    expect(() => r.tozala()).not.toThrow()
-    expect(r.soni).toBe(0)
+    expect(() => registry.clear()).not.toThrow()
+    expect(registry.count).toBe(0)
   })
 
-  test('standart qiymatlar oqilona', () => {
-    // TTL juda qisqa bo'lsa faol suhbat uziladi, juda uzun bo'lsa sizma qoladi
+  test('the default values are sensible', () => {
+    // Too short a TTL cuts off an active conversation, too long a one leaves
+    // the leak in place
     expect(REGISTRY_TTL_MS).toBeGreaterThanOrEqual(5 * 60 * 1000)
     expect(REGISTRY_LIMIT).toBeGreaterThan(0)
   })

@@ -1,4 +1,4 @@
-// Ruxsat boshqaruvchisi — so'rov, javob, "har doim" naqshi, timeout.
+// The permission manager — requests, answers, the "always" pattern, timeout.
 
 import { afterEach, describe, expect, test } from 'bun:test'
 import type { PermissionRequest } from '@platforma/shared'
@@ -8,165 +8,165 @@ afterEach(() => {
   clearPermissions()
 })
 
-const sorash = (naqsh = 'rm') => ({
-  tur: 'buyruq' as const,
-  amal: 'bash',
-  nishon: 'rm -rf x',
-  sabab: 'test',
-  naqsh,
+const ask = (pattern = 'rm') => ({
+  kind: 'command' as const,
+  action: 'bash',
+  target: 'rm -rf x',
+  reason: 'test',
+  pattern,
 })
 
-describe('so\'rov va javob', () => {
-  test('kuzatuvchiga so\'rov keladi', async () => {
-    const b = new PermissionManager('s1')
-    const olingan: PermissionRequest[] = []
-    b.kuzat((s) => olingan.push(s))
+describe('request and answer', () => {
+  test('the listener receives the request', async () => {
+    const manager = new PermissionManager('s1')
+    const received: PermissionRequest[] = []
+    manager.subscribe((r) => received.push(r))
 
-    const kutish = b.sora(sorash())
-    expect(olingan).toHaveLength(1)
-    expect(olingan[0]?.sessionId).toBe('s1')
-    expect(olingan[0]?.nishon).toBe('rm -rf x')
+    const waiting = manager.ask(ask())
+    expect(received).toHaveLength(1)
+    expect(received[0]?.sessionId).toBe('s1')
+    expect(received[0]?.target).toBe('rm -rf x')
 
-    b.javobBer(olingan[0]!.id, 'allow')
-    expect(await kutish).toBe('allow')
+    manager.answer(received[0]!.id, 'allow')
+    expect(await waiting).toBe('allow')
   })
 
-  test('rad javobi qaytadi', async () => {
-    const b = new PermissionManager('s1')
-    b.kuzat((s) => b.javobBer(s.id, 'deny'))
-    expect(await b.sora(sorash())).toBe('deny')
+  test('a deny answer comes back', async () => {
+    const manager = new PermissionManager('s1')
+    manager.subscribe((r) => manager.answer(r.id, 'deny'))
+    expect(await manager.ask(ask())).toBe('deny')
   })
 
-  test('noma\'lum id uchun javobBer false qaytaradi', () => {
-    const b = new PermissionManager('s1')
-    expect(b.javobBer('yoq-bunday', 'allow')).toBe(false)
+  test('answer() returns false for an unknown id', () => {
+    const manager = new PermissionManager('s1')
+    expect(manager.answer('no-such-id', 'allow')).toBe(false)
   })
 
-  test('kutayotgan so\'rovlar ro\'yxatda ko\'rinadi', async () => {
-    const b = new PermissionManager('s1')
-    const kutish = b.sora(sorash())
-    expect(b.kutayotganSorovlar).toHaveLength(1)
+  test('pending requests show up in the list', async () => {
+    const manager = new PermissionManager('s1')
+    const waiting = manager.ask(ask())
+    expect(manager.pendingRequests).toHaveLength(1)
 
-    b.javobBer(b.kutayotganSorovlar[0]!.id, 'deny')
-    await kutish
-    expect(b.kutayotganSorovlar).toHaveLength(0)
+    manager.answer(manager.pendingRequests[0]!.id, 'deny')
+    await waiting
+    expect(manager.pendingRequests).toHaveLength(0)
   })
 })
 
-describe('har doim ruxsat', () => {
-  test('naqsh eslab qolinadi va qayta so\'ralmaydi', async () => {
-    const b = new PermissionManager('s1')
-    let soralganSoni = 0
-    b.kuzat((s) => {
-      soralganSoni += 1
-      b.javobBer(s.id, 'always')
+describe('always allow', () => {
+  test('the pattern is remembered and not asked again', async () => {
+    const manager = new PermissionManager('s1')
+    let askedCount = 0
+    manager.subscribe((r) => {
+      askedCount += 1
+      manager.answer(r.id, 'always')
     })
 
-    expect(await b.sora(sorash('git push'))).toBe('allow')
-    expect(soralganSoni).toBe(1)
+    expect(await manager.ask(ask('git push'))).toBe('allow')
+    expect(askedCount).toBe(1)
 
-    // Ikkinchi va uchinchi marta so'ralmaydi
-    expect(await b.sora(sorash('git push'))).toBe('allow')
-    expect(await b.sora(sorash('git push'))).toBe('allow')
-    expect(soralganSoni).toBe(1)
-    expect(b.hardoimlar).toEqual(['git push'])
+    // The second and third time it is not asked
+    expect(await manager.ask(ask('git push'))).toBe('allow')
+    expect(await manager.ask(ask('git push'))).toBe('allow')
+    expect(askedCount).toBe(1)
+    expect(manager.alwaysList).toEqual(['git push'])
   })
 
-  test('boshqa naqsh qayta so\'raladi', async () => {
-    const b = new PermissionManager('s1')
-    let soralganSoni = 0
-    b.kuzat((s) => {
-      soralganSoni += 1
-      b.javobBer(s.id, 'always')
+  test('a different pattern is asked again', async () => {
+    const manager = new PermissionManager('s1')
+    let askedCount = 0
+    manager.subscribe((r) => {
+      askedCount += 1
+      manager.answer(r.id, 'always')
     })
 
-    await b.sora(sorash('git push'))
-    await b.sora(sorash('rm'))
-    expect(soralganSoni).toBe(2)
+    await manager.ask(ask('git push'))
+    await manager.ask(ask('rm'))
+    expect(askedCount).toBe(2)
   })
 
-  test('hardoimRuxsatmi tekshiruvi', async () => {
-    const b = new PermissionManager('s1')
-    b.kuzat((s) => b.javobBer(s.id, 'always'))
-    expect(b.hardoimRuxsatmi('rm')).toBe(false)
-    await b.sora(sorash('rm'))
-    expect(b.hardoimRuxsatmi('rm')).toBe(true)
+  test('the isAlwaysAllowed check', async () => {
+    const manager = new PermissionManager('s1')
+    manager.subscribe((r) => manager.answer(r.id, 'always'))
+    expect(manager.isAlwaysAllowed('rm')).toBe(false)
+    await manager.ask(ask('rm'))
+    expect(manager.isAlwaysAllowed('rm')).toBe(true)
   })
 
-  test('rad javobi naqshni eslab qolmaydi', async () => {
-    const b = new PermissionManager('s1')
-    b.kuzat((s) => b.javobBer(s.id, 'deny'))
-    await b.sora(sorash('rm'))
-    expect(b.hardoimlar).toHaveLength(0)
+  test('a deny answer does not remember the pattern', async () => {
+    const manager = new PermissionManager('s1')
+    manager.subscribe((r) => manager.answer(r.id, 'deny'))
+    await manager.ask(ask('rm'))
+    expect(manager.alwaysList).toHaveLength(0)
   })
 
-  test('bo\'sh naqsh eslab qolinmaydi', async () => {
-    const b = new PermissionManager('s1')
-    b.kuzat((s) => b.javobBer(s.id, 'always'))
-    await b.sora({ ...sorash(''), naqsh: '' })
-    expect(b.hardoimlar).toHaveLength(0)
+  test('an empty pattern is not remembered', async () => {
+    const manager = new PermissionManager('s1')
+    manager.subscribe((r) => manager.answer(r.id, 'always'))
+    await manager.ask({ ...ask(''), pattern: '' })
+    expect(manager.alwaysList).toHaveLength(0)
   })
 })
 
-describe('parallel so\'rovlar', () => {
-  test('har biri o\'z javobini oladi', async () => {
-    const b = new PermissionManager('s1')
-    const olingan: PermissionRequest[] = []
-    b.kuzat((s) => olingan.push(s))
+describe('parallel requests', () => {
+  test('each one gets its own answer', async () => {
+    const manager = new PermissionManager('s1')
+    const received: PermissionRequest[] = []
+    manager.subscribe((r) => received.push(r))
 
-    const a = b.sora({ ...sorash('a'), nishon: 'A' })
-    const c = b.sora({ ...sorash('b'), nishon: 'B' })
-    expect(olingan).toHaveLength(2)
+    const a = manager.ask({ ...ask('a'), target: 'A' })
+    const c = manager.ask({ ...ask('b'), target: 'B' })
+    expect(received).toHaveLength(2)
 
-    // Teskari tartibda javob beramiz
-    const bSorovi = olingan.find((s) => s.nishon === 'B')!
-    const aSorovi = olingan.find((s) => s.nishon === 'A')!
-    b.javobBer(bSorovi.id, 'deny')
-    b.javobBer(aSorovi.id, 'allow')
+    // We answer in reverse order
+    const requestB = received.find((r) => r.target === 'B')!
+    const requestA = received.find((r) => r.target === 'A')!
+    manager.answer(requestB.id, 'deny')
+    manager.answer(requestA.id, 'allow')
 
     expect(await a).toBe('allow')
     expect(await c).toBe('deny')
   })
 })
 
-describe('yopish', () => {
-  test('yopilganda kutayotganlar rad etiladi', async () => {
-    const b = new PermissionManager('s1')
-    const kutish = b.sora(sorash())
-    b.close()
-    expect(await kutish).toBe('deny')
+describe('closing', () => {
+  test('pending requests are denied on close', async () => {
+    const manager = new PermissionManager('s1')
+    const waiting = manager.ask(ask())
+    manager.close()
+    expect(await waiting).toBe('deny')
   })
 
-  test('yopilgandan keyingi so\'rov darhol rad', async () => {
-    const b = new PermissionManager('s1')
-    b.close()
-    expect(await b.sora(sorash())).toBe('deny')
+  test('a request after closing is denied immediately', async () => {
+    const manager = new PermissionManager('s1')
+    manager.close()
+    expect(await manager.ask(ask())).toBe('deny')
   })
 })
 
-describe('reestr', () => {
-  test('bir xil sessiya uchun bir xil boshqaruvchi', () => {
+describe('registry', () => {
+  test('the same session gets the same manager', () => {
     const a = permissionManager('s1')
     const b = permissionManager('s1')
     expect(a).toBe(b)
   })
 
-  test('turli sessiyalar ajratilgan', () => {
+  test('different sessions are isolated', () => {
     expect(permissionManager('s1')).not.toBe(permissionManager('s2'))
   })
 
-  test('yopilgach yangi boshqaruvchi beriladi', () => {
+  test('a new manager is given after closing', () => {
     const a = permissionManager('s1')
     closePermissionManager('s1')
     expect(permissionManager('s1')).not.toBe(a)
   })
 
-  test('bir sessiyaning hardoimlari boshqasiga o\'tmaydi', async () => {
+  test('one session\'s always list does not leak into another', async () => {
     const a = permissionManager('s1')
-    a.kuzat((s) => a.javobBer(s.id, 'always'))
-    await a.sora(sorash('rm'))
+    a.subscribe((r) => a.answer(r.id, 'always'))
+    await a.ask(ask('rm'))
 
     const b = permissionManager('s2')
-    expect(b.hardoimRuxsatmi('rm')).toBe(false)
+    expect(b.isAlwaysAllowed('rm')).toBe(false)
   })
 })

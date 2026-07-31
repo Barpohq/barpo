@@ -164,10 +164,10 @@ describe('ssh.command — a failed command COMES BACK AS AN ERROR', () => {
 
   // `docker inspect` returns 1 for a missing container — that is not an ERROR,
   // it is an ANSWER.
-  test('rawCommand does not treat a non-zero exit code as an error', async () => {
+  test('commandRaw does not treat a non-zero exit code as an error', async () => {
     fakeSsh(() => ({ code: 1, stdout: '', stderr: 'not found' }))
 
-    const result = await createAppSsh('h').rawCommand(['docker', 'inspect', 'x'])
+    const result = await createAppSsh('h').commandRaw(['docker', 'inspect', 'x'])
     expect(result.code).toBe(1)
     expect(result.stderr).toContain('not found')
   })

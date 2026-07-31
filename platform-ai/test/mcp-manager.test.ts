@@ -1,9 +1,9 @@
 // McpManager — the permission integration and the error isolation.
 //
 // THE MOST IMPORTANT CHECKS:
-//   1) every tool call goes through `PermissionManager.sora()`;
+//   1) every tool call goes through `PermissionManager.ask()`;
 //   2) a "deny" answer BLOCKS the call (the server is not called at all);
-//   3) "always" does not call `sora()` on the second call at all;
+//   3) "always" does not call `ask()` on the second call at all;
 //   4) secret arguments are REDACTED in the permission request;
 //   5) when one server goes down the rest keep working.
 
@@ -122,7 +122,7 @@ function buildPermission(answer: 'allow' | 'deny' | 'always'): {
   const permission = new PermissionManager('session-1')
   const requests: { kind: string; action: string; target: string; pattern: string }[] = []
 
-  permission.kuzat((request) => {
+  permission.subscribe((request) => {
     requests.push({
       kind: request.kind,
       action: request.action,
@@ -131,7 +131,7 @@ function buildPermission(answer: 'allow' | 'deny' | 'always'): {
     })
     // We answer from inside the listener right away (as if a UI button were
     // pressed)
-    queueMicrotask(() => permission.javobBer(request.id, answer))
+    queueMicrotask(() => permission.answer(request.id, answer))
   })
 
   return { permission, requests }
@@ -198,7 +198,7 @@ describe('connect', () => {
 })
 
 describe('the permission flow', () => {
-  test('every call goes through sora()', async () => {
+  test('every call goes through ask()', async () => {
     const calls = setUpFake()
     const { permission, requests } = buildPermission('allow')
     const manager = new McpManager('s1', permission)
@@ -229,7 +229,7 @@ describe('the permission flow', () => {
     await manager.close()
   })
 
-  test('ALWAYS does not call sora() on the second call', async () => {
+  test('ALWAYS does not call ask() on the second call', async () => {
     const calls = setUpFake()
     const { permission, requests } = buildPermission('always')
     const manager = new McpManager('s1', permission)
@@ -280,9 +280,9 @@ describe('the permission flow', () => {
     setUpFake()
     const permission = new PermissionManager('s1')
     const reasons: string[] = []
-    permission.kuzat((request) => {
+    permission.subscribe((request) => {
       reasons.push(request.reason)
-      queueMicrotask(() => permission.javobBer(request.id, 'allow'))
+      queueMicrotask(() => permission.answer(request.id, 'allow'))
     })
 
     const manager = new McpManager('s1', permission)

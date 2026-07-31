@@ -50,39 +50,39 @@ import type { PermissionManager } from './permission.ts'
  * IN FUTURE: this value will come from the config layer (some projects will
  * need it raised for longer builds). For now it is a constant — one place to
  * change is enough. It can already be overridden via
- * `RestrictedEnvOptions.buyruqTimeoutMs`; the config will simply supply that
+ * `RestrictedEnvOptions.commandTimeoutMs`; the config will simply supply that
  * value.
  */
 export const DEFAULT_COMMAND_TIMEOUT_MS = 2 * 60 * 1000
 
 /** The error for an operation that failed the path check */
-function denyError(yol: string, sabab: string): FileError {
-  return new FileError('permission_denied', `Permission denied: ${sabab}`, yol)
+function denyError(path: string, reason: string): FileError {
+  return new FileError('permission_denied', `Permission denied: ${reason}`, path)
 }
 
 export interface RestrictedEnvOptions {
   /** The directory the tools work in — everything outside it is asked about */
   workDir: string
-  ruxsat: PermissionManager
+  permission: PermissionManager
   /** Replaces the inner environment, for tests */
-  ichki?: ExecutionEnv
+  inner?: ExecutionEnv
   /**
    * The default timeout for a command (ms). Defaults to
    * `DEFAULT_COMMAND_TIMEOUT_MS`. If the caller passes an explicit timeout to
    * `exec`, that one wins.
    */
-  buyruqTimeoutMs?: number
+  commandTimeoutMs?: number
 }
 
 export class RestrictedEnv implements ExecutionEnv {
   readonly cwd: string
-  private ichki: ExecutionEnv
-  private ruxsat: PermissionManager
-  private buyruqTimeoutMs: number
+  private inner: ExecutionEnv
+  private permission: PermissionManager
+  private commandTimeoutMs: number
   /** Paths already allowed in this stream — they are not asked about again */
   private allowed = new Set<string>()
 
-  constructor(sozlama: RestrictedEnvOptions) {
+  constructor(options: RestrictedEnvOptions) {
     // The working directory ITSELF is canonicalised too.
     //
     // The reason: the path check compares against `canonicalPath`, so both
@@ -94,17 +94,17 @@ export class RestrictedEnv implements ExecutionEnv {
     // On error (the directory does not exist yet) the raw path stays — that
     // does not weaken the protection, because the check works by prefix
     // regardless.
-    let cwd = sozlama.workDir
+    let cwd = options.workDir
     try {
-      cwd = realpathSync(sozlama.workDir)
+      cwd = realpathSync(options.workDir)
     } catch {
       // the directory has not been created yet — carry on with the raw path
     }
 
     this.cwd = cwd
-    this.ichki = sozlama.ichki ?? new NodeExecutionEnv({ cwd })
-    this.ruxsat = sozlama.ruxsat
-    this.buyruqTimeoutMs = sozlama.buyruqTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
+    this.inner = options.inner ?? new NodeExecutionEnv({ cwd })
+    this.permission = options.permission
+    this.commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
   }
 
   // -------------------------------------------------------------------------
@@ -112,16 +112,16 @@ export class RestrictedEnv implements ExecutionEnv {
   // -------------------------------------------------------------------------
 
   /** Whether the path is inside the working directory — textually (for files that do not exist) */
-  private isInside(absolutYol: string): boolean {
-    return absolutYol === this.cwd || absolutYol.startsWith(`${this.cwd}/`)
+  private isInside(absolutePath: string): boolean {
+    return absolutePath === this.cwd || absolutePath.startsWith(`${this.cwd}/`)
   }
 
   /**
    * Validates the path. If it is inside it passes straight through, otherwise
-   * permission is requested. `amal` is which tool is asking (shown in the UI).
+   * permission is requested. `action` is which tool is asking (shown in the UI).
    */
-  private async validatePath(yol: string, amal: string): Promise<Result<string, FileError>> {
-    const absolute = await this.ichki.absolutePath(yol)
+  private async validatePath(path: string, action: string): Promise<Result<string, FileError>> {
+    const absolute = await this.inner.absolutePath(path)
     if (!absolute.ok) return absolute
 
     let toCheck = absolute.value
@@ -129,7 +129,7 @@ export class RestrictedEnv implements ExecutionEnv {
     // Catch escapes via a symlink: when the file exists we take its real
     // location. When it does not (a new file) the textual path is enough —
     // its parent directory has to be inside regardless.
-    const canonical = await this.ichki.canonicalPath(absolute.value)
+    const canonical = await this.inner.canonicalPath(absolute.value)
     if (canonical.ok) toCheck = canonical.value
 
     if (this.isInside(toCheck)) return { ok: true, value: absolute.value }
@@ -137,15 +137,15 @@ export class RestrictedEnv implements ExecutionEnv {
     // Has it already been allowed in this stream?
     if (this.allowed.has(toCheck)) return { ok: true, value: absolute.value }
 
-    const javob = await this.ruxsat.ask({
+    const answer = await this.permission.ask({
       kind: 'file',
-      action: amal,
+      action,
       target: toCheck,
       reason: 'a file outside the working directory',
-      pattern: `${amal}:${toCheck}`,
+      pattern: `${action}:${toCheck}`,
     })
 
-    if (javob === 'deny') {
+    if (answer === 'deny') {
       return { ok: false, error: denyError(toCheck, 'outside the working directory') }
     }
     this.allowed.add(toCheck)
@@ -158,17 +158,17 @@ export class RestrictedEnv implements ExecutionEnv {
 
   async absolutePath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
     // Resolving a path is safe in itself — the check happens on the real operation
-    return this.ichki.absolutePath(path, abortSignal)
+    return this.inner.absolutePath(path, abortSignal)
   }
 
   async joinPath(parts: string[], abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
-    return this.ichki.joinPath(parts, abortSignal)
+    return this.inner.joinPath(parts, abortSignal)
   }
 
   async readTextFile(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
     const validated = await this.validatePath(path, 'read')
     if (!validated.ok) return validated
-    return this.ichki.readTextFile(validated.value, abortSignal)
+    return this.inner.readTextFile(validated.value, abortSignal)
   }
 
   async readTextLines(
@@ -177,43 +177,43 @@ export class RestrictedEnv implements ExecutionEnv {
   ): Promise<Result<string[], FileError>> {
     const validated = await this.validatePath(path, 'read')
     if (!validated.ok) return validated
-    return this.ichki.readTextLines(validated.value, options)
+    return this.inner.readTextLines(validated.value, options)
   }
 
   async readBinaryFile(path: string, abortSignal?: AbortSignal): Promise<Result<Uint8Array, FileError>> {
     const validated = await this.validatePath(path, 'read')
     if (!validated.ok) return validated
-    return this.ichki.readBinaryFile(validated.value, abortSignal)
+    return this.inner.readBinaryFile(validated.value, abortSignal)
   }
 
   async fileInfo(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo, FileError>> {
     const validated = await this.validatePath(path, 'read')
     if (!validated.ok) return validated
-    return this.ichki.fileInfo(validated.value, abortSignal)
+    return this.inner.fileInfo(validated.value, abortSignal)
   }
 
   async listDir(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo[], FileError>> {
     const validated = await this.validatePath(path, 'read')
     if (!validated.ok) return validated
-    return this.ichki.listDir(validated.value, abortSignal)
+    return this.inner.listDir(validated.value, abortSignal)
   }
 
   async canonicalPath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
-    return this.ichki.canonicalPath(path, abortSignal)
+    return this.inner.canonicalPath(path, abortSignal)
   }
 
   async exists(path: string, abortSignal?: AbortSignal): Promise<Result<boolean, FileError>> {
     // `exists` is the most harmless operation, but it can be used to "feel
     // around" the file system. For a path outside we do not ask permission, we
     // simply return `false`: the agent should not learn what is out there.
-    const absolute = await this.ichki.absolutePath(path, abortSignal)
+    const absolute = await this.inner.absolutePath(path, abortSignal)
     if (!absolute.ok) return absolute
-    const canonical = await this.ichki.canonicalPath(absolute.value, abortSignal)
+    const canonical = await this.inner.canonicalPath(absolute.value, abortSignal)
     const toCheck = canonical.ok ? canonical.value : absolute.value
     if (!this.isInside(toCheck) && !this.allowed.has(toCheck)) {
       return { ok: true, value: false }
     }
-    return this.ichki.exists(absolute.value, abortSignal)
+    return this.inner.exists(absolute.value, abortSignal)
   }
 
   // -------------------------------------------------------------------------
@@ -227,7 +227,7 @@ export class RestrictedEnv implements ExecutionEnv {
   ): Promise<Result<void, FileError>> {
     const validated = await this.validatePath(path, 'write')
     if (!validated.ok) return validated
-    return this.ichki.writeFile(validated.value, content, abortSignal)
+    return this.inner.writeFile(validated.value, content, abortSignal)
   }
 
   async appendFile(
@@ -237,7 +237,7 @@ export class RestrictedEnv implements ExecutionEnv {
   ): Promise<Result<void, FileError>> {
     const validated = await this.validatePath(path, 'write')
     if (!validated.ok) return validated
-    return this.ichki.appendFile(validated.value, content, abortSignal)
+    return this.inner.appendFile(validated.value, content, abortSignal)
   }
 
   async createDir(
@@ -246,7 +246,7 @@ export class RestrictedEnv implements ExecutionEnv {
   ): Promise<Result<void, FileError>> {
     const validated = await this.validatePath(path, 'write')
     if (!validated.ok) return validated
-    return this.ichki.createDir(validated.value, options)
+    return this.inner.createDir(validated.value, options)
   }
 
   async remove(
@@ -256,24 +256,24 @@ export class RestrictedEnv implements ExecutionEnv {
     // Deletion is always asked about, even inside the working directory.
     // There is no `remove` among the tools (read/write/edit/bash), but the
     // interface requires it and the protection stays for future tools.
-    const absolute = await this.ichki.absolutePath(path, options?.abortSignal)
+    const absolute = await this.inner.absolutePath(path, options?.abortSignal)
     if (!absolute.ok) return absolute
 
-    const javob = await this.ruxsat.ask({
+    const answer = await this.permission.ask({
       kind: 'file',
       action: 'remove',
       target: absolute.value,
       reason: 'deletes a file or directory',
       pattern: `remove:${absolute.value}`,
     })
-    if (javob === 'deny') {
+    if (answer === 'deny') {
       return { ok: false, error: denyError(absolute.value, 'the deletion was denied') }
     }
-    return this.ichki.remove(absolute.value, options)
+    return this.inner.remove(absolute.value, options)
   }
 
   async createTempDir(prefix?: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
-    return this.ichki.createTempDir(prefix, abortSignal)
+    return this.inner.createTempDir(prefix, abortSignal)
   }
 
   async createTempFile(options?: {
@@ -281,7 +281,7 @@ export class RestrictedEnv implements ExecutionEnv {
     suffix?: string
     abortSignal?: AbortSignal
   }): Promise<Result<string, FileError>> {
-    return this.ichki.createTempFile(options)
+    return this.inner.createTempFile(options)
   }
 
   // -------------------------------------------------------------------------
@@ -306,7 +306,7 @@ export class RestrictedEnv implements ExecutionEnv {
     if (assessment.category === 'forbidden') {
       // The decision is recorded so the user can see WHY the command did not
       // run. This is the only way — permission is never asked here at all.
-      this.ruxsat.recordForbidden(assessment.pattern)
+      this.permission.recordForbidden(assessment.pattern)
       return {
         ok: false,
         error: new ExecutionError(
@@ -317,14 +317,14 @@ export class RestrictedEnv implements ExecutionEnv {
     }
 
     if (assessment.category !== 'safe') {
-      const javob = await this.ruxsat.ask({
-        tur: 'command',
-        amal: 'bash',
-        nishon: command,
-        sabab: assessment.reason ?? 'an unvetted command',
-        naqsh: assessment.pattern,
+      const answer = await this.permission.ask({
+        kind: 'command',
+        action: 'bash',
+        target: command,
+        reason: assessment.reason ?? 'an unvetted command',
+        pattern: assessment.pattern,
       })
-      if (javob === 'deny') {
+      if (answer === 'deny') {
         return {
           ok: false,
           error: new ExecutionError(
@@ -342,14 +342,14 @@ export class RestrictedEnv implements ExecutionEnv {
     // stays, otherwise we apply the default limit — without it a command that
     // never finishes (`tail -f`, `vite dev`, one asking for a password) would
     // freeze the whole session.
-    return this.ichki.exec(command, {
+    return this.inner.exec(command, {
       ...options,
       cwd: options?.cwd ?? this.cwd,
-      timeout: options?.timeout ?? Math.ceil(this.buyruqTimeoutMs / 1000),
+      timeout: options?.timeout ?? Math.ceil(this.commandTimeoutMs / 1000),
     })
   }
 
   async cleanup(): Promise<void> {
-    await this.ichki.cleanup()
+    await this.inner.cleanup()
   }
 }

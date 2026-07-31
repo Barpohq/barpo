@@ -1,15 +1,14 @@
-// Kontekst qatlami testlari.
+// Context layer tests.
 //
-// Ikki majburiy xulq sinaladi:
-//   1) tool natijalari tarixda saqlanadi (usiz agent har turn xotirasini
-//      yo'qotadi — bu asosiy funksional nuqson edi);
-//   2) kesish HECH QACHON `toolResult` dan boshlanmaydi — aks holda
-//      providerga "javobi bor, savoli yo'q" kontekst boradi va so'rov rad
-//      etiladi. Bu jimgina buziladigan xato, shuning uchun test bilan
-//      majburlanadi.
+// Two mandatory behaviours are checked:
+//   1) tool results are kept in the history (without that the agent loses its
+//      memory every turn — this was the main functional defect);
+//   2) the cut NEVER starts at a `toolResult` — otherwise the provider gets a
+//      context with "an answer but no question" and rejects the request. That
+//      is a failure that breaks silently, so a test enforces it.
 //
-// LLM chaqiruvi (`compact`) bu yerda sinalmaydi — u tarmoqqa chiqadi. Sinaladigan
-// qism sof mantiq: qaror, kesish nuqtasi, qisqartirish.
+// The LLM call (`compact`) is not tested here — it goes to the network. What
+// is tested is the pure logic: the decision, the cut point, the truncation.
 
 import { describe, expect, test } from 'bun:test'
 import type { AgentMessage } from '@earendil-works/pi-agent-core/node'
@@ -22,16 +21,16 @@ import {
   truncateToolResults,
 } from '../src/context.ts'
 
-// --- Yordamchi quruvchilar ---
+// --- Helper builders ---
 
-function user(matn: string): AgentMessage {
-  return { role: 'user', content: matn, timestamp: 1 } as AgentMessage
+function user(text: string): AgentMessage {
+  return { role: 'user', content: text, timestamp: 1 } as AgentMessage
 }
 
-function assistant(matn: string): AgentMessage {
+function assistant(text: string): AgentMessage {
   return {
     role: 'assistant',
-    content: [{ type: 'text', text: matn }],
+    content: [{ type: 'text', text }],
     api: 'openai-completions',
     provider: 'p',
     model: 'm',
@@ -41,203 +40,204 @@ function assistant(matn: string): AgentMessage {
   } as AgentMessage
 }
 
-function toolNatija(matn: string): AgentMessage {
+function toolResult(text: string): AgentMessage {
   return {
     role: 'toolResult',
     toolCallId: 'tc-1',
     toolName: 'read',
-    content: [{ type: 'text', text: matn }],
+    content: [{ type: 'text', text }],
     isError: false,
     timestamp: 1,
   } as unknown as AgentMessage
 }
 
-describe('kontekstni qurish', () => {
-  test('agentMessages bor xabar xom holda o\'tadi (tool natijalari saqlanadi)', () => {
-    // Bu asosiy tuzatish: ilgari tool natijalari yo'qolardi
-    const saqlangan = [
-      { role: 'user' as const, text: 'faylni o\'qi' },
+describe('building the context', () => {
+  test('a message with agentMessages passes through raw (tool results are kept)', () => {
+    // This is the main fix: tool results used to be lost
+    const stored = [
+      { role: 'user' as const, text: 'read the file' },
       {
         role: 'assistant' as const,
-        text: 'o\'qidim',
-        agentMessages: [assistant('o\'qiyapman'), toolNatija('FAYL MAZMUNI'), assistant('o\'qidim')],
+        text: 'I read it',
+        agentMessages: [assistant('reading'), toolResult('FILE CONTENTS'), assistant('I read it')],
       },
     ]
-    const kontekst = buildContext(saqlangan)
-    const matnlar = JSON.stringify(kontekst)
-    expect(matnlar).toContain('FAYL MAZMUNI')
-    expect(kontekst).toHaveLength(4) // 1 user + 3 agent xabari
+    const context = buildContext(stored)
+    const texts = JSON.stringify(context)
+    expect(texts).toContain('FILE CONTENTS')
+    expect(context).toHaveLength(4) // 1 user + 3 agent messages
   })
 
-  test('agentMessages yo\'q bo\'lsa text dan quriladi (eski xabarlar)', () => {
-    const kontekst = buildContext([
-      { role: 'user', text: 'salom' },
-      { role: 'assistant', text: 'salom!' },
+  test('without agentMessages it is built from text (older messages)', () => {
+    const context = buildContext([
+      { role: 'user', text: 'hello' },
+      { role: 'assistant', text: 'hello!' },
     ])
-    expect(kontekst).toHaveLength(2)
-    expect(kontekst[0]!.role).toBe('user')
-    expect(kontekst[1]!.role).toBe('assistant')
+    expect(context).toHaveLength(2)
+    expect(context[0]!.role).toBe('user')
+    expect(context[1]!.role).toBe('assistant')
   })
 
-  test('eski va yangi xabarlar aralash bo\'lishi mumkin', () => {
-    // Migratsiyadan oldingi suhbat davom ettirilsa shunday bo'ladi
-    const kontekst = buildContext([
-      { role: 'user', text: 'eski savol' },
-      { role: 'assistant', text: 'eski javob' },
-      { role: 'user', text: 'yangi savol' },
-      { role: 'assistant', text: 'yangi javob', agentMessages: [assistant('yangi javob')] },
+  test('old and new messages can be mixed', () => {
+    // That is what happens when a pre-migration conversation is continued
+    const context = buildContext([
+      { role: 'user', text: 'old question' },
+      { role: 'assistant', text: 'old answer' },
+      { role: 'user', text: 'new question' },
+      { role: 'assistant', text: 'new answer', agentMessages: [assistant('new answer')] },
     ])
-    expect(kontekst).toHaveLength(4)
+    expect(context).toHaveLength(4)
   })
 
-  test('bo\'sh matnli xabar tashlanadi (ba\'zi providerlar rad etadi)', () => {
-    const kontekst = buildContext([
+  test('a message with empty text is dropped (some providers reject it)', () => {
+    const context = buildContext([
       { role: 'user', text: '   ' },
-      { role: 'user', text: 'haqiqiy' },
+      { role: 'user', text: 'real' },
     ])
-    expect(kontekst).toHaveLength(1)
+    expect(context).toHaveLength(1)
   })
 
-  test('bo\'sh ro\'yxat bo\'sh kontekst beradi', () => {
+  test('an empty list gives an empty context', () => {
     expect(buildContext([])).toEqual([])
   })
 })
 
-describe('tool natijalarini qisqartirish', () => {
-  test('chegaradan uzun natija kesiladi va bu AYTILADI', () => {
-    const uzun = 'x'.repeat(5000)
-    const natija = truncateToolResults([toolNatija(uzun)], 1000)
-    const matn = (natija[0] as unknown as { content: { text: string }[] }).content[0]!.text
-    expect(matn.length).toBeLessThan(2000)
-    // Agent natija to'liq emasligini bilishi shart
-    expect(matn).toContain('truncated')
+describe('truncating tool results', () => {
+  test('a result longer than the limit is cut and this is ANNOUNCED', () => {
+    const long = 'x'.repeat(5000)
+    const result = truncateToolResults([toolResult(long)], 1000)
+    const text = (result[0] as unknown as { content: { text: string }[] }).content[0]!.text
+    expect(text.length).toBeLessThan(2000)
+    // The agent must know the result is incomplete
+    expect(text).toContain('truncated')
   })
 
-  test('chegaradan qisqa natija tegilmaydi', () => {
-    const kirish = [toolNatija('qisqa')]
-    const natija = truncateToolResults(kirish, 1000)
-    expect(natija[0]).toBe(kirish[0]!)
+  test('a result shorter than the limit is left alone', () => {
+    const input = [toolResult('short')]
+    const result = truncateToolResults(input, 1000)
+    expect(result[0]).toBe(input[0]!)
   })
 
-  test('toolResult bo\'lmagan xabarlar tegilmaydi', () => {
-    const kirish = [user('a'.repeat(5000)), assistant('b'.repeat(5000))]
-    const natija = truncateToolResults(kirish, 100)
-    expect(natija[0]).toBe(kirish[0]!)
-    expect(natija[1]).toBe(kirish[1]!)
-  })
-})
-
-describe('siqish qarori', () => {
-  const sozlama = { yoqilgan: true, zaxiraTokenlar: 1000, saqlanadiganTokenlar: 500 }
-
-  test('o\'chirilgan bo\'lsa hech qachon siqilmaydi', () => {
-    const katta = Array.from({ length: 500 }, () => user('x'.repeat(1000)))
-    expect(needsCompaction(katta, 8000, { ...sozlama, yoqilgan: false })).toBe(false)
-  })
-
-  test('kichik kontekst siqilmaydi', () => {
-    expect(needsCompaction([user('salom')], 100_000, sozlama)).toBe(false)
-  })
-
-  test('katta kontekst siqiladi', () => {
-    const katta = Array.from({ length: 200 }, () => user('x'.repeat(500)))
-    expect(needsCompaction(katta, 8000, sozlama)).toBe(true)
-  })
-
-  test('contextWindow noma\'lum (0) bo\'lsa siqilmaydi', () => {
-    // Taxmin qilib siqishdan ko'ra siqmaslik xavfsizroq: noto'g'ri siqish
-    // kontekstni yo'qotadi, siqmaslik esa faqat xato beradi
-    const katta = Array.from({ length: 200 }, () => user('x'.repeat(500)))
-    expect(needsCompaction(katta, 0, sozlama)).toBe(false)
-  })
-
-  test('zaxira contextWindow dan katta bo\'lsa siqilmaydi', () => {
-    expect(needsCompaction([user('a')], 500, { ...sozlama, zaxiraTokenlar: 1000 })).toBe(false)
+  test('messages that are not toolResult are left alone', () => {
+    const input = [user('a'.repeat(5000)), assistant('b'.repeat(5000))]
+    const result = truncateToolResults(input, 100)
+    expect(result[0]).toBe(input[0]!)
+    expect(result[1]).toBe(input[1]!)
   })
 })
 
-describe('kesish nuqtasi', () => {
-  test('yangi xabarlar saqlanadi', () => {
-    const xabarlar = Array.from({ length: 100 }, (_, i) => user(`xabar ${i} ${'x'.repeat(400)}`))
-    const nuqta = cutPoint(xabarlar, 1000)
-    expect(nuqta).toBeGreaterThan(0)
-    expect(nuqta).toBeLessThan(xabarlar.length)
+describe('the compaction decision', () => {
+  const options = { enabled: true, reserveTokens: 1000, keptTokens: 500 }
+
+  test('never compacts when disabled', () => {
+    const large = Array.from({ length: 500 }, () => user('x'.repeat(1000)))
+    expect(needsCompaction(large, 8000, { ...options, enabled: false })).toBe(false)
   })
 
-  test('KESISH toolResult DAN BOSHLANMAYDI', () => {
-    // Eng muhim qoida: toolResult o'zini chaqirgan assistant xabari bilan
-    // birga qolishi shart, aks holda provider so'rovni rad etadi
-    const xabarlar: AgentMessage[] = []
+  test('a small context is not compacted', () => {
+    expect(needsCompaction([user('hello')], 100_000, options)).toBe(false)
+  })
+
+  test('a large context is compacted', () => {
+    const large = Array.from({ length: 200 }, () => user('x'.repeat(500)))
+    expect(needsCompaction(large, 8000, options)).toBe(true)
+  })
+
+  test('no compaction when contextWindow is unknown (0)', () => {
+    // Not compacting is safer than compacting on a guess: a wrong compaction
+    // loses context, while not compacting only produces an error
+    const large = Array.from({ length: 200 }, () => user('x'.repeat(500)))
+    expect(needsCompaction(large, 0, options)).toBe(false)
+  })
+
+  test('no compaction when the reserve is larger than contextWindow', () => {
+    expect(needsCompaction([user('a')], 500, { ...options, reserveTokens: 1000 })).toBe(false)
+  })
+})
+
+describe('the cut point', () => {
+  test('recent messages are kept', () => {
+    const messages = Array.from({ length: 100 }, (_, i) => user(`message ${i} ${'x'.repeat(400)}`))
+    const point = cutPoint(messages, 1000)
+    expect(point).toBeGreaterThan(0)
+    expect(point).toBeLessThan(messages.length)
+  })
+
+  test('THE CUT DOES NOT START AT A toolResult', () => {
+    // The most important rule: a toolResult has to stay together with the
+    // assistant message that invoked it, otherwise the provider rejects the
+    // request
+    const messages: AgentMessage[] = []
     for (let i = 0; i < 50; i += 1) {
-      xabarlar.push(assistant(`chaqiruv ${i}`))
-      xabarlar.push(toolNatija(`natija ${i} ${'x'.repeat(300)}`))
+      messages.push(assistant(`call ${i}`))
+      messages.push(toolResult(`result ${i} ${'x'.repeat(300)}`))
     }
-    for (const saqlanadigan of [200, 500, 1000, 2000, 5000]) {
-      const nuqta = cutPoint(xabarlar, saqlanadigan)
-      expect(xabarlar[nuqta]?.role, `saqlanadigan=${saqlanadigan}`).not.toBe('toolResult')
+    for (const kept of [200, 500, 1000, 2000, 5000]) {
+      const point = cutPoint(messages, kept)
+      expect(messages[point]?.role, `kept=${kept}`).not.toBe('toolResult')
     }
   })
 
-  test('hamma narsa sig\'sa 0 qaytadi', () => {
-    expect(cutPoint([user('kichik')], 1_000_000)).toBe(0)
+  test('returns 0 when everything fits', () => {
+    expect(cutPoint([user('small')], 1_000_000)).toBe(0)
   })
 
-  test('bo\'sh ro\'yxatda 0', () => {
+  test('0 on an empty list', () => {
     expect(cutPoint([], 1000)).toBe(0)
   })
 })
 
-describe('eskilarni tashlash (zaxira yo\'l)', () => {
-  test('chegaradan ko\'p bo\'lsa eskilari tashlanadi', () => {
-    const xabarlar = Array.from({ length: 100 }, (_, i) => user(`x${i}`))
-    const natija = dropOldest(xabarlar, 10)
-    expect(natija.length).toBeLessThanOrEqual(10)
-    // Eng yangilari qoladi
-    expect(JSON.stringify(natija.at(-1))).toContain('x99')
+describe('dropping the oldest (the fallback path)', () => {
+  test('the oldest are dropped when there are more than the limit', () => {
+    const messages = Array.from({ length: 100 }, (_, i) => user(`x${i}`))
+    const result = dropOldest(messages, 10)
+    expect(result.length).toBeLessThanOrEqual(10)
+    // The newest ones stay
+    expect(JSON.stringify(result.at(-1))).toContain('x99')
   })
 
-  test('chegaradan kam bo\'lsa tegilmaydi', () => {
-    const xabarlar = [user('a'), user('b')]
-    expect(dropOldest(xabarlar, 10)).toBe(xabarlar)
+  test('left alone when there are fewer than the limit', () => {
+    const messages = [user('a'), user('b')]
+    expect(dropOldest(messages, 10)).toBe(messages)
   })
 
-  test('natija toolResult dan boshlanmaydi', () => {
-    const xabarlar: AgentMessage[] = []
+  test('the result does not start at a toolResult', () => {
+    const messages: AgentMessage[] = []
     for (let i = 0; i < 50; i += 1) {
-      xabarlar.push(assistant(`c${i}`))
-      xabarlar.push(toolNatija(`n${i}`))
+      messages.push(assistant(`c${i}`))
+      messages.push(toolResult(`r${i}`))
     }
-    for (const maks of [5, 10, 11, 20, 21]) {
-      const natija = dropOldest(xabarlar, maks)
-      expect(natija[0]?.role, `maks=${maks}`).not.toBe('toolResult')
+    for (const max of [5, 10, 11, 20, 21]) {
+      const result = dropOldest(messages, max)
+      expect(result[0]?.role, `max=${max}`).not.toBe('toolResult')
     }
   })
 })
 
-describe('token hisobi', () => {
-  test('bo\'sh kontekst 0 token', () => {
+describe('the token count', () => {
+  test('an empty context is 0 tokens', () => {
     expect(contextTokens([])).toBe(0)
   })
 
-  test('kattaroq kontekst ko\'proq token', () => {
-    const kichik = [user('salom')]
-    const katta = Array.from({ length: 100 }, () => user('x'.repeat(1000)))
-    expect(contextTokens(katta)).toBeGreaterThan(contextTokens(kichik))
+  test('a larger context has more tokens', () => {
+    const small = [user('hello')]
+    const large = Array.from({ length: 100 }, () => user('x'.repeat(1000)))
+    expect(contextTokens(large)).toBeGreaterThan(contextTokens(small))
   })
 })
 
-// Rasm kontekstga `read` tool'i orqali keladi (biriktirilgan rasm faylini
-// o'qiganda). Uning token hajmi base64 UZUNLIGI bo'yicha hisoblanmasligi
-// kerak — aks holda 5 MB rasm ~1.7 million "token" bo'lib chiqadi va
-// siqish mantiqi butunlay buziladi.
-describe('rasmli kontekst', () => {
-  /** ~1 MB base64 — haqiqiy rasm hajmi tartibida */
-  const KATTA_BASE64 = 'A'.repeat(1_000_000)
+// An image enters the context through the `read` tool (when an attached image
+// file is read). Its token size must NOT be counted by the LENGTH of the
+// base64 — otherwise a 5 MB image comes out as ~1.7 million "tokens" and the
+// compaction logic breaks entirely.
+describe('a context with an image', () => {
+  /** ~1 MB of base64 — the order of magnitude of a real image */
+  const LARGE_BASE64 = 'A'.repeat(1_000_000)
 
-  function rasmNatijasi(base64: string): AgentMessage {
+  function imageResult(base64: string): AgentMessage {
     return {
       role: 'toolResult',
-      toolCallId: 'tc-rasm',
+      toolCallId: 'tc-image',
       toolName: 'read',
       content: [
         { type: 'text', text: 'Read image file [image/png]' },
@@ -248,44 +248,44 @@ describe('rasmli kontekst', () => {
     } as unknown as AgentMessage
   }
 
-  test('rasm base64 uzunligi bo\'yicha sanalmaydi', () => {
-    const tokenlar = contextTokens([rasmNatijasi(KATTA_BASE64)])
+  test('an image is not counted by the length of its base64', () => {
+    const tokens = contextTokens([imageResult(LARGE_BASE64)])
 
-    // `JSON.stringify(...).length / 4` bo'lsa ~250 000 chiqardi.
-    // pi rasmni fiksirlangan ~1200 token deb hisoblaydi.
-    expect(tokenlar).toBeLessThan(5000)
+    // With `JSON.stringify(...).length / 4` this would come out as ~250,000.
+    // pi counts an image as a fixed ~1200 tokens.
+    expect(tokens).toBeLessThan(5000)
   })
 
-  test('rasm hajmi ikki barobar oshsa token oshmaydi', () => {
-    const bir = contextTokens([rasmNatijasi(KATTA_BASE64)])
-    const ikki = contextTokens([rasmNatijasi(KATTA_BASE64.repeat(2))])
+  test('doubling the image size does not increase the token count', () => {
+    const one = contextTokens([imageResult(LARGE_BASE64)])
+    const two = contextTokens([imageResult(LARGE_BASE64.repeat(2))])
 
-    expect(ikki).toBe(bir)
+    expect(two).toBe(one)
   })
 
-  // ENG MUHIM REGRESSIYA: `cutPoint` bitta rasmli xabarni ham
-  // `saqlanadiganTokenlar` ga sig'dirmasa, siqishda YAQIN TARIX butunlay
-  // xulosaga ketardi va agent hozirgi ishini yo'qotardi.
-  test('rasmli xabar kesish nuqtasini buzmaydi', () => {
-    const xabarlar = [
-      user('eski so\'rov'),
-      assistant('eski javob'),
-      user('bu rasmda nima?'),
-      assistant('o\'qiyman'),
-      rasmNatijasi(KATTA_BASE64),
+  // THE MOST IMPORTANT REGRESSION: if `cutPoint` could not fit even a single
+  // image message into `keptTokens`, compaction would send THE ENTIRE RECENT
+  // HISTORY off to be summarised and the agent would lose its current work.
+  test('a message with an image does not break the cut point', () => {
+    const messages = [
+      user('old request'),
+      assistant('old answer'),
+      user('what is in this image?'),
+      assistant('reading it'),
+      imageResult(LARGE_BASE64),
     ]
 
-    const nuqta = cutPoint(xabarlar, 20_000)
+    const point = cutPoint(messages, 20_000)
 
-    // Yaqin tarix saqlanishi kerak — hammasi kesilib ketmasin
-    expect(nuqta).toBeLessThan(xabarlar.length)
-    expect(nuqta).toBe(0)
+    // The recent history has to be kept — it must not all be cut away
+    expect(point).toBeLessThan(messages.length)
+    expect(point).toBe(0)
   })
 
-  test('rasm siqish qarorini o\'z-o\'zidan qo\'zg\'atmaydi', () => {
-    const sozlama = { yoqilgan: true, zaxiraTokenlar: 16_384, saqlanadiganTokenlar: 20_000 }
+  test('an image does not trigger the compaction decision by itself', () => {
+    const options = { enabled: true, reserveTokens: 16_384, keptTokens: 20_000 }
 
-    // 200k context window — bitta rasm uni to'ldirmasligi kerak
-    expect(needsCompaction([rasmNatijasi(KATTA_BASE64)], 200_000, sozlama)).toBe(false)
+    // A 200k context window — a single image must not fill it
+    expect(needsCompaction([imageResult(LARGE_BASE64)], 200_000, options)).toBe(false)
   })
 })

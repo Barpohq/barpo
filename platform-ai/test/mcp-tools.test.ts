@@ -1,14 +1,15 @@
-// MCP tool'larini agentga e'lon qilish.
+// Declaring MCP tools to the agent.
 //
-// ASOSIY TEKSHIRUVLAR:
-//   1) boshqaruvchi berilmasa tool UMUMAN e'lon qilinmaydi (agent MCP
-//      borligini bilmaydi);
-//   2) ikki server bir xil tool nomini bersa nomlar TO'QNASHMAYDI;
-//   3) JSON Schema konvertatsiyasiz o'tadi;
-//   4) chaqiruv ruxsat qatlamidan o'tadi (o'ram uni chetlab o'tmaydi).
+// THE MAIN CHECKS:
+//   1) with no manager given no tool is declared AT ALL (the agent does not
+//      know MCP exists);
+//   2) if two servers offer the same tool name the names DO NOT COLLIDE;
+//   3) the JSON Schema passes through with no conversion;
+//   4) a call goes through the permission layer (the wrapper does not route
+//      around it).
 
 import { afterEach, describe, expect, test } from 'bun:test'
-import { AGENT_SISTEM_PROMPT } from '../src/agent.ts'
+import { AGENT_SYSTEM_PROMPT } from '../src/agent.ts'
 import { McpManager } from '../src/mcp-manager.ts'
 import {
   MCP_PROMPT_SECTION,
@@ -26,206 +27,211 @@ afterEach(() => {
   setProcessSpawner(null)
 })
 
-/** Har chaqirilgan tool nomini yozib boradigan soxta jarayon */
-function soxtaOrnat(toolNomlari: string[]): { chaqirilgan: string[] } {
-  const chaqirilgan: string[] = []
+/** A fake process that records the name of every tool that gets called */
+function setUpFake(toolNames: string[]): { called: string[] } {
+  const called: string[] = []
 
   setProcessSpawner(() => {
-    let chiqish: ((b: string) => void) | undefined
-    const jarayon: McpProcess = {
-      yoz(matn) {
-        for (const qator of matn.split('\n')) {
-          if (!qator.trim()) continue
-          const x = JSON.parse(qator) as {
+    let output: ((b: string) => void) | undefined
+    const proc: McpProcess = {
+      yoz(text) {
+        for (const line of text.split('\n')) {
+          if (!line.trim()) continue
+          const x = JSON.parse(line) as {
             id?: number
             method?: string
             params?: { name?: string; arguments?: unknown }
           }
-          const javob = (natija: unknown) =>
+          const answer = (result: unknown) =>
             queueMicrotask(() =>
-              chiqish?.(`${JSON.stringify({ jsonrpc: '2.0', id: x.id, result: natija })}\n`),
+              output?.(`${JSON.stringify({ jsonrpc: '2.0', id: x.id, result })}\n`),
             )
 
-          if (x.method === 'initialize') javob({})
+          if (x.method === 'initialize') answer({})
           else if (x.method === 'tools/list') {
-            javob({
-              tools: toolNomlari.map((nom) => ({
-                name: nom,
-                description: `${nom} tavsifi`,
-                inputSchema: { type: 'object', properties: { soz: { type: 'string' } } },
+            answer({
+              tools: toolNames.map((name) => ({
+                name,
+                description: `${name} description`,
+                inputSchema: { type: 'object', properties: { word: { type: 'string' } } },
               })),
             })
           } else if (x.method === 'tools/call') {
-            chaqirilgan.push(x.params?.name ?? '')
-            javob({ content: [{ type: 'text', text: `${x.params?.name} bajarildi` }] })
+            called.push(x.params?.name ?? '')
+            answer({ content: [{ type: 'text', text: `${x.params?.name} done` }] })
           }
         }
       },
       chiqishniTingla(fn) {
-        chiqish = fn
+        output = fn
       },
       xatoOqiminiTingla() {},
       toxtat() {},
       old() {},
       tugadi: Promise.resolve(0),
     }
-    return jarayon
+    return proc
   })
 
-  return { chaqirilgan }
+  return { called }
 }
 
-function serverTarifi(id: string, nom: string) {
+function serverSpec(id: string, name: string) {
   return {
     id,
-    nom,
-    sozlama: {
+    name,
+    config: {
       transport: 'stdio' as const,
-      buyruq: 'soxta',
+      command: 'fake',
       handshakeTimeoutMs: 200,
-      chaqiruvTimeoutMs: 200,
+      callTimeoutMs: 200,
     },
   }
 }
 
-/** Hamma so'rovga darhol ruxsat beruvchi boshqaruvchi */
-function ruxsatQur(javob: 'ruxsat' | 'rad' = 'ruxsat'): PermissionManager {
-  const ruxsat = new PermissionManager('sessiya-1')
-  ruxsat.kuzat((sorov) => {
-    queueMicrotask(() => ruxsat.javobBer(sorov.id, javob))
+/** A manager that grants every request immediately */
+function buildPermission(answer: 'allow' | 'deny' = 'allow'): PermissionManager {
+  const permission = new PermissionManager('session-1')
+  permission.subscribe((request) => {
+    queueMicrotask(() => permission.answer(request.id, answer))
   })
-  return ruxsat
+  return permission
 }
 
-async function boshqaruvchiQur(
-  serverlar: { id: string; nom: string }[],
-  javob: 'ruxsat' | 'rad' = 'ruxsat',
+async function buildManager(
+  servers: { id: string; name: string }[],
+  answer: 'allow' | 'deny' = 'allow',
 ): Promise<McpManager> {
-  const b = new McpManager('s1', ruxsatQur(javob))
-  await b.ulash(serverlar.map((s) => serverTarifi(s.id, s.nom)))
-  return b
+  const manager = new McpManager('s1', buildPermission(answer))
+  await manager.connect(servers.map((s) => serverSpec(s.id, s.name)))
+  return manager
 }
 
 // ---------------------------------------------------------------------------
 
-describe('boshqaruvchi berilmaganda', () => {
-  test('xom ro\'yxat bo\'sh', () => {
+describe('with no manager given', () => {
+  test('the raw list is empty', () => {
     expect(mcpToolsRaw(undefined)).toEqual([])
     expect(mcpTools(undefined)).toEqual([])
   })
 
-  test('server ulanmagan boshqaruvchi ham bo\'sh ro\'yxat beradi', async () => {
-    soxtaOrnat(['echo'])
-    const b = new McpManager('s1', ruxsatQur())
-    // Ulash CHAQIRILMADI
-    expect(mcpToolsRaw(b)).toEqual([])
+  test('a manager with no connected server also gives an empty list', async () => {
+    setUpFake(['echo'])
+    const manager = new McpManager('s1', buildPermission())
+    // connect() WAS NOT CALLED
+    expect(mcpToolsRaw(manager)).toEqual([])
   })
 })
 
-describe('tool e\'lon qilish', () => {
-  test('nom prefikslanadi', async () => {
-    soxtaOrnat(['echo', 'qidir'])
-    const b = await boshqaruvchiQur([{ id: 'id-1', nom: 'github' }])
+describe('declaring tools', () => {
+  test('the name is prefixed', async () => {
+    setUpFake(['echo', 'search'])
+    const manager = await buildManager([{ id: 'id-1', name: 'github' }])
 
-    const toollar = mcpToolsRaw(b)
-    expect(toollar.map((t) => t.name)).toEqual(['mcp__github__echo', 'mcp__github__qidir'])
-    // `label` ham bir xil — UI kartasida shu ko'rinadi
-    expect(toollar[0]?.label).toBe('mcp__github__echo')
+    const tools = mcpToolsRaw(manager)
+    expect(tools.map((t) => t.name)).toEqual(['mcp__github__echo', 'mcp__github__search'])
+    // `label` is the same — this is what shows on the UI card
+    expect(tools[0]?.label).toBe('mcp__github__echo')
 
-    await b.yop()
+    await manager.close()
   })
 
-  test('tavsifda server nomi ko\'rinadi', async () => {
-    soxtaOrnat(['echo'])
-    const b = await boshqaruvchiQur([{ id: 'id-1', nom: 'github' }])
+  test('the server name shows up in the description', async () => {
+    setUpFake(['echo'])
+    const manager = await buildManager([{ id: 'id-1', name: 'github' }])
 
-    expect(mcpToolsRaw(b)[0]?.description).toBe('[MCP: github] echo tavsifi')
-    await b.yop()
+    expect(mcpToolsRaw(manager)[0]?.description).toBe('[MCP: github] echo description')
+    await manager.close()
   })
 
-  test('JSON Schema KONVERTATSIYASIZ o\'tadi', async () => {
-    soxtaOrnat(['echo'])
-    const b = await boshqaruvchiQur([{ id: 'id-1', nom: 'github' }])
+  test('the JSON Schema passes through WITH NO CONVERSION', async () => {
+    setUpFake(['echo'])
+    const manager = await buildManager([{ id: 'id-1', name: 'github' }])
 
-    // Server bergan sxema aynan shu holda `parameters` bo'lishi kerak
-    expect(mcpToolsRaw(b)[0]?.parameters).toEqual({
+    // The schema the server gave must become `parameters` exactly as it is
+    expect(mcpToolsRaw(manager)[0]?.parameters).toEqual({
       type: 'object',
-      properties: { soz: { type: 'string' } },
+      properties: { word: { type: 'string' } },
     })
 
-    await b.yop()
+    await manager.close()
   })
 
-  test('IKKI SERVER bir xil tool nomi — nomlar to\'qnashmaydi', async () => {
-    soxtaOrnat(['search'])
-    const b = await boshqaruvchiQur([
-      { id: 'id-1', nom: 'github' },
-      { id: 'id-2', nom: 'slack' },
+  test('TWO SERVERS with the same tool name — the names do not collide', async () => {
+    setUpFake(['search'])
+    const manager = await buildManager([
+      { id: 'id-1', name: 'github' },
+      { id: 'id-2', name: 'slack' },
     ])
 
-    const nomlar = mcpToolsRaw(b).map((t) => t.name)
-    expect(nomlar).toHaveLength(2)
-    expect(new Set(nomlar).size).toBe(2)
-    expect(nomlar.sort()).toEqual(['mcp__github__search', 'mcp__slack__search'])
+    const names = mcpToolsRaw(manager).map((t) => t.name)
+    expect(names).toHaveLength(2)
+    expect(new Set(names).size).toBe(2)
+    expect(names.sort()).toEqual(['mcp__github__search', 'mcp__slack__search'])
 
-    await b.yop()
+    await manager.close()
   })
 })
 
-describe('chaqiruv', () => {
-  test('tool bajarilib natija qaytadi', async () => {
-    const { chaqirilgan } = soxtaOrnat(['echo'])
-    const b = await boshqaruvchiQur([{ id: 'id-1', nom: 'github' }])
+describe('calling', () => {
+  test('the tool runs and a result comes back', async () => {
+    const { called } = setUpFake(['echo'])
+    const manager = await buildManager([{ id: 'id-1', name: 'github' }])
 
-    const tool = mcpTools(b)[0]!
-    const natija = (await tool.execute('c1', { soz: 'salom' } as never, undefined, undefined as never)) as {
+    const tool = mcpTools(manager)[0]!
+    const result = (await tool.execute(
+      'c1',
+      { word: 'hello' } as never,
+      undefined,
+      undefined as never,
+    )) as {
       content: { text: string }[]
-      details?: { serverNomi: string; toolNomi: string }
+      details?: { serverName: string; toolName: string; isError?: boolean }
     }
 
-    // MUHIM: serverga PREFIKSSIZ asl nom borishi kerak
-    expect(chaqirilgan).toEqual(['echo'])
-    expect(natija.content[0]?.text).toBe('echo bajarildi')
-    expect(natija.details).toEqual({ serverNomi: 'github', toolNomi: 'echo' })
+    // IMPORTANT: the ORIGINAL name, WITHOUT the prefix, must reach the server
+    expect(called).toEqual(['echo'])
+    expect(result.content[0]?.text).toBe('echo done')
+    expect(result.details).toEqual({ serverName: 'github', toolName: 'echo', isError: false })
 
-    await b.yop()
+    await manager.close()
   })
 
-  test('RUXSAT RAD ETILSA o\'ram ham bloklanadi', async () => {
-    const { chaqirilgan } = soxtaOrnat(['echo'])
-    const b = await boshqaruvchiQur([{ id: 'id-1', nom: 'github' }], 'rad')
+  test('WHEN PERMISSION IS DENIED the wrapper is blocked too', async () => {
+    const { called } = setUpFake(['echo'])
+    const manager = await buildManager([{ id: 'id-1', name: 'github' }], 'deny')
 
-    const tool = mcpTools(b)[0]!
-    await expect(
-      tool.execute('c1', {} as never, undefined, undefined as never),
-    ).rejects.toThrow(/Permission denied/)
+    const tool = mcpTools(manager)[0]!
+    await expect(tool.execute('c1', {} as never, undefined, undefined as never)).rejects.toThrow(
+      /Permission denied/,
+    )
 
-    // Tool o'rami ruxsatni CHETLAB O'TMAYDI
-    expect(chaqirilgan).toEqual([])
-    await b.yop()
+    // The tool wrapper DOES NOT ROUTE AROUND the permission
+    expect(called).toEqual([])
+    await manager.close()
   })
 
-  test('isError natija agentga xato bo\'lib boradi', async () => {
+  test('an isError result reaches the agent as a failure', async () => {
     setProcessSpawner(() => {
-      let chiqish: ((b: string) => void) | undefined
+      let output: ((b: string) => void) | undefined
       return {
-        yoz(matn) {
-          for (const qator of matn.split('\n')) {
-            if (!qator.trim()) continue
-            const x = JSON.parse(qator) as { id?: number; method?: string }
-            const javob = (natija: unknown) =>
+        yoz(text) {
+          for (const line of text.split('\n')) {
+            if (!line.trim()) continue
+            const x = JSON.parse(line) as { id?: number; method?: string }
+            const answer = (result: unknown) =>
               queueMicrotask(() =>
-                chiqish?.(`${JSON.stringify({ jsonrpc: '2.0', id: x.id, result: natija })}\n`),
+                output?.(`${JSON.stringify({ jsonrpc: '2.0', id: x.id, result })}\n`),
               )
-            if (x.method === 'initialize') javob({})
-            else if (x.method === 'tools/list') javob({ tools: [{ name: 'echo' }] })
+            if (x.method === 'initialize') answer({})
+            else if (x.method === 'tools/list') answer({ tools: [{ name: 'echo' }] })
             else if (x.method === 'tools/call') {
-              javob({ content: [{ type: 'text', text: 'ruxsat yetmadi' }], isError: true })
+              answer({ content: [{ type: 'text', text: 'permission was not enough' }], isError: true })
             }
           }
         },
         chiqishniTingla(fn) {
-          chiqish = fn
+          output = fn
         },
         xatoOqiminiTingla() {},
         toxtat() {},
@@ -234,33 +240,36 @@ describe('chaqiruv', () => {
       }
     })
 
-    const b = await boshqaruvchiQur([{ id: 'id-1', nom: 'github' }])
-    const tool = mcpTools(b)[0]!
-    const natija = (await tool.execute('c1', {} as never, undefined, undefined as never)) as {
+    const manager = await buildManager([{ id: 'id-1', name: 'github' }])
+    const tool = mcpTools(manager)[0]!
+    const result = (await tool.execute('c1', {} as never, undefined, undefined as never)) as {
       content: { text: string }[]
-      isError?: boolean
+      details?: { serverName: string; toolName: string; isError?: boolean }
     }
 
-    expect(natija.isError).toBe(true)
-    expect(natija.content[0]?.text).toBe('ruxsat yetmadi')
-    await b.yop()
+    // `AgentToolResult` carries no `isError` field, so the failure is marked
+    // in the detail and in the text — the agent must SEE the failure
+    expect(result.details?.isError).toBe(true)
+    expect(result.content[0]?.text).toContain('The MCP tool reported an error')
+    expect(result.content[0]?.text).toContain('permission was not enough')
+    await manager.close()
   })
 })
 
-describe('nom yordamchilari', () => {
-  test('safeToolName reverse-DNS nomni tozalaydi', () => {
+describe('name helpers', () => {
+  test('safeToolName cleans up a reverse-DNS name', () => {
     expect(safeToolName('io.github.owner/repo')).toBe('io_github_owner_repo')
-    expect(safeToolName('oddiy-nom_2')).toBe('oddiy-nom_2')
+    expect(safeToolName('plain-name_2')).toBe('plain-name_2')
     expect(safeToolName('!!!')).toBe('___')
     expect(safeToolName('')).toBe('nomalum')
   })
 
-  test('mcpToolName prefiks va ajratuvchi qo\'yadi', () => {
+  test('mcpToolName adds the prefix and the separator', () => {
     expect(mcpToolName('github', 'create_issue')).toBe('mcp__github__create_issue')
-    expect(mcpToolName('io.example/srv', 'qidir')).toBe('mcp__io_example_srv__qidir')
+    expect(mcpToolName('io.example/srv', 'search')).toBe('mcp__io_example_srv__search')
   })
 
-  test('isMcpTool prefiks bo\'yicha ajratadi', () => {
+  test('isMcpTool tells them apart by the prefix', () => {
     expect(isMcpTool('mcp__github__echo')).toBe(true)
     expect(isMcpTool('bash')).toBe(false)
     expect(isMcpTool('serverList')).toBe(false)
@@ -269,21 +278,21 @@ describe('nom yordamchilari', () => {
 })
 
 describe('prompt', () => {
-  test('MCP yo\'q bo\'lsa prompt uni TILGA OLMAYDI', () => {
-    const prompt = AGENT_SISTEM_PROMPT('/ish', undefined, undefined, undefined, false, false, false)
+  test('with no MCP the prompt DOES NOT MENTION it', () => {
+    const prompt = AGENT_SYSTEM_PROMPT('/work', undefined, undefined, undefined, false, false, false)
     expect(prompt).not.toContain('mcp__')
     expect(prompt).not.toContain('MCP')
   })
 
-  test('MCP bor bo\'lsa qism qo\'shiladi', () => {
-    const prompt = AGENT_SISTEM_PROMPT('/ish', undefined, undefined, undefined, false, false, true)
+  test('with MCP present the section is added', () => {
+    const prompt = AGENT_SYSTEM_PROMPT('/work', undefined, undefined, undefined, false, false, true)
     expect(prompt).toContain('mcp__<server>__<tool>')
     expect(prompt).toContain('MCP TOOLS')
-    // Tashqi ta'sir haqida ogohlantirish bo'lishi kerak
+    // There must be a warning about the external effect
     expect(prompt).toContain('EXTERNAL systems')
   })
 
-  test('prompt qismi ikki bo\'lakdan iborat', () => {
+  test('the prompt section consists of two parts', () => {
     expect(MCP_PROMPT_SECTION.list.length).toBeGreaterThan(0)
     expect(MCP_PROMPT_SECTION.rules.length).toBeGreaterThan(0)
   })

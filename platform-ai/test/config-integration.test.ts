@@ -1,9 +1,10 @@
-// Config sozlamalari haqiqatan qo'llanadimi.
+// Are the config settings really applied?
 //
-// Config yozilgani bilan uni hech kim o'qimasa foydasi yo'q. Bu testlar
-// sozlama → xulq zanjirini sinaydi: qiymat o'zgarsa xulq ham o'zgaradimi.
+// A config that nobody reads is of no use. These tests exercise the
+// setting → behaviour chain: if the value changes, does the behaviour change
+// too?
 //
-// LLM chaqiruvi kerak bo'lmagan joylar sinaladi — ular sof mantiq.
+// Only the places that need no LLM call are tested — those are pure logic.
 
 import { describe, expect, test } from 'bun:test'
 import { defaultConfig } from '@platforma/config'
@@ -22,139 +23,139 @@ function model(id: string, provider = 'p'): ModelInfo {
     reasoning: false,
     vision: false,
     cost: { input: 1, output: 1 },
-    manba: 'kalit',
-    manbaTuri: 'kalit',
+    source: 'key',
+    billing: 'apiKey',
   }
 }
 
-describe('rejim chegaralari configdan keladi', () => {
-  test('standart chegara 3 ta ketma-ket blok', () => {
-    const b = new ModeManager('s1')
-    b.ornat('auto')
-    expect(b.blokBoldi()).toBe(false)
-    expect(b.blokBoldi()).toBe(false)
-    // Uchinchisida auto o'chadi
-    expect(b.blokBoldi()).toBe(true)
-    expect(b.rejim).toBe('tasdiq')
+describe('the mode limits come from the config', () => {
+  test('the default limit is 3 consecutive blocks', () => {
+    const m = new ModeManager('s1')
+    m.set('auto')
+    expect(m.blocked()).toBe(false)
+    expect(m.blocked()).toBe(false)
+    // Auto turns off on the third
+    expect(m.blocked()).toBe(true)
+    expect(m.mode).toBe('confirm')
   })
 
-  test('configdagi chegara qo\'llanadi', () => {
-    const b = new ModeManager('s2')
-    b.chegaralarniOrnat(1, 50)
-    b.ornat('auto')
-    // Birinchi blokda o'chadi
-    expect(b.blokBoldi()).toBe(true)
-    expect(b.rejim).toBe('tasdiq')
-    expect(b.sabab).toContain('1 actions in a row')
+  test('the limit from the config is applied', () => {
+    const m = new ModeManager('s2')
+    m.setLimits(1, 50)
+    m.set('auto')
+    // It turns off on the first block
+    expect(m.blocked()).toBe(true)
+    expect(m.mode).toBe('confirm')
+    expect(m.reason).toContain('1 actions in a row')
   })
 
-  test('jami chegara ham configdan', () => {
-    const b = new ModeManager('s3')
-    b.chegaralarniOrnat(100, 2)
-    b.ornat('auto')
-    b.blokBoldi()
-    // Ketma-ket hisoblagichni nolga qaytaramiz, jami qoladi
-    b.ruxsatBerildi()
-    expect(b.blokBoldi()).toBe(true)
-    expect(b.sabab).toContain('2 actions were blocked')
+  test('the total limit comes from the config too', () => {
+    const m = new ModeManager('s3')
+    m.setLimits(100, 2)
+    m.set('auto')
+    m.blocked()
+    // We reset the consecutive counter to zero; the total one stays
+    m.allowed()
+    expect(m.blocked()).toBe(true)
+    expect(m.reason).toContain('2 actions were blocked')
   })
 
-  test('noto\'g\'ri chegara e\'tiborsiz qoldiriladi', () => {
-    // Config validatsiyasi buni ushlashi kerak, lekin ikkinchi himoya
-    const b = new ModeManager('s4')
-    b.chegaralarniOrnat(0, -5)
-    b.ornat('auto')
-    expect(b.blokBoldi()).toBe(false)
-    expect(b.blokBoldi()).toBe(false)
-    expect(b.blokBoldi()).toBe(true) // standart 3 saqlanadi
+  test('an invalid limit is ignored', () => {
+    // Config validation should catch this, but this is the second line of defence
+    const m = new ModeManager('s4')
+    m.setLimits(0, -5)
+    m.set('auto')
+    expect(m.blocked()).toBe(false)
+    expect(m.blocked()).toBe(false)
+    expect(m.blocked()).toBe(true) // the default 3 is kept
   })
 })
 
-describe('ruxsat kutish muddati configdan keladi', () => {
-  test('muddat tugasa RAD etiladi, ruxsat berilmaydi', async () => {
-    // Eng muhim xulq: timeout hech qachon avtomatik ruxsatga aylanmaydi
-    const b = new PermissionManager('s5')
-    b.kutishMuddatiniOrnat(30)
-    const javob = await b.sora({
-      tur: 'buyruq',
-      amal: 'bash',
-      nishon: 'rm x',
-      sabab: 'sinov',
-      naqsh: 'rm',
+describe('the permission wait deadline comes from the config', () => {
+  test('when the deadline passes it is DENIED, permission is not granted', async () => {
+    // The most important behaviour: a timeout never turns into an automatic allow
+    const manager = new PermissionManager('s5')
+    manager.setWaitTimeout(30)
+    const answer = await manager.ask({
+      kind: 'command',
+      action: 'bash',
+      target: 'rm x',
+      reason: 'test',
+      pattern: 'rm',
     })
-    expect(javob).toBe('rad')
+    expect(answer).toBe('deny')
   })
 
-  test('noto\'g\'ri muddat e\'tiborsiz qoldiriladi', () => {
-    const b = new PermissionManager('s6')
-    // Xato tashlamasligi kerak
-    expect(() => b.kutishMuddatiniOrnat(-1)).not.toThrow()
-    expect(() => b.kutishMuddatiniOrnat(Number.NaN)).not.toThrow()
+  test('an invalid deadline is ignored', () => {
+    const manager = new PermissionManager('s6')
+    // It must not throw
+    expect(() => manager.setWaitTimeout(-1)).not.toThrow()
+    expect(() => manager.setWaitTimeout(Number.NaN)).not.toThrow()
   })
 })
 
-describe('klassifikator modeli configdan keladi', () => {
-  const modellar = [model('claude-haiku-4.5', 'anthropic'), model('gemini-2.5-flash-lite', 'google')]
+describe('the classifier model comes from the config', () => {
+  const models = [model('claude-haiku-4.5', 'anthropic'), model('gemini-2.5-flash-lite', 'google')]
 
-  test('config berilmasa avtomatik tanlanadi', () => {
-    const t = pickClassifierModel(modellar)
-    expect(t).toBeDefined()
-    // Sinalgan modellar ustuvor
-    expect(t?.model).toBe('gemini-2.5-flash-lite')
+  test('it is chosen automatically when the config gives nothing', () => {
+    const picked = pickClassifierModel(models)
+    expect(picked).toBeDefined()
+    // The tested models take priority
+    expect(picked?.model).toBe('gemini-2.5-flash-lite')
   })
 
-  test('configdagi model ustun turadi', () => {
-    const t = pickClassifierModel(modellar, 'anthropic/claude-haiku-4.5')
-    expect(t).toEqual({ provider: 'anthropic', model: 'claude-haiku-4.5' })
+  test('the model from the config wins', () => {
+    const picked = pickClassifierModel(models, 'anthropic/claude-haiku-4.5')
+    expect(picked).toEqual({ provider: 'anthropic', model: 'claude-haiku-4.5' })
   })
 
-  test('config null bo\'lsa avtomatik tanlashga qaytadi', () => {
-    const t = pickClassifierModel(modellar, null)
-    expect(t?.model).toBe('gemini-2.5-flash-lite')
+  test('a null config falls back to automatic selection', () => {
+    const picked = pickClassifierModel(models, null)
+    expect(picked?.model).toBe('gemini-2.5-flash-lite')
   })
 
-  test('buzuq config qiymati e\'tiborsiz qoldiriladi', () => {
-    // `provider/model` shakli buzilgan — avtomatik tanlashga qaytamiz
-    const t = pickClassifierModel(modellar, 'provider-siz-model')
-    expect(t?.model).toBe('gemini-2.5-flash-lite')
+  test('a malformed config value is ignored', () => {
+    // The `provider/model` shape is broken — we fall back to automatic selection
+    const picked = pickClassifierModel(models, 'model-without-provider')
+    expect(picked?.model).toBe('gemini-2.5-flash-lite')
   })
 
-  test('env o\'zgaruvchisi configdan USTUN turadi', () => {
-    // Env — vaqtinchalik nosozlikni chetlab o'tish uchun, shuning uchun
-    // doimiy sozlamani bosishi kerak
-    const oldingi = process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+  test('the env variable BEATS the config', () => {
+    // Env is for working around a temporary failure, so it has to override the
+    // permanent setting
+    const previous = process.env.PLATFORMA_KLASSIFIKATOR_MODEL
     process.env.PLATFORMA_KLASSIFIKATOR_MODEL = 'env/model'
     try {
-      const t = pickClassifierModel(modellar, 'config/model')
-      expect(t).toEqual({ provider: 'env', model: 'model' })
+      const picked = pickClassifierModel(models, 'config/model')
+      expect(picked).toEqual({ provider: 'env', model: 'model' })
     } finally {
-      if (oldingi === undefined) delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-      else process.env.PLATFORMA_KLASSIFIKATOR_MODEL = oldingi
+      if (previous === undefined) delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+      else process.env.PLATFORMA_KLASSIFIKATOR_MODEL = previous
     }
   })
 })
 
-describe('standart config qiymatlari mantiqiy', () => {
-  test('tool ro\'yxatida barcha mavjud tool\'lar bor', () => {
-    const s = defaultConfig()
-    for (const nom of ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls']) {
-      expect(s.agent.toollar.yoqilgan, `${nom} standart ro'yxatda yo'q`).toContain(nom)
+describe('the default config values are sensible', () => {
+  test('the tool list contains every existing tool', () => {
+    const config = defaultConfig()
+    for (const name of ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls']) {
+      expect(config.agent.tools.enabled, `${name} is missing from the default list`).toContain(name)
     }
   })
 
-  test('siqish standart holatda yoqilgan', () => {
-    // O'chirilgan bo'lsa uzun suhbat sig'may qoladi — bu yomon standart
-    expect(defaultConfig().agent.siqish.yoqilgan).toBe(true)
+  test('compaction is enabled by default', () => {
+    // If it were off a long conversation would stop fitting — a bad default
+    expect(defaultConfig().agent.compaction.enabled).toBe(true)
   })
 
-  test('boshlang\'ich rejim tasdiq (xavfsizroq tomon)', () => {
-    expect(defaultConfig().ruxsat.rejim).toBe('tasdiq')
+  test('the initial mode is confirm (the safer side)', () => {
+    expect(defaultConfig().permission.mode).toBe('confirm')
   })
 
-  test('saqlanadigan tokenlar zaxiradan katta emas bo\'lishi shart emas, lekin ikkalasi context window ga sig\'sin', () => {
-    const s = defaultConfig()
-    const jami = s.agent.siqish.zaxiraTokenlar + s.agent.siqish.saqlanadiganTokenlar
-    // Eng kichik keng tarqalgan context window ~128k
-    expect(jami).toBeLessThan(128_000)
+  test('the kept tokens need not be smaller than the reserve, but both must fit in the context window', () => {
+    const config = defaultConfig()
+    const total = config.agent.compaction.reserveTokens + config.agent.compaction.keptTokens
+    // The smallest widespread context window is ~128k
+    expect(total).toBeLessThan(128_000)
   })
 })

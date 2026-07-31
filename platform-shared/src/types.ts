@@ -893,7 +893,7 @@ export interface ChatSession {
 /**
  * A project — a work directory bound to a name.
  *
- * The platform creates the folder itself (`~/.platforma/loyihalar/<slug>/`);
+ * The platform creates the folder itself (`~/.platforma/projects/<slug>/`);
  * the user does not supply a path: if an arbitrary path were accepted, the
  * boundary for the agent tools could end up being `/`.
  */

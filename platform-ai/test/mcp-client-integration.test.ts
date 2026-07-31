@@ -1,14 +1,14 @@
-// MCP klienti — HAQIQIY JARAYON bilan integratsiya testi.
+// The MCP client — an integration test with a REAL PROCESS.
 //
-// `mcp-klient.test.ts` dan farqi: bu yerda `Bun.spawn` almashtirilmaydi.
-// Soxta MCP server (`fixtures/fake-mcp-server.ts`) haqiqiy jarayon bo'lib
-// ko'tariladi va stdin/stdout orqali gaplashadi.
+// The difference from `mcp-client.test.ts`: `Bun.spawn` is not swapped out
+// here. The fake MCP server (`fixtures/fake-mcp-server.ts`) is brought up as a
+// real process and talks over stdin/stdout.
 //
-// NEGA IKKI DARAJA KERAK. Birlik testlari mantiqni tekshiradi (id
-// moslashtirish, timeout, abort), lekin ular `Bun.spawn` ni CHETLAB O'TADI —
-// ya'ni "jarayon haqiqatan ko'tariladimi, stdin yozilgani serverga
-// yetadimi, jarayon O'CHADIMI" savollariga javob bermaydi. Aynan shu uchta
-// narsa ishlab chiqarishda muammo bo'ladi.
+// WHY TWO LEVELS ARE NEEDED. The unit tests check the logic (id matching,
+// timeouts, abort), but they ROUTE AROUND `Bun.spawn` — meaning they do not
+// answer the questions "does the process really come up, does what was written
+// to stdin reach the server, DOES the process go down". Those exact three
+// things are what cause trouble in production.
 
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
@@ -16,24 +16,24 @@ import { McpClient } from '../src/mcp-client.ts'
 
 const SERVER = join(import.meta.dir, 'fixtures', 'fake-mcp-server.ts')
 
-function klientYarat(env: Record<string, string> = {}, timeout = 5000): McpClient {
+function createClient(env: Record<string, string> = {}, timeout = 5000): McpClient {
   return new McpClient({
     transport: 'stdio',
-    buyruq: process.execPath, // bun
-    argumentlar: ['run', SERVER],
+    command: process.execPath, // bun
+    args: ['run', SERVER],
     env,
     handshakeTimeoutMs: timeout,
-    chaqiruvTimeoutMs: timeout,
+    callTimeoutMs: timeout,
   })
 }
 
 /**
- * PID hali tirikmi.
+ * Whether the PID is still alive.
  *
- * `kill(pid, 0)` signal yubormaydi, faqat jarayon mavjudligini tekshiradi.
- * Zombi qolmaganini shu bilan tasdiqlaymiz.
+ * `kill(pid, 0)` sends no signal, it only checks that the process exists. That
+ * is how we confirm no zombie is left behind.
  */
-function tirikmi(pid: number): boolean {
+function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
@@ -42,158 +42,160 @@ function tirikmi(pid: number): boolean {
   }
 }
 
-describe('to\'liq oqim', () => {
-  test('ulan → toollarniOl → chaqir → uz', async () => {
-    const klient = klientYarat()
+describe('the whole flow', () => {
+  test('connect → listTools → call → disconnect', async () => {
+    const client = createClient()
 
-    await klient.ulan()
-    expect(klient.malumot?.serverInfo?.name).toBe('soxta')
+    await client.connect()
+    expect(client.info?.serverInfo?.name).toBe('fake')
 
-    const toollar = await klient.toollarniOl()
-    expect(toollar.map((t) => t.name)).toEqual(['echo', 'xato_ber', 'sxemasiz'])
-    // Sxemasi yo'q tool bo'sh obyekt sxema oldi
-    expect(toollar[2]?.inputSchema).toEqual({ type: 'object', properties: {} })
+    const tools = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['echo', 'give_error', 'schemaless'])
+    // The tool with no schema got an empty object schema
+    expect(tools[2]?.inputSchema).toEqual({ type: 'object', properties: {} })
 
-    const natija = await klient.chaqir('echo', { matn: 'salom dunyo' })
-    expect(natija.content[0]?.text).toBe('echo: salom dunyo')
-    expect(natija.isError).toBe(false)
+    const result = await client.call('echo', { text: 'hello world' })
+    expect(result.content[0]?.text).toBe('echo: hello world')
+    expect(result.isError).toBe(false)
 
-    await klient.uz()
-    expect(klient.tayyormi).toBe(false)
+    await client.disconnect()
+    expect(client.isReady).toBe(false)
   }, 15_000)
 
-  test('inputSchema haqiqiy JSON Schema bo\'lib keladi', async () => {
-    const klient = klientYarat()
-    await klient.ulan()
+  test('inputSchema arrives as a real JSON Schema', async () => {
+    const client = createClient()
+    await client.connect()
 
-    const toollar = await klient.toollarniOl()
-    const echo = toollar.find((t) => t.name === 'echo')
-    // Bu obyekt to'g'ridan-to'g'ri agent tooliga `parameters` bo'lib boradi
+    const tools = await client.listTools()
+    const echo = tools.find((t) => t.name === 'echo')
+    // This object goes straight to the agent tool as `parameters`
     expect(echo?.inputSchema).toEqual({
       type: 'object',
-      properties: { matn: { type: 'string' } },
-      required: ['matn'],
+      properties: { text: { type: 'string' } },
+      required: ['text'],
     })
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 
-  test('isError natija tashlanmaydi, bayroq bilan keladi', async () => {
-    const klient = klientYarat()
-    await klient.ulan()
+  test('an isError result is not thrown, it comes back with a flag', async () => {
+    const client = createClient()
+    await client.connect()
 
-    const natija = await klient.chaqir('xato_ber', {})
-    expect(natija.isError).toBe(true)
-    expect(natija.content[0]?.text).toBe('ataylab xato')
+    const result = await client.call('give_error', {})
+    expect(result.isError).toBe(true)
+    expect(result.content[0]?.text).toBe('deliberate error')
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 
-  test('noma\'lum tool JSON-RPC xatosi beradi', async () => {
-    const klient = klientYarat()
-    await klient.ulan()
+  test('an unknown tool gives a JSON-RPC error', async () => {
+    const client = createClient()
+    await client.connect()
 
-    await expect(klient.chaqir('yoq_bunday', {})).rejects.toThrow(/noma'lum tool/)
-    // Ulanish TIRIK qoladi — bitta xato chaqiruv sessiyani buzmasin
-    expect(klient.tayyormi).toBe(true)
+    await expect(client.call('no_such_thing', {})).rejects.toThrow(/unknown tool/)
+    // The connection stays ALIVE — one failing call must not break the session
+    expect(client.isReady).toBe(true)
 
-    const keyin = await klient.chaqir('echo', { matn: 'hali ishlaydi' })
-    expect(keyin.content[0]?.text).toBe('echo: hali ishlaydi')
+    const after = await client.call('echo', { text: 'still works' })
+    expect(after.content[0]?.text).toBe('echo: still works')
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 
-  test('ketma-ket chaqiruvlar aralashmaydi', async () => {
-    const klient = klientYarat()
-    await klient.ulan()
+  test('consecutive calls do not get mixed up', async () => {
+    const client = createClient()
+    await client.connect()
 
-    const natijalar = await Promise.all([
-      klient.chaqir('echo', { matn: 'bir' }),
-      klient.chaqir('echo', { matn: 'ikki' }),
-      klient.chaqir('echo', { matn: 'uch' }),
+    const results = await Promise.all([
+      client.call('echo', { text: 'one' }),
+      client.call('echo', { text: 'two' }),
+      client.call('echo', { text: 'three' }),
     ])
 
-    expect(natijalar.map((n) => n.content[0]?.text)).toEqual([
-      'echo: bir',
-      'echo: ikki',
-      'echo: uch',
+    expect(results.map((r) => r.content[0]?.text)).toEqual([
+      'echo: one',
+      'echo: two',
+      'echo: three',
     ])
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 })
 
-describe('jarayon lifecycle', () => {
-  test('uz() jarayonni HAQIQATAN o\'chiradi (zombi qolmaydi)', async () => {
-    // Jarayonni o'zimiz ko'taramiz, PID ni bilish uchun
+describe('process lifecycle', () => {
+  test('disconnect() REALLY kills the process (no zombie is left)', async () => {
+    // We bring the process up ourselves, so we know the PID
     const proc = Bun.spawn([process.execPath, 'run', SERVER], {
       stdin: 'pipe',
       stdout: 'pipe',
       stderr: 'pipe',
     })
     const pid = proc.pid
-    expect(tirikmi(pid)).toBe(true)
+    expect(isAlive(pid)).toBe(true)
 
-    // stdin yopilsa fixture o'zi chiqadi — transport `yop()` da shunday qiladi
+    // When stdin closes the fixture exits by itself — that is what the
+    // transport does in `close()`
     proc.stdin.end()
     await proc.exited
 
-    expect(tirikmi(pid)).toBe(false)
+    expect(isAlive(pid)).toBe(false)
   }, 15_000)
 
-  test('handshake muvaffaqiyatsiz bo\'lsa jarayon ortda qolmaydi', async () => {
-    // Jim server — javob bermaydi, timeout bo'ladi
-    const klient = klientYarat({ SOXTA_JIM: '1' }, 500)
+  test('when the handshake fails no process is left behind', async () => {
+    // A silent server — it does not answer, so a timeout happens
+    const client = createClient({ FAKE_SILENT: '1' }, 500)
 
-    await expect(klient.ulan()).rejects.toThrow(/did not respond/)
-    expect(klient.tayyormi).toBe(false)
+    await expect(client.connect()).rejects.toThrow(/did not respond/)
+    expect(client.isReady).toBe(false)
 
-    // `ulan()` ichida `uz()` chaqirilgan — takroriy chaqiruv xato bermasligi kerak
-    await klient.uz()
+    // `disconnect()` was called inside `connect()` — calling it again must not
+    // give an error
+    await client.disconnect()
   }, 15_000)
 
-  test('server stderr ga yozib chiqsa sabab xato matnida', async () => {
-    const klient = klientYarat({ SOXTA_STDERR: 'kerakli paket topilmadi' }, 2000)
+  test('if the server writes to stderr the reason is in the error text', async () => {
+    const client = createClient({ FAKE_STDERR: 'the required package was not found' }, 2000)
 
-    await expect(klient.ulan()).rejects.toThrow(/kerakli paket topilmadi/)
+    await expect(client.connect()).rejects.toThrow(/the required package was not found/)
   }, 15_000)
 
-  test('mavjud bo\'lmagan buyruq tushunarli xato beradi', async () => {
-    const klient = new McpClient({
+  test('a non-existent command gives an understandable error', async () => {
+    const client = new McpClient({
       transport: 'stdio',
-      buyruq: '/yoq/bunday/buyruq-mcp',
+      command: '/no/such/command-mcp',
       handshakeTimeoutMs: 2000,
     })
 
-    // Bun.spawn ENOENT bilan yiqiladi yoki jarayon darhol o'ladi —
-    // ikkala holatda ham `ulan()` XATO TASHLASHI kerak, osilib qolmasligi
-    await expect(klient.ulan()).rejects.toThrow()
-    expect(klient.tayyormi).toBe(false)
+    // Bun.spawn fails with ENOENT or the process dies immediately — in both
+    // cases `connect()` MUST THROW, not hang
+    await expect(client.connect()).rejects.toThrow()
+    expect(client.isReady).toBe(false)
   }, 15_000)
 
-  test('SIGTERM ga javob bermagan jarayon SIGKILL bilan o\'ladi', async () => {
-    const klient = klientYarat({ SOXTA_SIGTERMSIZ: '1' })
-    await klient.ulan()
+  test('a process that does not answer SIGTERM dies with SIGKILL', async () => {
+    const client = createClient({ FAKE_NO_SIGTERM: '1' })
+    await client.connect()
 
-    const boshlanish = Date.now()
-    await klient.uz()
-    const ketgan = Date.now() - boshlanish
+    const start = Date.now()
+    await client.disconnect()
+    const elapsed = Date.now() - start
 
-    // SIGTERM ishlamadi → 2s kutib SIGKILL. Ya'ni yopish ~2s davom etadi,
-    // lekin ABADIY OSILIB QOLMAYDI — shu asosiy tekshiruv.
-    expect(ketgan).toBeGreaterThan(1500)
-    expect(klient.tayyormi).toBe(false)
+    // SIGTERM did not work → wait 2s then SIGKILL. That is, closing takes ~2s
+    // but IT DOES NOT HANG FOREVER — that is the main check.
+    expect(elapsed).toBeGreaterThan(1500)
+    expect(client.isReady).toBe(false)
   }, 15_000)
 
-  test('stdout dagi log qatori protokolni buzmaydi', async () => {
-    const klient = klientYarat({ SOXTA_AXLAT: '1' })
+  test('a log line on stdout does not break the protocol', async () => {
+    const client = createClient({ FAKE_GARBAGE: '1' })
 
-    await klient.ulan()
-    expect(klient.tayyormi).toBe(true)
+    await client.connect()
+    expect(client.isReady).toBe(true)
 
-    const natija = await klient.chaqir('echo', { matn: 'toza' })
-    expect(natija.content[0]?.text).toBe('echo: toza')
+    const result = await client.call('echo', { text: 'clean' })
+    expect(result.content[0]?.text).toBe('echo: clean')
 
-    await klient.uz()
+    await client.disconnect()
   }, 15_000)
 })

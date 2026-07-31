@@ -83,7 +83,7 @@ A `chat.send` arriving over WS takes exactly the same path
 ### Tools
 
 The agent uses `read`, `write`, `edit` and `bash`. Each session gets its own
-work directory: `~/.platforma/ishlar/<sessionId>/` (relocatable with the
+work directory: `~/.platforma/work/<sessionId>/` (relocatable with the
 `PLATFORM_WORKS` env variable).
 
 Every tool call is recorded in the audit log: `read` → read, `write`/`edit` →

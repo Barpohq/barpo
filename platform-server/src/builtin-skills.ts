@@ -25,7 +25,7 @@ import { cpSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs
 import { dirname, join } from 'node:path'
 
 /** The `url` field of the catalog source — this is what the UI shows */
-export const BUILTIN_SOURCE_URL = 'platforma://standart'
+export const BUILTIN_SOURCE_URL = 'platforma://builtin'
 
 /**
  * The `owner`/`repo` values of the source row.
@@ -35,7 +35,7 @@ export const BUILTIN_SOURCE_URL = 'platforma://standart'
  * would be created on every start-up.
  */
 export const BUILTIN_OWNER = 'platforma'
-export const BUILTIN_REPO = 'standart-skilllar'
+export const BUILTIN_REPO = 'builtin-skills'
 
 /**
  * The directory the builtin skills live in (inside the repo).

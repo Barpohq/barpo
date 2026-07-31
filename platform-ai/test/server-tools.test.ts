@@ -1,12 +1,12 @@
-// `serverList` tool'ining xulqi: formatlash, manba inversiyasi, shartli
-// e'lon qilinishi va promptga mosligi.
+// The behaviour of the `serverList` tool: formatting, the source inversion,
+// its conditional declaration and its agreement with the prompt.
 //
-// Bu tool'da fayl tizimi ham, SSH ham yo'q — u faqat chaqiruvchi bergan
-// funksiyaga tayanadi. Shu sababli testlar soxta manba bilan ishlaydi va
-// hech qanday tashqi holatga bog'lanmaydi.
+// This tool has neither a file system nor SSH — it relies only on the function
+// the caller supplies. That is why the tests work with a fake provider and
+// depend on no external state.
 
 import { describe, expect, test } from 'bun:test'
-import { AGENT_SISTEM_PROMPT } from '../src/agent.ts'
+import { AGENT_SYSTEM_PROMPT } from '../src/agent.ts'
 import {
   SERVER_PROMPT_SECTION,
   createServerListTool,
@@ -17,149 +17,150 @@ import {
 } from '../src/server-tools.ts'
 
 const web: ServerRecord = { name: 'web-1', host: '10.0.0.5', port: 22, username: 'root' }
-const db: ServerRecord = { name: 'db-main', host: 'db.misol.uz', port: 2222, username: 'deploy' }
+const db: ServerRecord = { name: 'db-main', host: 'db.example.com', port: 2222, username: 'deploy' }
 
-/** Tool'ni `agent.ts` chaqiradigan shaklda ishga tushiradi */
-async function toolniChaqir(
+/** Runs the tool in the shape `agent.ts` calls it */
+async function callTool(
   tool: ReturnType<typeof createServerListTool>,
-): Promise<{ matn: string; soni: number | undefined }> {
-  const natija = await tool.execute(
+): Promise<{ text: string; count: number | undefined }> {
+  const result = await tool.execute(
     'id-1',
     {},
     undefined,
     undefined,
-    { env: { cwd: '/istalgan/joy' } },
+    { env: { cwd: '/any/where' } },
   )
-  const matn = natija.content.map((b) => ('text' in b ? b.text : '')).join('')
-  return { matn, soni: natija.details?.soni }
+  const text = result.content.map((b) => ('text' in b ? b.text : '')).join('')
+  return { text, count: result.details?.count }
 }
 
 describe('serversToText', () => {
-  test('ustunlar va qiymatlar chiqadi', () => {
-    const matn = serversToText([web, db])
-    expect(matn).toContain('NOM')
-    expect(matn).toContain('HOST')
-    expect(matn).toContain('PORT')
-    expect(matn).toContain('USER')
-    expect(matn).toContain('web-1')
-    expect(matn).toContain('10.0.0.5')
-    expect(matn).toContain('db.misol.uz')
-    expect(matn).toContain('deploy')
+  test('the columns and the values come out', () => {
+    const text = serversToText([web, db])
+    expect(text).toContain('NAME')
+    expect(text).toContain('HOST')
+    expect(text).toContain('PORT')
+    expect(text).toContain('USER')
+    expect(text).toContain('web-1')
+    expect(text).toContain('10.0.0.5')
+    expect(text).toContain('db.example.com')
+    expect(text).toContain('deploy')
   })
 
-  test('standart bo\'lmagan port ham ko\'rinadi', () => {
-    // Agent `ssh -p` kerakligini bilishi uchun port har doim chiqadi
+  test('a non-default port is shown too', () => {
+    // The port is always shown so the agent knows whether `ssh -p` is needed
     expect(serversToText([db])).toContain('2222')
   })
 
-  test('har server alohida qatorda', () => {
-    const qatorlar = serversToText([web, db]).split('\n')
-    expect(qatorlar.filter((q) => q.startsWith('web-1'))).toHaveLength(1)
-    expect(qatorlar.filter((q) => q.startsWith('db-main'))).toHaveLength(1)
+  test('each server sits on its own line', () => {
+    const lines = serversToText([web, db]).split('\n')
+    expect(lines.filter((l) => l.startsWith('web-1'))).toHaveLength(1)
+    expect(lines.filter((l) => l.startsWith('db-main'))).toHaveLength(1)
   })
 
-  test('bo\'sh ro\'yxat — xato emas, tushuntirish', () => {
-    const matn = serversToText([])
-    expect(matn).toContain('No servers are connected')
-    // Agent foydalanuvchiga nima qilish kerakligini ayta olsin
-    expect(matn).toContain('Serverlar')
+  test('an empty list — not an error, an explanation', () => {
+    const text = serversToText([])
+    expect(text).toContain('No servers are connected')
+    // So the agent can tell the user what to do
+    expect(text).toContain('Servers')
   })
 
-  test('ssh ishlatish yo\'riqnomasi ro\'yxat bilan birga keladi', () => {
-    // Nomni olgan agent u bilan nima qilishni ham bilsin
+  test('the ssh instruction comes along with the list', () => {
+    // An agent that got a name should also know what to do with it
     expect(serversToText([web])).toContain('ssh')
   })
 })
 
-describe('serverList tool', () => {
-  test('manbadagi serverlarni qaytaradi', async () => {
-    const { matn, soni } = await toolniChaqir(createServerListTool(() => [web, db]))
-    expect(matn).toContain('web-1')
-    expect(matn).toContain('db-main')
-    expect(soni).toBe(2)
+describe('the serverList tool', () => {
+  test('it returns the servers from the provider', async () => {
+    const { text, count } = await callTool(createServerListTool(() => [web, db]))
+    expect(text).toContain('web-1')
+    expect(text).toContain('db-main')
+    expect(count).toBe(2)
   })
 
-  test('asinxron manba ham qo\'llanadi', async () => {
-    const { matn, soni } = await toolniChaqir(
+  test('an async provider is supported too', async () => {
+    const { text, count } = await callTool(
       createServerListTool(async () => [web]),
     )
-    expect(matn).toContain('web-1')
-    expect(soni).toBe(1)
+    expect(text).toContain('web-1')
+    expect(count).toBe(1)
   })
 
-  test('manba HAR CHAQIRUVDA qayta o\'qiladi', async () => {
-    // Foydalanuvchi suhbat davomida server qo'shishi mumkin — agent
-    // eskirgan ro'yxatga qarab qolmasin
-    let royxat: ServerRecord[] = [web]
-    const tool = createServerListTool(() => royxat)
+  test('the provider is read afresh ON EVERY CALL', async () => {
+    // The user may add a server during the conversation — the agent must not
+    // be left looking at a stale list
+    let list: ServerRecord[] = [web]
+    const tool = createServerListTool(() => list)
 
-    const birinchi = await toolniChaqir(tool)
-    expect(birinchi.soni).toBe(1)
+    const first = await callTool(tool)
+    expect(first.count).toBe(1)
 
-    royxat = [web, db]
-    const ikkinchi = await toolniChaqir(tool)
-    expect(ikkinchi.soni).toBe(2)
-    expect(ikkinchi.matn).toContain('db-main')
+    list = [web, db]
+    const second = await callTool(tool)
+    expect(second.count).toBe(2)
+    expect(second.text).toContain('db-main')
   })
 
-  test('bo\'sh manba bilan ham xato tashlamaydi', async () => {
-    const { matn, soni } = await toolniChaqir(createServerListTool(() => []))
-    expect(soni).toBe(0)
-    expect(matn).toContain('No servers are connected')
+  test('it does not throw with an empty provider either', async () => {
+    const { text, count } = await callTool(createServerListTool(() => []))
+    expect(count).toBe(0)
+    expect(text).toContain('No servers are connected')
   })
 
-  test('parametrsiz chaqiriladi — sxema bo\'sh obyekt', () => {
+  test('it is called without parameters — the schema is an empty object', () => {
     const tool = createServerListTool(() => [])
     expect(tool.name).toBe('serverList')
     expect(tool.parameters).toBeDefined()
   })
 })
 
-describe('shartli e\'lon qilinish', () => {
-  test('manba berilmasa tool UMUMAN yo\'q', () => {
-    // "Bor, lekin har doim bo'sh" dan yaxshiroq: model yo'q imkoniyatni
-    // qayta-qayta urinmaydi
+describe('conditional declaration', () => {
+  test('with no provider the tool is NOT THERE AT ALL', () => {
+    // Better than "present, but always empty": the model then does not keep
+    // trying a capability that is not there
     expect(serverToolsRaw(undefined)).toHaveLength(0)
     expect(serverTools(undefined)).toHaveLength(0)
   })
 
-  test('manba berilsa bitta tool e\'lon qilinadi', () => {
-    const toollar = serverToolsRaw(() => [web])
-    expect(toollar).toHaveLength(1)
-    expect(toollar[0]!.name).toBe('serverList')
+  test('with a provider one tool is declared', () => {
+    const tools = serverToolsRaw(() => [web])
+    expect(tools).toHaveLength(1)
+    expect(tools[0]!.name).toBe('serverList')
   })
 
-  test('kontekst biriktirilgan shakl ham ishlaydi', async () => {
-    const toollar = serverTools(() => [web])
-    expect(toollar).toHaveLength(1)
-    const natija = await (toollar[0]! as unknown as {
+  test('the shape with the context attached works too', async () => {
+    const tools = serverTools(() => [web])
+    expect(tools).toHaveLength(1)
+    const result = await (tools[0]! as unknown as {
       execute: (id: string, p: unknown) => Promise<{ content: { text?: string }[] }>
     }).execute('id-1', {})
-    expect(natija.content.map((b) => b.text ?? '').join('')).toContain('web-1')
+    expect(result.content.map((b) => b.text ?? '').join('')).toContain('web-1')
   })
 })
 
-describe('prompt bilan moslik', () => {
-  test('serverlarBor=true bo\'lsa tool prompt ro\'yxatida bor', () => {
-    const prompt = AGENT_SISTEM_PROMPT('/ish', undefined, undefined, undefined, true)
+describe('agreement with the prompt', () => {
+  test('with hasServers=true the tool is in the prompt list', () => {
+    const prompt = AGENT_SYSTEM_PROMPT('/work', undefined, undefined, undefined, true)
     expect(prompt).toContain('serverList')
-    // Ko'rsatma ham tushsin — faqat nom yetarli emas
+    // The instruction has to land too — the name alone is not enough
     expect(prompt).toContain('NEVER guess a server name')
   })
 
-  test('serverlarBor=false bo\'lsa prompt uni umuman tilga olmaydi', () => {
-    // Tool yo'q bo'lsa u haqda yozish modelni yo'q imkoniyatga undardi
-    const prompt = AGENT_SISTEM_PROMPT('/ish', undefined, undefined, undefined, false)
+  test('with hasServers=false the prompt does not mention it at all', () => {
+    // Writing about a tool that is not there would push the model towards a
+    // capability it does not have
+    const prompt = AGENT_SYSTEM_PROMPT('/work', undefined, undefined, undefined, false)
     expect(prompt).not.toContain('serverList')
   })
 
-  test('standart holat — bayroqsiz chaqiruvda tool tilga olinmaydi', () => {
-    expect(AGENT_SISTEM_PROMPT('/ish')).not.toContain('serverList')
+  test('the default — a call without the flag does not mention the tool', () => {
+    expect(AGENT_SYSTEM_PROMPT('/work')).not.toContain('serverList')
   })
 
-  test('prompt qismidagi tool nomi haqiqiy tool nomiga teng', () => {
-    // Ikkisi bir faylda tursa ham, nom o'zgarsa test buni ushlaydi
-    const nom = serverToolsRaw(() => [])[0]?.name ?? 'serverList'
-    expect(SERVER_PROMPT_SECTION.list.join(' ')).toContain(nom)
+  test('the tool name in the prompt section equals the real tool name', () => {
+    // Even though the two sit in one file, this test catches a renamed tool
+    const name = serverToolsRaw(() => [])[0]?.name ?? 'serverList'
+    expect(SERVER_PROMPT_SECTION.list.join(' ')).toContain(name)
   })
 })

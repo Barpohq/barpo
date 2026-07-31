@@ -1,181 +1,183 @@
-// Ruxsat QAROR MANBASI yozib olinadimi.
+// Is the permission DECISION ORIGIN recorded?
 //
-// "Bu buyruq nega bajarildi?" — foydalanuvchining eng muhim savoli, va
-// ilgari unga javob hech qayerda saqlanmasdi: `sora()` faqat
-// `'allow' | 'deny'` qaytarardi, ya'ni auto rejim ruxsat berdimi,
-// foydalanuvchi bosdimi yoki "har doim" naqshi ishladimi — hammasi bir xil
-// ko'rinardi. Bu test har yo'l uchun manba yozilishini majburlaydi.
+// "Why was this command run?" — the user's most important question, and the
+// answer used to be stored nowhere: `ask()` returned only
+// `'allow' | 'deny'`, so whether auto mode allowed it, the user pressed a
+// button, or an "always" pattern matched — all of it looked the same. This
+// test forces an origin to be recorded for every path.
 
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { PermissionDecision } from '@platforma/shared'
 import { PermissionManager } from '../src/permission.ts'
 
-function sorash(naqsh = 'bash:ls') {
+function ask(pattern = 'bash:ls') {
   return {
-    tur: 'buyruq' as const,
-    amal: 'bash',
-    nishon: 'ls',
-    sabab: 'sinov',
-    naqsh,
+    kind: 'command' as const,
+    action: 'bash',
+    target: 'ls',
+    reason: 'test',
+    pattern,
   }
 }
 
-let boshqaruv: PermissionManager
-let qarorlar: PermissionDecision[]
+let manager: PermissionManager
+let decisions: PermissionDecision[]
 
 beforeEach(() => {
-  boshqaruv = new PermissionManager('sinov-sessiya')
-  qarorlar = []
-  boshqaruv.ruxsatQarorlariniKuzat((q) => qarorlar.push(q))
+  manager = new PermissionManager('test-session')
+  decisions = []
+  manager.subscribeDecisions((d) => decisions.push(d))
 })
 
-describe('ruxsat qarori manbasi', () => {
-  test("foydalanuvchi ruxsat berdi — manba 'foydalanuvchi'", async () => {
-    const kutilmoqda = boshqaruv.sora(sorash())
-    const sorov = boshqaruv.kutayotganSorovlar[0]!
-    boshqaruv.javobBer(sorov.id, 'allow')
+describe('permission decision origin', () => {
+  test("the user granted permission — origin is 'user'", async () => {
+    const waiting = manager.ask(ask())
+    const request = manager.pendingRequests[0]!
+    manager.answer(request.id, 'allow')
 
-    expect(await kutilmoqda).toBe('allow')
-    expect(qarorlar).toHaveLength(1)
-    expect(qarorlar[0]).toMatchObject({
-      sorovId: sorov.id,
-      manba: 'foydalanuvchi',
-      berildi: true,
-      naqsh: 'bash:ls',
+    expect(await waiting).toBe('allow')
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({
+      requestId: request.id,
+      origin: 'user',
+      granted: true,
+      pattern: 'bash:ls',
     })
-    expect(qarorlar[0]!.vaqt).toBeString()
+    expect(decisions[0]!.time).toBeString()
   })
 
-  test('"har doim" ikki xil manba beradi: bosilgani va keyingi ishlashi', async () => {
-    const birinchi = boshqaruv.sora(sorash())
-    boshqaruv.javobBer(boshqaruv.kutayotganSorovlar[0]!.id, 'always')
-    expect(await birinchi).toBe('allow')
-    expect(qarorlar[0]).toMatchObject({ manba: 'foydalanuvchi-hardoim', berildi: true })
+  test('"always" gives two different origins: the press and its later use', async () => {
+    const first = manager.ask(ask())
+    manager.answer(manager.pendingRequests[0]!.id, 'always')
+    expect(await first).toBe('allow')
+    expect(decisions[0]).toMatchObject({ origin: 'user-always', granted: true })
 
-    // Ikkinchi marta so'ralmaydi — lekin qaror baribir yozilishi kerak,
-    // aks holda bajarilgan amal izsiz qolardi
-    expect(await boshqaruv.sora(sorash())).toBe('allow')
-    expect(qarorlar).toHaveLength(2)
-    expect(qarorlar[1]).toMatchObject({ manba: 'always', berildi: true, naqsh: 'bash:ls' })
-    expect(qarorlar[1]!.sorovId).toBeUndefined()
+    // It is not asked a second time — but the decision still has to be
+    // recorded, otherwise the action that ran would leave no trace
+    expect(await manager.ask(ask())).toBe('allow')
+    expect(decisions).toHaveLength(2)
+    expect(decisions[1]).toMatchObject({ origin: 'always', granted: true, pattern: 'bash:ls' })
+    expect(decisions[1]!.requestId).toBeUndefined()
   })
 
-  test("rad etish yozib olinadi", async () => {
-    const kutilmoqda = boshqaruv.sora(sorash())
-    boshqaruv.javobBer(boshqaruv.kutayotganSorovlar[0]!.id, 'deny')
+  test('a denial is recorded', async () => {
+    const waiting = manager.ask(ask())
+    manager.answer(manager.pendingRequests[0]!.id, 'deny')
 
-    expect(await kutilmoqda).toBe('deny')
-    expect(qarorlar[0]).toMatchObject({ manba: 'deny', berildi: false })
+    expect(await waiting).toBe('deny')
+    expect(decisions[0]).toMatchObject({ origin: 'denied', granted: false })
   })
 
-  test("muddat tugashi ham qaror — jimgina yo'qolmaydi", async () => {
-    boshqaruv.kutishMuddatiniOrnat(10)
-    expect(await boshqaruv.sora(sorash())).toBe('deny')
-    expect(qarorlar[0]).toMatchObject({ manba: 'muddat', berildi: false })
+  test('a timeout is a decision too — it does not vanish silently', async () => {
+    manager.setWaitTimeout(10)
+    expect(await manager.ask(ask())).toBe('deny')
+    expect(decisions[0]).toMatchObject({ origin: 'timeout', granted: false })
   })
 
-  test("sessiya yopilganda kutayotgan so'rov yozib olinadi", async () => {
-    const kutilmoqda = boshqaruv.sora(sorash())
-    boshqaruv.close()
+  test('a pending request is recorded when the session closes', async () => {
+    const waiting = manager.ask(ask())
+    manager.close()
 
-    expect(await kutilmoqda).toBe('deny')
-    // `bekor`, `rad` EMAS: sessiya tashqaridan yopilgan (reestr TTL,
-    // jarayon to'xtashi) — foydalanuvchi bu amalni rad etmagan. Buni
-    // "siz rad etdingiz" deb yozish qilinmagan ishni unga yopishtirardi.
-    expect(qarorlar[0]).toMatchObject({ manba: 'bekor', berildi: false })
+    expect(await waiting).toBe('deny')
+    // `cancelled`, NOT `denied`: the session was closed from outside (registry
+    // TTL, the process stopping) — the user did not deny this action. Writing
+    // that down as "you denied it" would pin on them something they never did.
+    expect(decisions[0]).toMatchObject({ origin: 'cancelled', granted: false })
   })
 
-  test("oqim bekor qilinsa so'rov DARHOL yopiladi", async () => {
+  test('the request is closed IMMEDIATELY when the stream is cancelled', async () => {
     // ┌──────────────────────────────────────────────────────────────────┐
-    // │ Bu testning sababi og'ir. Ilgari `sora()` bekor qilishni umuman  │
-    // │ ko'rmasdi: "To'xtatish" bosilgan oqim shu yerda 5 DAQIQA osilib  │
-    // │ turardi. O'sha vaqt ichida:                                      │
-    // │   - eski oqimning kartasi UI'da tirik qolib, bosilsa            │
-    // │     foydalanuvchi TO'XTATGAN buyruq bajarilardi;                 │
-    // │   - muddat tugagach qaror YANGI oqimning tool kartasiga yozilib, │
-    // │     "kim ruxsat berdi" izi yolg'on bo'lardi.                     │
+    // │ The reason for this test is a heavy one. `ask()` used to not see │
+    // │ cancellation at all: a stream whose "Stop" was pressed would     │
+    // │ hang here for 5 MINUTES. During that time:                       │
+    // │   - the old stream's card stayed alive in the UI, and pressing   │
+    // │     it would RUN the command the user had STOPPED;               │
+    // │   - once the deadline passed the decision was written onto the   │
+    // │     NEW stream's tool card, making the "who granted permission"  │
+    // │     trail a lie.                                                 │
     // └──────────────────────────────────────────────────────────────────┘
-    const boshqaruvchi = new AbortController()
-    const qaytar: PermissionDecision[] = []
-    const b = new PermissionManager('bekor-sessiya')
-    b.ruxsatQarorlariniKuzat((q) => qaytar.push(q))
-    // Signal klassifikator konteksti orqali keladi (agent.ts shunday beradi)
-    b.klassifikatorniUla({
-      rejim: { rejim: 'tasdiq' } as never,
-      suhbat: [],
+    const controller = new AbortController()
+    const collected: PermissionDecision[] = []
+    const m = new PermissionManager('cancel-session')
+    m.subscribeDecisions((d) => collected.push(d))
+    // The signal arrives through the classifier context (that is how agent.ts
+    // supplies it)
+    m.setClassifierContext({
+      mode: { mode: 'confirm' } as never,
+      conversation: [],
       workDir: '/tmp',
-      signal: boshqaruvchi.signal,
+      signal: controller.signal,
     })
 
-    const kutilmoqda = b.sora(sorash('bash:ssh'))
-    expect(b.kutayotganSorovlar).toHaveLength(1)
+    const waiting = m.ask(ask('bash:ssh'))
+    expect(m.pendingRequests).toHaveLength(1)
 
-    boshqaruvchi.abort()
+    controller.abort()
 
-    expect(await kutilmoqda).toBe('deny')
-    // So'rov ro'yxatdan chiqdi — UI uni qayta tiklab ko'rsatmaydi
-    expect(b.kutayotganSorovlar).toHaveLength(0)
-    // `bekor`, `rad` EMAS: foydalanuvchi bu amalni rad etmagan
-    expect(qaytar).toHaveLength(1)
-    expect(qaytar[0]).toMatchObject({ manba: 'bekor', berildi: false })
+    expect(await waiting).toBe('deny')
+    // The request left the list — the UI will not restore and show it
+    expect(m.pendingRequests).toHaveLength(0)
+    // `cancelled`, NOT `denied`: the user did not deny this action
+    expect(collected).toHaveLength(1)
+    expect(collected[0]).toMatchObject({ origin: 'cancelled', granted: false })
   })
 
-  test('allaqachon bekor qilingan oqimda so\'rov umuman ro\'yxatga tushmaydi', async () => {
-    const boshqaruvchi = new AbortController()
-    boshqaruvchi.abort()
-    const b = new PermissionManager('bekor-2')
-    const qaytar: PermissionDecision[] = []
-    b.ruxsatQarorlariniKuzat((q) => qaytar.push(q))
-    b.klassifikatorniUla({
-      rejim: { rejim: 'tasdiq' } as never,
-      suhbat: [],
+  test('on an already cancelled stream the request never enters the list', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const m = new PermissionManager('cancel-2')
+    const collected: PermissionDecision[] = []
+    m.subscribeDecisions((d) => collected.push(d))
+    m.setClassifierContext({
+      mode: { mode: 'confirm' } as never,
+      conversation: [],
       workDir: '/tmp',
-      signal: boshqaruvchi.signal,
+      signal: controller.signal,
     })
 
-    expect(await b.sora(sorash())).toBe('deny')
-    expect(b.kutayotganSorovlar).toHaveLength(0)
-    expect(qaytar[0]?.manba).toBe('bekor')
+    expect(await m.ask(ask())).toBe('deny')
+    expect(m.pendingRequests).toHaveLength(0)
+    expect(collected[0]?.origin).toBe('cancelled')
   })
 
-  test('javob berilgan so\'rov keyin bekor qilinsa IKKINCHI qaror yozilmaydi', async () => {
-    const boshqaruvchi = new AbortController()
-    const b = new PermissionManager('bekor-3')
-    const qaytar: PermissionDecision[] = []
-    b.ruxsatQarorlariniKuzat((q) => qaytar.push(q))
-    b.klassifikatorniUla({
-      rejim: { rejim: 'tasdiq' } as never,
-      suhbat: [],
+  test('cancelling an already answered request writes NO SECOND decision', async () => {
+    const controller = new AbortController()
+    const m = new PermissionManager('cancel-3')
+    const collected: PermissionDecision[] = []
+    m.subscribeDecisions((d) => collected.push(d))
+    m.setClassifierContext({
+      mode: { mode: 'confirm' } as never,
+      conversation: [],
       workDir: '/tmp',
-      signal: boshqaruvchi.signal,
+      signal: controller.signal,
     })
 
-    const kutilmoqda = b.sora(sorash())
-    b.javobBer(b.kutayotganSorovlar[0]!.id, 'allow')
-    expect(await kutilmoqda).toBe('allow')
+    const waiting = m.ask(ask())
+    m.answer(m.pendingRequests[0]!.id, 'allow')
+    expect(await waiting).toBe('allow')
 
-    boshqaruvchi.abort()
-    // Bitta so'rov — bitta qaror. Aks holda bazadagi to'g'ri yozuv
-    // "bekor" bilan ustiga yozilardi.
-    expect(qaytar).toHaveLength(1)
-    expect(qaytar[0]?.manba).toBe('foydalanuvchi')
+    controller.abort()
+    // One request — one decision. Otherwise the correct row in the database
+    // would be overwritten with "cancelled".
+    expect(collected).toHaveLength(1)
+    expect(collected[0]?.origin).toBe('user')
   })
 
-  test("qat'iy taqiq alohida manba bilan yoziladi", () => {
-    boshqaruv.taqiqlanganiniYoz('rm -rf /')
-    expect(qarorlar[0]).toMatchObject({
-      manba: 'taqiqlangan',
-      berildi: false,
-      naqsh: 'rm -rf /',
+  test('a hard deny is recorded with its own origin', () => {
+    manager.recordForbidden('rm -rf /')
+    expect(decisions[0]).toMatchObject({
+      origin: 'forbidden',
+      granted: false,
+      pattern: 'rm -rf /',
     })
   })
 
-  test("kuzatuvchi xatosi ruxsat oqimini buzmaydi", async () => {
-    boshqaruv.ruxsatQarorlariniKuzat(() => {
-      throw new Error('kuzatuvchi yiqildi')
+  test('a listener error does not break the permission flow', async () => {
+    manager.subscribeDecisions(() => {
+      throw new Error('the listener failed')
     })
-    const kutilmoqda = boshqaruv.sora(sorash())
-    boshqaruv.javobBer(boshqaruv.kutayotganSorovlar[0]!.id, 'allow')
-    expect(await kutilmoqda).toBe('allow')
+    const waiting = manager.ask(ask())
+    manager.answer(manager.pendingRequests[0]!.id, 'allow')
+    expect(await waiting).toBe('allow')
   })
 })

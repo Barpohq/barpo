@@ -159,7 +159,7 @@
       "type": "object",
       "properties": {
         "workDir": {
-          "description": "Root directory the agent tools work in. When `null`, `~/.platforma/ishlar/` is used.",
+          "description": "Root directory the agent tools work in. When `null`, `~/.platforma/work/` is used.",
           "default": null,
           "type": [
             "string",

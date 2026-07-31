@@ -1,41 +1,42 @@
-// Klassifikator uchun model tanlash.
+// Model selection for the classifier.
 //
-// Bu mantiq jonli sinovda bir necha marta tuzatildi — test o'sha topilmalarni
-// mustahkamlaydi, aks holda kelajakda "arzonroq" model tanlanib qolishi mumkin.
+// This logic was corrected several times during live testing — the test locks
+// those findings in, otherwise a "cheaper" model could get picked in the
+// future.
 
 import { afterEach, describe, expect, test } from 'bun:test'
 import type { ModelInfo } from '@platforma/shared'
 import { pickClassifierModel } from '../src/classifier.ts'
 
-const ASL_ENV = process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+const ORIGINAL_ENV = process.env.PLATFORMA_KLASSIFIKATOR_MODEL
 
 afterEach(() => {
-  if (ASL_ENV === undefined) delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-  else process.env.PLATFORMA_KLASSIFIKATOR_MODEL = ASL_ENV
+  if (ORIGINAL_ENV === undefined) delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+  else process.env.PLATFORMA_KLASSIFIKATOR_MODEL = ORIGINAL_ENV
 })
 
-function model(qism: Partial<ModelInfo> & { provider: string; id: string }): ModelInfo {
+function model(part: Partial<ModelInfo> & { provider: string; id: string }): ModelInfo {
   return {
-    providerName: qism.provider,
-    name: qism.id,
+    providerName: part.provider,
+    name: part.id,
     contextWindow: 128_000,
     reasoning: false,
     vision: false,
     cost: { input: 1, output: 5 },
-    manba: 'sinov',
-    manbaTuri: 'kalit',
-    ...qism,
+    source: 'test',
+    billing: 'apiKey',
+    ...part,
   }
 }
 
-describe('env bilan majburlash', () => {
-  test('PLATFORMA_KLASSIFIKATOR_MODEL hamma narsadan ustun', () => {
-    process.env.PLATFORMA_KLASSIFIKATOR_MODEL = 'ollama/mening-modelim'
-    const t = pickClassifierModel([model({ provider: 'openrouter', id: 'a/b' })])
-    expect(t).toEqual({ provider: 'ollama', model: 'mening-modelim' })
+describe('forcing through env', () => {
+  test('PLATFORMA_KLASSIFIKATOR_MODEL beats everything', () => {
+    process.env.PLATFORMA_KLASSIFIKATOR_MODEL = 'ollama/my-model'
+    const picked = pickClassifierModel([model({ provider: 'openrouter', id: 'a/b' })])
+    expect(picked).toEqual({ provider: 'ollama', model: 'my-model' })
   })
 
-  test('slashli model id to\'g\'ri ajratiladi', () => {
+  test('a model id containing slashes is split correctly', () => {
     process.env.PLATFORMA_KLASSIFIKATOR_MODEL = 'openrouter/google/gemini-2.5-flash-lite'
     expect(pickClassifierModel([])).toEqual({
       provider: 'openrouter',
@@ -44,40 +45,40 @@ describe('env bilan majburlash', () => {
   })
 })
 
-describe('mos kelmaydigan modellar chiqariladi', () => {
-  test('o\'ylash majburiy modellar tanlanmaydi', () => {
-    // Sinovda: qwen3 90 soniyada ham javob bermadi,
-    // gpt-5-mini "Reasoning is mandatory for this endpoint" xatosi berdi
+describe('unsuitable models are excluded', () => {
+  test('models where thinking is mandatory are not picked', () => {
+    // In testing: qwen3 gave no answer even after 90 seconds,
+    // gpt-5-mini returned "Reasoning is mandatory for this endpoint"
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    const t = pickClassifierModel([
+    const picked = pickClassifierModel([
       model({ provider: 'ollama', id: 'qwen3:8b', cost: { input: 0, output: 0 } }),
       model({ provider: 'openrouter', id: 'openai/gpt-5-mini', cost: { input: 0.1, output: 0.4 } }),
       model({ provider: 'openrouter', id: 'deepseek/deepseek-r1', cost: { input: 0, output: 0 } }),
       model({ provider: 'openrouter', id: 'inclusionai/ling-2.6-flash', cost: { input: 2, output: 8 } }),
     ])
-    expect(t?.model).toBe('inclusionai/ling-2.6-flash')
+    expect(picked?.model).toBe('inclusionai/ling-2.6-flash')
   })
 
-  test('eskirgan avlodlar tanlanmaydi', () => {
-    // claude-3-haiku sinovda provider xatosi berdi
+  test('obsolete generations are not picked', () => {
+    // claude-3-haiku returned a provider error in testing
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    const t = pickClassifierModel([
+    const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'anthropic/claude-3-haiku', cost: { input: 0, output: 0 } }),
       model({ provider: 'openrouter', id: 'meta/llama-3.3-70b', cost: { input: 5, output: 5 } }),
     ])
-    expect(t?.model).toBe('meta/llama-3.3-70b')
+    expect(picked?.model).toBe('meta/llama-3.3-70b')
   })
 
-  test('kichik kontekstli model tanlanmaydi', () => {
+  test('a model with a small context is not picked', () => {
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    const t = pickClassifierModel([
-      model({ provider: 'x', id: 'kichik', contextWindow: 4096, cost: { input: 0, output: 0 } }),
-      model({ provider: 'x', id: 'katta', contextWindow: 128_000, cost: { input: 9, output: 9 } }),
+    const picked = pickClassifierModel([
+      model({ provider: 'x', id: 'small', contextWindow: 4096, cost: { input: 0, output: 0 } }),
+      model({ provider: 'x', id: 'large', contextWindow: 128_000, cost: { input: 9, output: 9 } }),
     ])
-    expect(t?.model).toBe('katta')
+    expect(picked?.model).toBe('large')
   })
 
-  test('mos model yo\'q bo\'lsa undefined', () => {
+  test('undefined when there is no suitable model', () => {
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
     expect(pickClassifierModel([])).toBeUndefined()
     expect(
@@ -86,42 +87,42 @@ describe('mos kelmaydigan modellar chiqariladi', () => {
   })
 })
 
-describe('sinalgan modellar ustuvor', () => {
-  test('gemini-2.5-flash-lite eng ustuvor (8/8, ~0.8s)', () => {
+describe('the tested models take priority', () => {
+  test('gemini-2.5-flash-lite ranks highest (8/8, ~0.8s)', () => {
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    const t = pickClassifierModel([
+    const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'inclusionai/ling-2.6-flash', cost: { input: 0, output: 0 } }),
       model({ provider: 'openrouter', id: 'google/gemini-2.5-flash-lite', cost: { input: 9, output: 9 } }),
     ])
-    // Qimmatroq bo'lsa ham sinalgani tanlanadi
-    expect(t?.model).toBe('google/gemini-2.5-flash-lite')
+    // The tested one is picked even though it costs more
+    expect(picked?.model).toBe('google/gemini-2.5-flash-lite')
   })
 
-  test('haiku-4.5 ikkinchi o\'rinda (8/8, ~2.3s)', () => {
+  test('haiku-4.5 comes second (8/8, ~2.3s)', () => {
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    const t = pickClassifierModel([
+    const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'inclusionai/ling-2.6-flash', cost: { input: 0, output: 0 } }),
       model({ provider: 'anthropic', id: 'claude-haiku-4-5', cost: { input: 1, output: 5 } }),
     ])
-    expect(t?.model).toBe('claude-haiku-4-5')
+    expect(picked?.model).toBe('claude-haiku-4-5')
   })
 
-  test('reasoning bayrog\'i tanlashga to\'sqinlik qilmaydi', () => {
-    // Haiku va Gemini `reasoning: true`, lekin o'ylash ixtiyoriy — ikkalasi
-    // ham sinovda 8/8 berdi. Faqat MAJBURIY o'ylaydiganlar chiqariladi.
+  test('the reasoning flag does not get in the way of selection', () => {
+    // Haiku and Gemini are `reasoning: true`, but thinking is optional — both
+    // scored 8/8 in testing. Only the ones where it is MANDATORY are excluded.
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    const t = pickClassifierModel([
+    const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'google/gemini-2.5-flash-lite', reasoning: true }),
     ])
-    expect(t?.model).toBe('google/gemini-2.5-flash-lite')
+    expect(picked?.model).toBe('google/gemini-2.5-flash-lite')
   })
 
-  test('sinalmaganlar orasida tez oila ustuvor, keyin arzonroq', () => {
+  test('among the untested ones a fast family wins, then the cheaper one', () => {
     delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    const t = pickClassifierModel([
-      model({ provider: 'x', id: 'katta-model', cost: { input: 0, output: 0 } }),
-      model({ provider: 'x', id: 'biror-flash-lite', cost: { input: 5, output: 5 } }),
+    const picked = pickClassifierModel([
+      model({ provider: 'x', id: 'large-model', cost: { input: 0, output: 0 } }),
+      model({ provider: 'x', id: 'some-flash-lite', cost: { input: 5, output: 5 } }),
     ])
-    expect(t?.model).toBe('biror-flash-lite')
+    expect(picked?.model).toBe('some-flash-lite')
   })
 })

@@ -52,7 +52,7 @@ export type VerdictListener = (verdict: ClassifierVerdict) => void
  * Called when a permission is RESOLVED — it reports where the decision came
  * from (see `PermissionOrigin`).
  *
- * WHY A SEPARATE LISTENER. `sora()` returns only `'allow' | 'deny'`, and the
+ * WHY A SEPARATE LISTENER. `ask()` returns only `'allow' | 'deny'`, and the
  * caller (`RestrictedEnv`) knows nothing beyond that result. So the answer to
  * "why did this command run?" was stored nowhere: whether auto mode allowed
  * it, the user pressed a button, or an "always" pattern matched — all of it
@@ -66,15 +66,15 @@ export type PermissionDecisionListener = (decision: PermissionDecision) => void
 /**
  * The context the classifier needs.
  *
- * `suhbat` is the history WITHOUT TOOL RESULTS. `agent.ts` prepares it and
- * passes it here; the permission layer does not modify it, only forwards it.
+ * `conversation` is the history WITHOUT TOOL RESULTS. `agent.ts` prepares it
+ * and passes it here; the permission layer does not modify it, only forwards it.
  */
 export interface ClassifierContext {
   mode: ModeManager
   conversation: ClassifierMessage[]
   workDir: string
   signal?: AbortSignal
-  /** `ruxsat.klassifikatorModeli` from the config — picked automatically when absent */
+  /** `permission.classifierModel` from the config — picked automatically when absent */
   model?: string | null
 }
 
@@ -147,7 +147,7 @@ export class PermissionManager {
   /**
    * A command on the hard deny list was blocked.
    *
-   * It never goes through `sora()` (a hard deny is not asked of anyone), but
+   * It never goes through `ask()` (a hard deny is not asked of anyone), but
    * the decision still has to be recorded — otherwise the user has no way of
    * knowing WHY the command did not run.
    */
@@ -176,29 +176,27 @@ export class PermissionManager {
    * A pattern on the "always" list returns `allow` immediately — the
    * listeners are not called either (so no redundant card shows in the UI).
    */
-  async ask(request: PermissionAsk): Promise<PermissionAnswer> {
+  async ask(ask: PermissionAsk): Promise<PermissionAnswer> {
     if (this.closed) {
-      this.emitDecision({ origin: 'cancelled', granted: false, pattern: request.pattern })
+      this.emitDecision({ origin: 'cancelled', granted: false, pattern: ask.pattern })
       return 'deny'
     }
-    if (request.pattern && this.alwaysPatterns.has(request.pattern)) {
-      this.emitDecision({ origin: 'always', granted: true, pattern: request.pattern })
+    if (ask.pattern && this.alwaysPatterns.has(ask.pattern)) {
+      this.emitDecision({ origin: 'always', granted: true, pattern: ask.pattern })
       return 'allow'
     }
 
     // --- Auto mode: the classifier decides ---
     const context = this.classifierContext
-    if (context && context.mode.rejim === 'auto') {
+    if (context && context.mode.mode === 'auto') {
       const result = await assessAction(
         {
-          suhbat: context.conversation,
-          amal: {
-            // `classifier.ts` still uses the Uzbek action-kind values; map the
-            // shared `PermissionKind` onto them until that file is migrated.
-            tur: request.kind === 'file' ? 'fayl' : request.kind === 'command' ? 'buyruq' : 'mcp',
-            nishon: request.target,
-            qaysiTool: request.action,
-            statikSabab: request.reason,
+          conversation: context.conversation,
+          action: {
+            kind: ask.kind,
+            target: ask.target,
+            tool: ask.action,
+            staticReason: ask.reason,
           },
           workDir: context.workDir,
           model: context.model,
@@ -206,38 +204,38 @@ export class PermissionManager {
         context.signal,
       )
 
-      if (result.qaror === 'ruxsat') {
-        context.mode.ruxsatBerildi()
-        this.emitVerdict({ verdict: 'allow', note: result.izoh })
-        this.emitDecision({ origin: 'auto', granted: true, pattern: request.pattern })
+      if (result.decision === 'allow') {
+        context.mode.allowed()
+        this.emitVerdict({ verdict: 'allow', note: result.note })
+        this.emitDecision({ origin: 'auto', granted: true, pattern: ask.pattern })
         return 'allow'
       }
-      if (result.qaror === 'blok') {
-        context.mode.blokBoldi()
-        this.emitVerdict({ verdict: 'block', note: result.izoh })
-        this.emitDecision({ origin: 'auto-block', granted: false, pattern: request.pattern })
+      if (result.decision === 'block') {
+        context.mode.blocked()
+        this.emitVerdict({ verdict: 'block', note: result.note })
+        this.emitDecision({ origin: 'auto-block', granted: false, pattern: ask.pattern })
         return 'deny'
       }
       // failed — auto turns off and the request falls through to the user
       // (continues below)
-      context.mode.klassifikatorNosoz(result.xabar)
+      context.mode.classifierFailed(result.message)
     }
 
     const request: PermissionRequest = {
       id: crypto.randomUUID(),
       sessionId: this.sessionId,
-      kind: request.kind,
-      action: request.action,
-      target: request.target,
-      reason: request.reason,
-      pattern: request.pattern,
+      kind: ask.kind,
+      action: ask.action,
+      target: ask.target,
+      reason: ask.reason,
+      pattern: ask.pattern,
       time: new Date().toISOString(),
     }
 
     // When the stream is cancelled the request is closed IMMEDIATELY.
     //
     // ┌────────────────────────────────────────────────────────────────────┐
-    // │ WHY THIS IS REQUIRED. If `sora()` could not be cancelled, a stream │
+    // │ WHY THIS IS REQUIRED. If `ask()` could not be cancelled, a stream  │
     // │ whose "Stop" was pressed would hang here for 5 MINUTES:            │
     // │ pi-agent-core simply `await`s the tool, i.e. `agent.abort()` does  │
     // │ not interrupt it. Meanwhile the old stream is still ALIVE — its    │
@@ -261,16 +259,16 @@ export class PermissionManager {
       const finish = (origin: 'timeout' | 'cancelled') => {
         // If the entry has already been removed (an answer arrived) — bail
         // out. The decision for one request must be written EXACTLY ONCE.
-        if (!this.pending.delete(req.id)) return
+        if (!this.pending.delete(request.id)) return
         clearTimeout(timer)
         signal?.removeEventListener('abort', cancel)
         this.emitDecision({
-          requestId: req.id,
+          requestId: request.id,
           // Cancelling is not "denied": the user did not reject the request,
           // they stopped the whole answer. The card must show that difference.
           origin,
           granted: false,
-          pattern: req.pattern,
+          pattern: request.pattern,
         })
         resolve('deny')
       }
@@ -281,8 +279,8 @@ export class PermissionManager {
       timer.unref?.()
       signal?.addEventListener('abort', cancel, { once: true })
 
-      this.pending.set(req.id, {
-        request: req,
+      this.pending.set(request.id, {
+        request,
         // When an answer arrives both the timer and the abort listener are
         // removed — `answer()` calls this function.
         resolve: (answer) => {
@@ -294,7 +292,7 @@ export class PermissionManager {
 
       for (const k of this.listeners) {
         try {
-          k(req)
+          k(request)
         } catch {
           // A listener error must not break the request
         }
@@ -340,8 +338,8 @@ export class PermissionManager {
     clearTimeout(entry.timer)
     this.pending.delete(requestId)
 
-    if (answer === 'always' && entry.req.pattern) {
-      this.alwaysPatterns.add(entry.req.pattern)
+    if (answer === 'always' && entry.request.pattern) {
+      this.alwaysPatterns.add(entry.request.pattern)
     }
 
     this.emitDecision({
@@ -353,7 +351,7 @@ export class PermissionManager {
             ? 'user'
             : 'denied',
       granted: answer !== 'deny',
-      pattern: entry.req.pattern,
+      pattern: entry.request.pattern,
     })
 
     entry.resolve(answer === 'always' ? 'allow' : answer)
@@ -371,15 +369,15 @@ export class PermissionManager {
       // We announce BEFORE the listeners are cleared: even when the session is
       // stopped, "why it did not run" should still be recorded.
       //
-      // `bekor`, NOT `rad`: the user did not deny this action — the session
-      // was closed from outside (registry TTL, the process stopping).
+      // `cancelled`, NOT `denied`: the user did not deny this action — the
+      // session was closed from outside (registry TTL, the process stopping).
       // Recording that as "you denied it" would pin on the user something
       // they never did.
       this.emitDecision({
-        requestId: entry.req.id,
+        requestId: entry.request.id,
         origin: 'cancelled',
         granted: false,
-        pattern: entry.req.pattern,
+        pattern: entry.request.pattern,
       })
       entry.resolve('deny')
     }

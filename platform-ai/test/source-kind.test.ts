@@ -1,10 +1,11 @@
-// Provider qaysi to'lov modeli bilan ulanganini ajratish.
+// Telling apart which billing model a provider was connected with.
 //
-// NEGA MUHIM: bir provider ikki xil kanal bilan kelishi mumkin — OpenAI API
-// kaliti (har token pullik) va OpenAI Codex ChatGPT obunasi (oylik to'lovga
-// kiradi). UI ikkalasini bir xil ko'rsatsa, foydalanuvchi obunam bor deb
-// o'ylab pullik kanaldan ishlatib yuboradi. Shuning uchun `manbaTuri`
-// UI'ning ko'rinishiga emas, aniqlash bosqichiga bog'langan.
+// WHY IT MATTERS: one provider may arrive through two different channels — an
+// OpenAI API key (every token is paid for) and the OpenAI Codex ChatGPT
+// subscription (covered by the monthly fee). If the UI showed both the same
+// way, the user would think they were on their subscription and end up using
+// the paid channel. That is why `billing` is bound to the detection stage, not
+// to how the UI looks.
 
 import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
@@ -14,8 +15,8 @@ import type { BillingKind, ModelInfo } from '@platforma/shared'
 import { claudeCodeAuth, codexAuth, localAuths } from '../src/local-auth.ts'
 import { modelOrder } from '../src/detect.ts'
 
-function uyYarat(): string {
-  return mkdtempSync(join(tmpdir(), 'platforma-manba-'))
+function createHome(): string {
+  return mkdtempSync(join(tmpdir(), 'platforma-source-'))
 }
 
 const TOKEN = JSON.stringify({
@@ -24,101 +25,102 @@ const TOKEN = JSON.stringify({
   expires_at: 4_000_000_000_000,
 })
 
-describe('mahalliy OAuth manba nomi', () => {
-  test("Claude obunasi aniq nom qaytaradi — umumiy 'OAuth' emas", async () => {
-    const uy = uyYarat()
-    mkdirSync(join(uy, '.claude'), { recursive: true })
-    writeFileSync(join(uy, '.claude', '.credentials.json'), TOKEN)
+describe('the local OAuth source name', () => {
+  test("the Claude subscription returns a precise name — not a generic 'OAuth'", async () => {
+    const home = createHome()
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    writeFileSync(join(home, '.claude', '.credentials.json'), TOKEN)
 
-    const natija = await claudeCodeAuth(uy)
-    // Foydalanuvchi qaysi fayldan kelganini ko'rishi kerak
-    expect(natija.topilma?.manba).toContain('obuna')
-    expect(natija.topilma?.manba).toContain('~/.claude')
-    expect(natija.topilma?.manba).not.toBe('OAuth')
+    const result = await claudeCodeAuth(home)
+    // The user has to see which file it came from
+    expect(result.found?.source).toContain('subscription')
+    expect(result.found?.source).toContain('~/.claude')
+    expect(result.found?.source).not.toBe('OAuth')
   })
 
-  test('ChatGPT obunasi aniq nom qaytaradi', async () => {
-    const uy = uyYarat()
-    mkdirSync(join(uy, '.codex'), { recursive: true })
-    writeFileSync(join(uy, '.codex', 'auth.json'), TOKEN)
+  test('the ChatGPT subscription returns a precise name', async () => {
+    const home = createHome()
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(join(home, '.codex', 'auth.json'), TOKEN)
 
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.manba).toContain('obuna')
-    expect(natija.topilma?.manba).toContain('~/.codex')
-    expect(natija.topilma?.manba).not.toBe('OAuth')
+    const result = await codexAuth(home)
+    expect(result.found?.source).toContain('subscription')
+    expect(result.found?.source).toContain('~/.codex')
+    expect(result.found?.source).not.toBe('OAuth')
   })
 
-  test('har bir topilma provider id va manba juftini beradi', async () => {
-    const uy = uyYarat()
-    mkdirSync(join(uy, '.codex'), { recursive: true })
-    writeFileSync(join(uy, '.codex', 'auth.json'), TOKEN)
+  test('every find gives a provider id and source pair', async () => {
+    const home = createHome()
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(join(home, '.codex', 'auth.json'), TOKEN)
 
-    // aniqlash.ts shu juftlikdan `manbalar` xaritasini quradi va uni
-    // pi-ai ning umumiy `chk.source` qiymatidan ustun qo'yadi
-    const natijalar = await localAuths(uy)
-    const topilganlar = natijalar.filter((n) => n.topilma)
-    expect(topilganlar.length).toBeGreaterThan(0)
-    for (const n of topilganlar) {
-      expect(n.topilma?.providerId).toBeTruthy()
-      expect(n.topilma?.manba).toBeTruthy()
+    // `detect.ts` builds the `sources` map from this pair and puts it above
+    // pi-ai's generic `chk.source` value
+    const results = await localAuths(home)
+    const found = results.filter((r) => r.found)
+    expect(found.length).toBeGreaterThan(0)
+    for (const r of found) {
+      expect(r.found?.providerId).toBeTruthy()
+      expect(r.found?.source).toBeTruthy()
     }
   })
 })
 
-function model(qism: Partial<ModelInfo> & { name: string; manbaTuri: BillingKind }): ModelInfo {
+function model(part: Partial<ModelInfo> & { name: string; billing: BillingKind }): ModelInfo {
   return {
-    provider: qism.manbaTuri === 'obuna' ? 'openai-codex' : 'openai',
-    providerName: qism.manbaTuri === 'obuna' ? 'OpenAI Codex' : 'OpenAI',
-    id: qism.name.toLowerCase(),
+    provider: part.billing === 'subscription' ? 'openai-codex' : 'openai',
+    providerName: part.billing === 'subscription' ? 'OpenAI Codex' : 'OpenAI',
+    id: part.name.toLowerCase(),
     contextWindow: 272_000,
     reasoning: false,
     vision: false,
-    // Obunada ham katalog narxi noldan katta — saralash shunga tayanmasligi kerak
+    // Even on a subscription the catalogue price is above zero — the sorting
+    // must not rely on it
     cost: { input: 1, output: 6 },
-    manba: 'sinov',
-    ...qism,
+    source: 'test',
+    ...part,
   }
 }
 
-describe('model tartibi', () => {
-  test('bir xil model ikki kanalda bo\'lsa obuna birinchi turadi', () => {
-    // Foydalanuvchi ko'rgan holat: "luna" qidiruvida API kalit versiyasi
-    // tepada, obuna pastda edi — teskari bo'lishi kerak
-    const royxat: ModelInfo[] = [
-      model({ name: 'GPT-5.6 Luna', manbaTuri: 'kalit' }),
-      model({ name: 'GPT-5.6 Luna', manbaTuri: 'obuna' }),
+describe('model order', () => {
+  test('when the same model is on two channels the subscription comes first', () => {
+    // What the user saw: in a search for "luna" the API key version was on top
+    // and the subscription below — it has to be the other way round
+    const list: ModelInfo[] = [
+      model({ name: 'GPT-5.6 Luna', billing: 'apiKey' }),
+      model({ name: 'GPT-5.6 Luna', billing: 'subscription' }),
     ]
-    royxat.sort(modelOrder)
-    expect(royxat[0]?.manbaTuri).toBe('obuna')
-    expect(royxat[1]?.manbaTuri).toBe('kalit')
+    list.sort(modelOrder)
+    expect(list[0]?.billing).toBe('subscription')
+    expect(list[1]?.billing).toBe('apiKey')
   })
 
-  test('mahalliy > obuna > kalit tartibi', () => {
-    const royxat: ModelInfo[] = [
-      model({ name: 'B kalit', manbaTuri: 'kalit' }),
-      model({ name: 'A mahalliy', manbaTuri: 'mahalliy' }),
-      model({ name: 'C obuna', manbaTuri: 'obuna' }),
+  test('the order is local > subscription > apiKey', () => {
+    const list: ModelInfo[] = [
+      model({ name: 'B key', billing: 'apiKey' }),
+      model({ name: 'A local', billing: 'local' }),
+      model({ name: 'C subscription', billing: 'subscription' }),
     ]
-    royxat.sort(modelOrder)
-    expect(royxat.map((m) => m.manbaTuri)).toEqual(['mahalliy', 'obuna', 'kalit'])
+    list.sort(modelOrder)
+    expect(list.map((m) => m.billing)).toEqual(['local', 'subscription', 'apiKey'])
   })
 
-  test('obunaning narxi kalitnikidan qimmat bo\'lsa ham tepada qoladi', () => {
-    // Saralash narxga emas, to'lov kanaliga tayanadi
-    const royxat: ModelInfo[] = [
-      model({ name: 'Arzon', manbaTuri: 'kalit', cost: { input: 0.1, output: 0.2 } }),
-      model({ name: 'Qimmat', manbaTuri: 'obuna', cost: { input: 99, output: 99 } }),
+  test('the subscription stays on top even when it costs more than the key', () => {
+    // The sorting relies on the billing channel, not on the price
+    const list: ModelInfo[] = [
+      model({ name: 'Cheap', billing: 'apiKey', cost: { input: 0.1, output: 0.2 } }),
+      model({ name: 'Expensive', billing: 'subscription', cost: { input: 99, output: 99 } }),
     ]
-    royxat.sort(modelOrder)
-    expect(royxat[0]?.name).toBe('Qimmat')
+    list.sort(modelOrder)
+    expect(list[0]?.name).toBe('Expensive')
   })
 
-  test('bir xil turdagi modellar nom bo\'yicha saralanadi', () => {
-    const royxat: ModelInfo[] = [
-      model({ name: 'Zeta', manbaTuri: 'kalit' }),
-      model({ name: 'Alfa', manbaTuri: 'kalit' }),
+  test('models of the same kind are sorted by name', () => {
+    const list: ModelInfo[] = [
+      model({ name: 'Zeta', billing: 'apiKey' }),
+      model({ name: 'Alfa', billing: 'apiKey' }),
     ]
-    royxat.sort(modelOrder)
-    expect(royxat.map((m) => m.name)).toEqual(['Alfa', 'Zeta'])
+    list.sort(modelOrder)
+    expect(list.map((m) => m.name)).toEqual(['Alfa', 'Zeta'])
   })
 })

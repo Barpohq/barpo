@@ -1,5 +1,6 @@
-// Mahalliy OAuth fayllarini o'qish — asosiy talab: HECH QACHON throw qilmaslik.
-// Bu fayllar boshqa dasturlarniki, formati istalgan payt o'zgarishi mumkin.
+// Reading the local OAuth files — the main requirement: NEVER throw.
+// These files belong to other programs and their format may change at any
+// moment.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -7,185 +8,185 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { claudeCodeAuth, codexAuth } from '../src/local-auth.ts'
 
-let uy: string
+let home: string
 
 beforeEach(() => {
-  uy = mkdtempSync(join(tmpdir(), 'platforma-auth-'))
+  home = mkdtempSync(join(tmpdir(), 'platforma-auth-'))
 })
 
 afterEach(() => {
-  rmSync(uy, { recursive: true, force: true })
+  rmSync(home, { recursive: true, force: true })
 })
 
-function claudeFayliYoz(mazmun: string): void {
-  mkdirSync(join(uy, '.claude'), { recursive: true })
-  writeFileSync(join(uy, '.claude', '.credentials.json'), mazmun)
+function writeClaudeFile(content: string): void {
+  mkdirSync(join(home, '.claude'), { recursive: true })
+  writeFileSync(join(home, '.claude', '.credentials.json'), content)
 }
 
-function codexFayliYoz(mazmun: string): void {
-  mkdirSync(join(uy, '.codex'), { recursive: true })
-  writeFileSync(join(uy, '.codex', 'auth.json'), mazmun)
+function writeCodexFile(content: string): void {
+  mkdirSync(join(home, '.codex'), { recursive: true })
+  writeFileSync(join(home, '.codex', 'auth.json'), content)
 }
 
 describe('claudeCodeAuth', () => {
-  test('fayl yo\'q bo\'lsa sabab bilan qaytadi, throw qilmaydi', async () => {
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma).toBeUndefined()
-    expect(natija.sabab).toContain('not found')
+  test('when the file is missing it comes back with a reason, it does not throw', async () => {
+    const result = await claudeCodeAuth(home)
+    expect(result.found).toBeUndefined()
+    expect(result.reason).toContain('not found')
   })
 
-  test('buzuq JSON throw qilmaydi', async () => {
-    claudeFayliYoz('{bu json emas')
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma).toBeUndefined()
-    expect(natija.sabab).toBeTruthy()
+  test('broken JSON does not throw', async () => {
+    writeClaudeFile('{this is not json')
+    const result = await claudeCodeAuth(home)
+    expect(result.found).toBeUndefined()
+    expect(result.reason).toBeTruthy()
   })
 
-  test('bo\'sh obyekt — token shakli tanilmaydi', async () => {
-    claudeFayliYoz('{}')
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma).toBeUndefined()
-    expect(natija.sabab).toContain('tanilmadi')
+  test('an empty object — the token shape is not recognised', async () => {
+    writeClaudeFile('{}')
+    const result = await claudeCodeAuth(home)
+    expect(result.found).toBeUndefined()
+    expect(result.reason).toContain('not recognised')
   })
 
-  test('tekis snake_case shakli o\'qiladi', async () => {
-    claudeFayliYoz(
+  test('the flat snake_case shape is read', async () => {
+    writeClaudeFile(
       JSON.stringify({ access_token: 'a1', refresh_token: 'r1', expires_at: 4000000000000 }),
     )
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma?.providerId).toBe('anthropic')
-    expect(natija.topilma?.credential.access).toBe('a1')
-    expect(natija.topilma?.credential.refresh).toBe('r1')
-    expect(natija.topilma?.credential.expires).toBe(4000000000000)
+    const result = await claudeCodeAuth(home)
+    expect(result.found?.providerId).toBe('anthropic')
+    expect(result.found?.credential.access).toBe('a1')
+    expect(result.found?.credential.refresh).toBe('r1')
+    expect(result.found?.credential.expires).toBe(4000000000000)
   })
 
-  test('ichma-ich camelCase shakli ham o\'qiladi', async () => {
-    claudeFayliYoz(
+  test('the nested camelCase shape is read too', async () => {
+    writeClaudeFile(
       JSON.stringify({
         claudeAiOauth: { accessToken: 'a2', refreshToken: 'r2', expiresAt: 4000000000000 },
       }),
     )
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma?.credential.access).toBe('a2')
-    expect(natija.topilma?.credential.type).toBe('oauth')
+    const result = await claudeCodeAuth(home)
+    expect(result.found?.credential.access).toBe('a2')
+    expect(result.found?.credential.type).toBe('oauth')
   })
 
-  test('faqat access bo\'lsa (refresh yo\'q) qabul qilinmaydi', async () => {
-    claudeFayliYoz(JSON.stringify({ access_token: 'a3' }))
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma).toBeUndefined()
+  test('with access only (no refresh) it is not accepted', async () => {
+    writeClaudeFile(JSON.stringify({ access_token: 'a3' }))
+    const result = await claudeCodeAuth(home)
+    expect(result.found).toBeUndefined()
   })
 
-  test('sekundli muddat millisekundga aylantiriladi', async () => {
-    // 4_000_000_000 sekund = 2096-yil, ya'ni 1e9 dan katta lekin 1e12 dan kichik
-    claudeFayliYoz(JSON.stringify({ access: 'a', refresh: 'r', expires: 4_000_000_000 }))
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(4_000_000_000_000)
+  test('an expiry in seconds is converted to milliseconds', async () => {
+    // 4_000_000_000 seconds = the year 2096, i.e. greater than 1e9 but smaller
+    // than 1e12
+    writeClaudeFile(JSON.stringify({ access: 'a', refresh: 'r', expires: 4_000_000_000 }))
+    const result = await claudeCodeAuth(home)
+    expect(result.found?.credential.expires).toBe(4_000_000_000_000)
   })
 
-  test('muddat yo\'q bo\'lsa 0 — pi-ai darhol yangilaydi', async () => {
-    claudeFayliYoz(JSON.stringify({ access: 'a', refresh: 'r' }))
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(0)
+  test('with no expiry it is 0 — pi-ai refreshes right away', async () => {
+    writeClaudeFile(JSON.stringify({ access: 'a', refresh: 'r' }))
+    const result = await claudeCodeAuth(home)
+    expect(result.found?.credential.expires).toBe(0)
   })
 
-  test('massiv berilsa ham yiqilmaydi', async () => {
-    claudeFayliYoz('[1, 2, 3]')
-    const natija = await claudeCodeAuth(uy)
-    expect(natija.topilma).toBeUndefined()
-    expect(natija.sabab).toBeTruthy()
+  test('it does not fall over even when given an array', async () => {
+    writeClaudeFile('[1, 2, 3]')
+    const result = await claudeCodeAuth(home)
+    expect(result.found).toBeUndefined()
+    expect(result.reason).toBeTruthy()
   })
 })
 
 describe('codexAuth', () => {
-  test('fayl yo\'q bo\'lsa sabab qaytadi', async () => {
-    const natija = await codexAuth(uy)
-    expect(natija.topilma).toBeUndefined()
-    expect(natija.sabab).toContain('not found')
+  test('when the file is missing a reason comes back', async () => {
+    const result = await codexAuth(home)
+    expect(result.found).toBeUndefined()
+    expect(result.reason).toContain('not found')
   })
 
-  test('topilganda openai-codex provideriga bog\'lanadi', async () => {
-    codexFayliYoz(
-      JSON.stringify({ tokens: { access_token: 'c1', refresh_token: 'c2', expires_at: 4000000000000 } }),
+  test('when found it is bound to the openai-codex provider', async () => {
+    writeCodexFile(
+      JSON.stringify({
+        tokens: { access_token: 'c1', refresh_token: 'c2', expires_at: 4000000000000 },
+      }),
     )
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.providerId).toBe('openai-codex')
-    expect(natija.topilma?.credential.access).toBe('c1')
+    const result = await codexAuth(home)
+    expect(result.found?.providerId).toBe('openai-codex')
+    expect(result.found?.credential.access).toBe('c1')
   })
 })
 
-// Codex `auth.json` da muddat alohida maydonda YO'Q — u faqat JWT ichida.
-// Buni o'qimasak muddat 0 bo'lib qoladi va pi-ai hali yaroqli tokenni
-// har ishga tushishda yangilaydi (OpenAI esa rotatsiya qilib eskisini o'ldiradi).
-describe('JWT exp orqali muddat', () => {
-  /** Imzosi yaroqsiz, lekin payload'i haqiqiy JWT tuzadi (test uchun yetarli) */
-  function jwtYasa(dava: Record<string, unknown>): string {
+// In the Codex `auth.json` the expiry is NOT in a separate field — it only
+// sits inside the JWT. Without reading it the expiry would stay 0 and pi-ai
+// would refresh a token that is still valid on every startup (while OpenAI
+// rotates it and kills the old one).
+describe('the expiry through the JWT exp claim', () => {
+  /** Builds a JWT with an invalid signature but a real payload (enough for a test) */
+  function makeJwt(claims: Record<string, unknown>): string {
     const b64 = (o: unknown) =>
       Buffer.from(JSON.stringify(o))
         .toString('base64')
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/, '')
-    return `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64(dava)}.imzo`
+    return `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64(claims)}.signature`
   }
 
-  test('ochiq maydon bo\'lmasa access_token JWT dan o\'qiladi', async () => {
-    const exp = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60 // 10 kun
-    codexFayliYoz(
+  test('with no explicit field it is read from the access_token JWT', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60 // 10 days
+    writeCodexFile(
       JSON.stringify({
-        tokens: { access_token: jwtYasa({ exp }), refresh_token: 'r', id_token: 'x' },
+        tokens: { access_token: makeJwt({ exp }), refresh_token: 'r', id_token: 'x' },
       }),
     )
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(exp * 1000)
+    const result = await codexAuth(home)
+    expect(result.found?.credential.expires).toBe(exp * 1000)
   })
 
-  test('ochiq expires_at maydoni JWT dan ustun turadi', async () => {
+  test('an explicit expires_at field wins over the JWT', async () => {
     const jwtExp = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60
-    codexFayliYoz(
+    writeCodexFile(
       JSON.stringify({
         tokens: {
-          access_token: jwtYasa({ exp: jwtExp }),
+          access_token: makeJwt({ exp: jwtExp }),
           refresh_token: 'r',
           expires_at: 4_000_000_000_000,
         },
       }),
     )
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(4_000_000_000_000)
+    const result = await codexAuth(home)
+    expect(result.found?.credential.expires).toBe(4_000_000_000_000)
   })
 
-  test('muddati o\'tgan JWT o\'tgan vaqtni qaytaradi (pi-ai yangilaydi)', async () => {
-    const exp = Math.floor(Date.now() / 1000) - 3600 // bir soat oldin
-    codexFayliYoz(
-      JSON.stringify({ tokens: { access_token: jwtYasa({ exp }), refresh_token: 'r' } }),
-    )
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(exp * 1000)
-    expect(natija.topilma?.credential.expires).toBeLessThan(Date.now())
+  test('an expired JWT returns the past time (pi-ai refreshes it)', async () => {
+    const exp = Math.floor(Date.now() / 1000) - 3600 // an hour ago
+    writeCodexFile(JSON.stringify({ tokens: { access_token: makeJwt({ exp }), refresh_token: 'r' } }))
+    const result = await codexAuth(home)
+    expect(result.found?.credential.expires).toBe(exp * 1000)
+    expect(result.found?.credential.expires).toBeLessThan(Date.now())
   })
 
-  test('JWT bo\'lmagan token — muddat 0, throw yo\'q', async () => {
-    codexFayliYoz(
-      JSON.stringify({ tokens: { access_token: 'oddiy-satr', refresh_token: 'r' } }),
-    )
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(0)
+  test('a token that is not a JWT — the expiry is 0, no throw', async () => {
+    writeCodexFile(JSON.stringify({ tokens: { access_token: 'plain-string', refresh_token: 'r' } }))
+    const result = await codexAuth(home)
+    expect(result.found?.credential.expires).toBe(0)
   })
 
-  test('buzuq JWT payload — muddat 0, throw yo\'q', async () => {
-    codexFayliYoz(
-      JSON.stringify({ tokens: { access_token: 'aaa.!!!buzuq!!!.ccc', refresh_token: 'r' } }),
+  test('a broken JWT payload — the expiry is 0, no throw', async () => {
+    writeCodexFile(
+      JSON.stringify({ tokens: { access_token: 'aaa.!!!broken!!!.ccc', refresh_token: 'r' } }),
     )
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(0)
+    const result = await codexAuth(home)
+    expect(result.found?.credential.expires).toBe(0)
   })
 
-  test('exp maydoni yo\'q JWT — muddat 0', async () => {
-    codexFayliYoz(
-      JSON.stringify({ tokens: { access_token: jwtYasa({ sub: 'kimdir' }), refresh_token: 'r' } }),
+  test('a JWT with no exp field — the expiry is 0', async () => {
+    writeCodexFile(
+      JSON.stringify({ tokens: { access_token: makeJwt({ sub: 'someone' }), refresh_token: 'r' } }),
     )
-    const natija = await codexAuth(uy)
-    expect(natija.topilma?.credential.expires).toBe(0)
+    const result = await codexAuth(home)
+    expect(result.found?.credential.expires).toBe(0)
   })
 })

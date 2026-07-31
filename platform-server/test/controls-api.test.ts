@@ -1,459 +1,465 @@
-// Boshqaruv qatlamining REST marshrutlari — forma va amallar.
+// The REST routes of the controls layer — the form and the actions.
 //
-// `api.test.ts` naqshi: xotira bazasi, Hono `app.request`, tarmoqsiz.
+// The `api.test.ts` pattern: an in-memory database, Hono `app.request`, no
+// network.
 //
-// Bu testlar himoya chegaralarini majburlaydi:
-//   - sir qiymat javobda YO'Q (faqat `ornatilgan` bayrog'i)
-//   - bo'sh sir mavjud qiymatni O'CHIRMAYDI
-//   - naqsh buzilgan qiymat serverga UMUMAN bormaydi
+// These tests enforce the protection boundaries:
+//   - a secret value is NOT in the response (only the `isSet` flag)
+//   - an empty secret DOES NOT WIPE the existing value
+//   - a value that breaks the pattern NEVER reaches the server
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
 import type { AppManifest } from '@platforma/shared'
-import { qulflarniTozala, sshFabrikasiniOrnat } from '../src/amal-bajar.ts'
+import { clearLocks, setSshFactory } from '../src/action-run.ts'
 import { app } from '../src/app.ts'
-import { bazaOch, dbOrnat } from '../src/db.ts'
-import type { IlovaSshApi } from '../src/ilova-ssh.ts'
-import { ilovaSaqla } from '../src/repo.ts'
-import { keshniTozala } from '../src/state-kesh.ts'
+import { openDb, setDb } from '../src/db.ts'
+import type { AppSshApi } from '../src/app-ssh.ts'
+import { saveApp } from '../src/repo.ts'
+import { clearCache } from '../src/state-cache.ts'
 import { hub } from '../src/ws/hub.ts'
 
 let db: Database
-let envYozishlar: { yol: string; qiymatlar: Record<string, string> }[]
-let buyruqlar: string[][]
+let envWrites: { path: string; values: Record<string, string> }[]
+let commands: string[][]
 
-function soxtaSsh(): IlovaSshApi {
+function fakeSsh(): AppSshApi {
   return {
-    async buyruq(argv) {
-      buyruqlar.push(argv)
-      return { kod: 0, stdout: '', stderr: '' }
+    async command(argv) {
+      commands.push(argv)
+      return { code: 0, stdout: '', stderr: '' }
     },
-    async envYoz(yol, qiymatlar) {
-      envYozishlar.push({ yol, qiymatlar })
+    async commandRaw(argv) {
+      commands.push(argv)
+      return { code: 0, stdout: '', stderr: '' }
     },
-    async faylOqi() {
+    async writeEnv(path, values) {
+      envWrites.push({ path, values })
+    },
+    async readFile() {
       return null
     },
   }
 }
 
-/** Sozlamalari va amallari bor ilova */
+/** An app that has settings and actions */
 const BOT: AppManifest = {
   id: 'telegram-bot',
   icon: '🤖',
   name: 'Telegram bot',
-  tagline: 'Yangiliklar boti',
+  tagline: 'News bot',
   version: 'v1',
   service: 'helsinki-1 · docker',
   status: 'running',
-  widgets: [{ type: 'note', text: 'Bot ishlayapti' }],
-  states: [{ nom: 'holat', kod: 'module.exports = async () => ({ faol: true })', interval: 5 }],
-  sozlamalar: {
-    maydonlar: [
+  widgets: [{ type: 'note', text: 'The bot is running' }],
+  states: [{ name: 'status', code: 'module.exports = async () => ({ active: true })', interval: 5 }],
+  settings: {
+    fields: [
       {
-        kalit: 'token',
-        turi: 'sir',
-        yorliq: 'Bot tokeni',
-        majburiy: true,
-        naqsh: '^\\d+:[A-Za-z0-9_-]+$',
-        naqshIzohi: 'Token `123456:ABC-DEF` shaklida bo\'lishi kerak',
+        key: 'token',
+        kind: 'secret',
+        label: 'Bot token',
+        required: true,
+        pattern: '^\\d+:[A-Za-z0-9_-]+$',
+        patternHint: 'The token must look like `123456:ABC-DEF`',
       },
-      { kalit: 'admin_id', turi: 'raqam', yorliq: 'Admin ID' },
-      { kalit: 'rejim', turi: 'tanlov', yorliq: 'Rejim', variantlar: ['polling', 'webhook'] },
+      { key: 'admin_id', kind: 'number', label: 'Admin ID' },
+      { key: 'mode', kind: 'select', label: 'Mode', options: ['polling', 'webhook'] },
     ],
-    yoz: `module.exports = async ({ qiymatlar, ssh }) => {
+    write: `module.exports = async ({ values, ssh }) => {
       const env = {}
-      if (qiymatlar.token) env.TELEGRAM_TOKEN = qiymatlar.token
-      if (qiymatlar.admin_id) env.ADMIN_ID = qiymatlar.admin_id
-      if (qiymatlar.rejim) env.REJIM = qiymatlar.rejim
-      await ssh('helsinki-1').envYoz('/opt/bot/.env', env)
-      await ssh('helsinki-1').buyruq(['docker', 'restart', 'telegram-bot'])
-      return { xabar: 'Saqlandi va bot restart qilindi' }
+      if (values.token) env.TELEGRAM_TOKEN = values.token
+      if (values.admin_id) env.ADMIN_ID = values.admin_id
+      if (values.mode) env.MODE = values.mode
+      await ssh('helsinki-1').writeEnv('/opt/bot/.env', env)
+      await ssh('helsinki-1').command(['docker', 'restart', 'telegram-bot'])
+      return { message: 'Saved and the bot was restarted' }
     }`,
-    oqi: `module.exports = async () => ({ admin_id: '555', rejim: 'polling', token: '789:SIRLIQIYMAT' })`,
+    read: `module.exports = async () => ({ admin_id: '555', mode: 'polling', token: '789:SECRETVALUE' })`,
   },
-  amallar: [
+  actions: [
     {
-      nom: 'restart',
-      yorliq: 'Botni restart qilish',
-      xavf: "o'zgartirish",
-      tasdiq: true,
-      kod: `module.exports = async ({ ssh }) => {
-        await ssh('helsinki-1').buyruq(['docker', 'restart', 'telegram-bot'])
-        return { xabar: 'Bot restart qilindi' }
+      name: 'restart',
+      label: 'Restart the bot',
+      risk: 'write',
+      confirm: true,
+      code: `module.exports = async ({ ssh }) => {
+        await ssh('helsinki-1').command(['docker', 'restart', 'telegram-bot'])
+        return { message: 'The bot was restarted' }
       }`,
-      yangila: ['holat'],
+      refresh: ['status'],
     },
     {
-      nom: 'yiqiladi',
-      yorliq: 'Yiqiladigan amal',
-      kod: 'module.exports = async () => { throw new Error("konteyner topilmadi") }',
+      name: 'crashes',
+      label: 'An action that crashes',
+      code: 'module.exports = async () => { throw new Error("container not found") }',
     },
   ],
 }
 
 beforeEach(() => {
-  db = bazaOch(':memory:')
-  dbOrnat(db)
-  envYozishlar = []
-  buyruqlar = []
-  qulflarniTozala()
-  keshniTozala()
-  sshFabrikasiniOrnat(() => soxtaSsh())
-  ilovaSaqla(BOT, db)
+  db = openDb(':memory:')
+  setDb(db)
+  envWrites = []
+  commands = []
+  clearLocks()
+  clearCache()
+  setSshFactory(() => fakeSsh())
+  saveApp(BOT, db)
 })
 
 afterEach(() => {
-  sshFabrikasiniOrnat(null)
-  qulflarniTozala()
-  keshniTozala()
-  dbOrnat(null)
-  hub.tozala()
+  setSshFactory(null)
+  clearLocks()
+  clearCache()
+  setDb(null)
+  hub.clear()
   db.close()
 })
 
-async function get<T>(yol: string): Promise<{ status: number; body: T }> {
-  const javob = await app.request(yol)
-  return { status: javob.status, body: (await javob.json()) as T }
+async function get<T>(path: string): Promise<{ status: number; body: T }> {
+  const response = await app.request(path)
+  return { status: response.status, body: (await response.json()) as T }
 }
 
-async function yubor<T>(
-  yol: string,
-  usul: 'PUT' | 'POST',
-  tana?: unknown,
+async function send<T>(
+  path: string,
+  method: 'PUT' | 'POST',
+  body?: unknown,
 ): Promise<{ status: number; body: T }> {
-  const javob = await app.request(yol, {
-    method: usul,
-    ...(tana !== undefined
-      ? { body: JSON.stringify(tana), headers: { 'content-type': 'application/json' } }
+  const response = await app.request(path, {
+    method,
+    ...(body !== undefined
+      ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }
       : {}),
   })
-  return { status: javob.status, body: (await javob.json()) as T }
+  return { status: response.status, body: (await response.json()) as T }
 }
 
-interface SozlamaJavobi {
-  maydonlar: { kalit: string; turi: string }[]
-  qiymatlar: Record<string, string>
-  ornatilgan: Record<string, boolean>
-  ogohlantirish?: string
+interface SettingsResponse {
+  fields: { key: string; kind: string }[]
+  values: Record<string, string>
+  isSet: Record<string, boolean>
+  warning?: string
 }
 
-describe('GET /api/apps/:id/sozlama', () => {
-  test('sxema va sirsiz qiymatlar qaytadi', async () => {
-    const { status, body } = await get<SozlamaJavobi>('/api/apps/telegram-bot/sozlama')
+describe('GET /api/apps/:id/settings', () => {
+  test('the schema and the non-secret values come back', async () => {
+    const { status, body } = await get<SettingsResponse>('/api/apps/telegram-bot/settings')
 
     expect(status).toBe(200)
-    expect(body.maydonlar).toHaveLength(3)
-    expect(body.qiymatlar.admin_id).toBe('555')
-    expect(body.qiymatlar.rejim).toBe('polling')
+    expect(body.fields).toHaveLength(3)
+    expect(body.values.admin_id).toBe('555')
+    expect(body.values.mode).toBe('polling')
   })
 
   // ┌──────────────────────────────────────────────────────────────┐
-  // │ QATLAMNING MARKAZIY QOIDASI. Token server → platforma →       │
-  // │ brauzer yo'lini bosmasligi kerak.                             │
+  // │ THE CENTRAL RULE OF THE LAYER. A token must not travel the   │
+  // │ server → platform → browser path.                            │
   // └──────────────────────────────────────────────────────────────┘
-  test('SIR QIYMAT javobda YO\'Q — faqat `ornatilgan` bayrog\'i', async () => {
-    const javob = await app.request('/api/apps/telegram-bot/sozlama')
-    const xom = await javob.text()
+  test('A SECRET VALUE is NOT in the response — only the `isSet` flag', async () => {
+    const response = await app.request('/api/apps/telegram-bot/settings')
+    const raw = await response.text()
 
-    // `oqi` kodi tokenni QAYTARDI, lekin u filtrdan o'tmadi
-    expect(xom).not.toContain('SIRLIQIYMAT')
+    // The `read` code DID return the token, but it did not get past the filter
+    expect(raw).not.toContain('SECRETVALUE')
 
-    const body = JSON.parse(xom) as SozlamaJavobi
-    expect(body.qiymatlar.token).toBeUndefined()
-    // Server o'sha kalitni qaytargani — u serverda BOR degani
-    expect(body.ornatilgan.token).toBe(true)
+    const body = JSON.parse(raw) as SettingsResponse
+    expect(body.values.token).toBeUndefined()
+    // The server returned that key — meaning it EXISTS on the server
+    expect(body.isSet.token).toBe(true)
   })
 
-  // Regressiya: `oqi` odatda `{ token: q.TOKEN }` qaytaradi va `.env` da
-  // kalit yo'q bo'lsa qiymat `undefined` bo'ladi — lekin KALIT obyektda
-  // turadi. Uni "bor" deb sanasak foydalanuvchi token yo'qligida ham
-  // "✓ o'rnatilgan" ko'rardi va nega bot ishlamayotganini tushunmasdi.
-  test('serverda token YO\'Q bo\'lsa `ornatilgan` false', async () => {
-    ilovaSaqla(
+  // Regression: `read` usually returns `{ token: v.TOKEN }`, and when the key
+  // is absent from `.env` the value is `undefined` — but THE KEY is still in
+  // the object. Counting it as "present" would show the user "✓ set" even with
+  // no token, and they would not understand why the bot is not working.
+  test('`isSet` is false when the server has NO token', async () => {
+    saveApp(
       {
         ...BOT,
-        sozlamalar: {
-          ...BOT.sozlamalar!,
-          oqi: 'module.exports = async () => ({ token: undefined, rejim: "polling" })',
+        settings: {
+          ...BOT.settings!,
+          read: 'module.exports = async () => ({ token: undefined, mode: "polling" })',
         },
       },
       db,
     )
 
-    const { body } = await get<SozlamaJavobi>('/api/apps/telegram-bot/sozlama')
-    expect(body.ornatilgan.token).toBe(false)
-    expect(body.qiymatlar.rejim).toBe('polling')
+    const { body } = await get<SettingsResponse>('/api/apps/telegram-bot/settings')
+    expect(body.isSet.token).toBe(false)
+    expect(body.values.mode).toBe('polling')
   })
 
-  test('o\'qish yiqilsa forma BARIBIR ko\'rsatiladi', async () => {
-    ilovaSaqla(
+  test('the form is shown ANYWAY when reading fails', async () => {
+    saveApp(
       {
         ...BOT,
-        sozlamalar: {
-          ...BOT.sozlamalar!,
-          oqi: 'module.exports = async () => { throw new Error("ssh tushdi") }',
+        settings: {
+          ...BOT.settings!,
+          read: 'module.exports = async () => { throw new Error("ssh went down") }',
         },
       },
       db,
     )
 
-    const { status, body } = await get<SozlamaJavobi>('/api/apps/telegram-bot/sozlama')
+    const { status, body } = await get<SettingsResponse>('/api/apps/telegram-bot/settings')
 
-    // Foydalanuvchi yangi qiymat yozib tuzatishi mumkin — forma yopilmaydi.
+    // The user can fix it by writing new values — the form does not close.
     expect(status).toBe(200)
-    expect(body.maydonlar).toHaveLength(3)
-    expect(body.ogohlantirish).toContain('ssh')
+    expect(body.fields).toHaveLength(3)
+    expect(body.warning).toContain('ssh')
   })
 
-  test('sozlamasiz ilova 404', async () => {
-    ilovaSaqla({ ...BOT, id: 'sozlamasiz', sozlamalar: undefined }, db)
-    const { status } = await get('/api/apps/sozlamasiz/sozlama')
+  test('404 for an app without settings', async () => {
+    saveApp({ ...BOT, id: 'no-settings', settings: undefined }, db)
+    const { status } = await get('/api/apps/no-settings/settings')
     expect(status).toBe(404)
   })
 
-  test('yo\'q ilova 404', async () => {
-    expect((await get('/api/apps/yoq/sozlama')).status).toBe(404)
+  test('404 for a missing app', async () => {
+    expect((await get('/api/apps/missing/settings')).status).toBe(404)
   })
 })
 
-describe('PUT /api/apps/:id/sozlama', () => {
-  test('qiymatlar serverga yoziladi', async () => {
-    const { status, body } = await yubor<{ ok: boolean; xabar?: string }>(
-      '/api/apps/telegram-bot/sozlama',
+describe('PUT /api/apps/:id/settings', () => {
+  test('the values are written to the server', async () => {
+    const { status, body } = await send<{ ok: boolean; message?: string }>(
+      '/api/apps/telegram-bot/settings',
       'PUT',
-      { qiymatlar: { token: '789456:ABCdef-xyz', admin_id: '111', rejim: 'webhook' } },
+      { values: { token: '789456:ABCdef-xyz', admin_id: '111', mode: 'webhook' } },
     )
 
     expect(status).toBe(200)
     expect(body.ok).toBe(true)
-    expect(body.xabar).toContain('Saqlandi')
+    expect(body.message).toContain('Saved')
 
-    // Serverdagi `.env` ga yozildi
-    expect(envYozishlar).toHaveLength(1)
-    expect(envYozishlar[0]!.yol).toBe('/opt/bot/.env')
-    expect(envYozishlar[0]!.qiymatlar.TELEGRAM_TOKEN).toBe('789456:ABCdef-xyz')
-    // Va bot restart qilindi
-    expect(buyruqlar[0]).toEqual(['docker', 'restart', 'telegram-bot'])
+    // It was written into `.env` on the server
+    expect(envWrites).toHaveLength(1)
+    expect(envWrites[0]!.path).toBe('/opt/bot/.env')
+    expect(envWrites[0]!.values.TELEGRAM_TOKEN).toBe('789456:ABCdef-xyz')
+    // And the bot was restarted
+    expect(commands[0]).toEqual(['docker', 'restart', 'telegram-bot'])
   })
 
-  test('tananing o\'zi qiymatlar bo\'lishi ham mumkin', async () => {
-    const { status } = await yubor('/api/apps/telegram-bot/sozlama', 'PUT', { rejim: 'webhook' })
+  test('the body itself may be the values', async () => {
+    const { status } = await send('/api/apps/telegram-bot/settings', 'PUT', { mode: 'webhook' })
     expect(status).toBe(200)
-    expect(envYozishlar[0]!.qiymatlar.REJIM).toBe('webhook')
+    expect(envWrites[0]!.values.MODE).toBe('webhook')
   })
 
   // ┌──────────────────────────────────────────────────────────────┐
-  // │ BO'SH SIR — "O'ZGARTIRMADIM". Forma sir maydonini bo'sh        │
-  // │ ko'rsatadi, ya'ni "tegmadim" ham bo'sh satr bo'lib keladi.     │
-  // │ Bo'shni yuborsak mavjud token o'chib ketardi.                  │
+  // │ AN EMPTY SECRET MEANS "I DID NOT CHANGE IT". The form shows  │
+  // │ a secret field empty, so "I did not touch it" also arrives   │
+  // │ as an empty string. Sending the empty one through would wipe │
+  // │ the existing token.                                          │
   // └──────────────────────────────────────────────────────────────┘
-  test('BO\'SH sir yuborilsa u yozilmaydi (mavjud token saqlanadi)', async () => {
-    const { status } = await yubor('/api/apps/telegram-bot/sozlama', 'PUT', {
-      qiymatlar: { token: '', rejim: 'webhook' },
+  test('an EMPTY secret is not written (the existing token is kept)', async () => {
+    const { status } = await send('/api/apps/telegram-bot/settings', 'PUT', {
+      values: { token: '', mode: 'webhook' },
     })
 
     expect(status).toBe(200)
-    // Token env'ga TUSHMADI — eskisi serverda qoldi
-    expect(envYozishlar[0]!.qiymatlar.TELEGRAM_TOKEN).toBeUndefined()
-    expect(envYozishlar[0]!.qiymatlar.REJIM).toBe('webhook')
+    // The token DID NOT land in the env — the old one stayed on the server
+    expect(envWrites[0]!.values.TELEGRAM_TOKEN).toBeUndefined()
+    expect(envWrites[0]!.values.MODE).toBe('webhook')
   })
 
-  test('naqsh buzilgan qiymat SERVERGA BORMAYDI', async () => {
-    const { status, body } = await yubor<{ ok: boolean; xatolar: string[] }>(
-      '/api/apps/telegram-bot/sozlama',
+  test('a value that breaks the pattern NEVER REACHES THE SERVER', async () => {
+    const { status, body } = await send<{ ok: boolean; errors: string[] }>(
+      '/api/apps/telegram-bot/settings',
       'PUT',
-      { qiymatlar: { token: 'butunlay-notogri' } },
+      { values: { token: 'completely-wrong' } },
     )
 
     expect(status).toBe(400)
-    expect(body.xatolar[0]).toContain('123456:ABC-DEF')
-    // Eng muhimi: hech narsa yozilmadi
-    expect(envYozishlar).toHaveLength(0)
-    expect(buyruqlar).toHaveLength(0)
+    expect(body.errors[0]).toContain('123456:ABC-DEF')
+    // The most important part: nothing was written
+    expect(envWrites).toHaveLength(0)
+    expect(commands).toHaveLength(0)
   })
 
-  test('injection urinishi naqshda to\'xtaydi', async () => {
-    const { status } = await yubor('/api/apps/telegram-bot/sozlama', 'PUT', {
-      qiymatlar: { token: '123:abc"; rm -rf /; #' },
+  test('an injection attempt is stopped by the pattern', async () => {
+    const { status } = await send('/api/apps/telegram-bot/settings', 'PUT', {
+      values: { token: '123:abc"; rm -rf /; #' },
     })
 
     expect(status).toBe(400)
-    expect(envYozishlar).toHaveLength(0)
+    expect(envWrites).toHaveLength(0)
   })
 
-  test('raqam bo\'lmagan qiymat rad etiladi', async () => {
-    const { status, body } = await yubor<{ xatolar: string[] }>(
-      '/api/apps/telegram-bot/sozlama',
+  test('a non-numeric value is rejected', async () => {
+    const { status, body } = await send<{ errors: string[] }>(
+      '/api/apps/telegram-bot/settings',
       'PUT',
-      { qiymatlar: { admin_id: 'salom' } },
+      { values: { admin_id: 'hello' } },
     )
     expect(status).toBe(400)
-    expect(body.xatolar[0]).toContain('number')
+    expect(body.errors[0]).toContain('number')
   })
 
-  test('sxemada yo\'q kalit e\'tiborsiz qoldiriladi', async () => {
-    const { status } = await yubor('/api/apps/telegram-bot/sozlama', 'PUT', {
-      qiymatlar: { rejim: 'polling', begona: 'x' },
+  test('a key that is not in the schema is ignored', async () => {
+    const { status } = await send('/api/apps/telegram-bot/settings', 'PUT', {
+      values: { mode: 'polling', stranger: 'x' },
     })
 
     expect(status).toBe(200)
-    // Kod faqat e'lon qilingan maydonlarni ko'radi
-    expect(Object.keys(envYozishlar[0]!.qiymatlar)).toEqual(['REJIM'])
+    // The code only sees the declared fields
+    expect(Object.keys(envWrites[0]!.values)).toEqual(['MODE'])
   })
 
-  test('o\'zgarish bo\'lmasa 400', async () => {
-    const { status } = await yubor('/api/apps/telegram-bot/sozlama', 'PUT', { qiymatlar: {} })
+  test('400 when nothing changed', async () => {
+    const { status } = await send('/api/apps/telegram-bot/settings', 'PUT', { values: {} })
     expect(status).toBe(400)
   })
 
-  test('yozish yiqilsa 500 va aniq xato', async () => {
-    ilovaSaqla(
+  test('500 and a precise error when the write fails', async () => {
+    saveApp(
       {
         ...BOT,
-        sozlamalar: {
-          ...BOT.sozlamalar!,
-          yoz: 'module.exports = async () => { throw new Error("disk to\'ldi") }',
+        settings: {
+          ...BOT.settings!,
+          write: 'module.exports = async () => { throw new Error("disk full") }',
         },
       },
       db,
     )
 
-    const { status, body } = await yubor<{ ok: boolean; xato: string }>(
-      '/api/apps/telegram-bot/sozlama',
+    const { status, body } = await send<{ ok: boolean; error: string }>(
+      '/api/apps/telegram-bot/settings',
       'PUT',
-      { qiymatlar: { rejim: 'polling' } },
+      { values: { mode: 'polling' } },
     )
 
     expect(status).toBe(500)
     expect(body.ok).toBe(false)
-    expect(body.xato).toContain('disk')
+    expect(body.error).toContain('disk')
   })
 
-  test('JSON bo\'lmasa 400', async () => {
-    const javob = await app.request('/api/apps/telegram-bot/sozlama', {
+  test('400 when the body is not JSON', async () => {
+    const response = await app.request('/api/apps/telegram-bot/settings', {
       method: 'PUT',
       body: 'notjson',
       headers: { 'content-type': 'application/json' },
     })
-    expect(javob.status).toBe(400)
+    expect(response.status).toBe(400)
   })
 
-  test('auditga KALIT yoziladi, QIYMAT emas', async () => {
-    await yubor('/api/apps/telegram-bot/sozlama', 'PUT', {
-      qiymatlar: { token: '789456:SIRLIQIYMAT' },
+  test('the KEY is written to the audit log, not the VALUE', async () => {
+    await send('/api/apps/telegram-bot/settings', 'PUT', {
+      values: { token: '789456:SECRETVALUE' },
     })
 
-    const yozuvlar = db.query<{ action: string }, []>('SELECT action FROM audit_log').all()
-    const matn = JSON.stringify(yozuvlar)
+    const entries = db.query<{ action: string }, []>('SELECT action FROM audit_log').all()
+    const text = JSON.stringify(entries)
 
-    expect(matn).toContain('token')
-    // Sir auditga tushmasligi kerak — audit_log backup qilinadi va eksport
-    // qilinishi mumkin.
-    expect(matn).not.toContain('SIRLIQIYMAT')
+    expect(text).toContain('token')
+    // A secret must not land in the audit log — audit_log is backed up and can
+    // be exported.
+    expect(text).not.toContain('SECRETVALUE')
   })
 })
 
-describe('POST /api/apps/:id/amal/:nom', () => {
-  test('amal bajariladi va xabar qaytadi', async () => {
-    const { status, body } = await yubor<{ ok: boolean; xabar: string }>(
-      '/api/apps/telegram-bot/amal/restart',
+describe('POST /api/apps/:id/action/:name', () => {
+  test('the action runs and a message comes back', async () => {
+    const { status, body } = await send<{ ok: boolean; message: string }>(
+      '/api/apps/telegram-bot/action/restart',
       'POST',
     )
 
     expect(status).toBe(200)
     expect(body.ok).toBe(true)
-    expect(body.xabar).toBe('Bot restart qilindi')
-    expect(buyruqlar[0]).toEqual(['docker', 'restart', 'telegram-bot'])
+    expect(body.message).toBe('The bot was restarted')
+    expect(commands[0]).toEqual(['docker', 'restart', 'telegram-bot'])
   })
 
-  test('`yangila` dagi statelar MAJBURIY yangilanadi', async () => {
-    const { body } = await yubor<{ statelar: Record<string, { ok: boolean; qiymat: unknown }> }>(
-      '/api/apps/telegram-bot/amal/restart',
+  test('the states in `refresh` are refreshed FORCIBLY', async () => {
+    const { body } = await send<{ states: Record<string, { ok: boolean; value: unknown }> }>(
+      '/api/apps/telegram-bot/action/restart',
       'POST',
     )
 
-    // Restart bosilganda status darhol o'zgarishi kerak — kesh interval
-    // tugashini kutib turmasin.
-    expect(body.statelar.holat.ok).toBe(true)
-    expect(body.statelar.holat.qiymat).toEqual({ faol: true })
+    // When restart is pressed the status has to change immediately — the cache
+    // must not wait for the interval to run out.
+    expect(body.states.status.ok).toBe(true)
+    expect(body.states.status.value).toEqual({ active: true })
   })
 
-  test('yiqilgan amal 200 va `ok: false` (server xatosi emas)', async () => {
-    const { status, body } = await yubor<{ ok: boolean; xato: string }>(
-      '/api/apps/telegram-bot/amal/yiqiladi',
+  test('a crashing action gives 200 and `ok: false` (not a server error)', async () => {
+    const { status, body } = await send<{ ok: boolean; error: string }>(
+      '/api/apps/telegram-bot/action/crashes',
       'POST',
     )
 
-    // Bu ma'lumot xatosi, server xatosi emas — `states` bilan bir xil qaror.
+    // This is a data error, not a server error — the same decision as `states`.
     expect(status).toBe(200)
     expect(body.ok).toBe(false)
-    expect(body.xato).toContain('konteyner topilmadi')
+    expect(body.error).toContain('container not found')
   })
 
-  test('yo\'q amal 404', async () => {
-    expect((await yubor('/api/apps/telegram-bot/amal/yoq', 'POST')).status).toBe(404)
+  test('404 for a missing action', async () => {
+    expect((await send('/api/apps/telegram-bot/action/missing', 'POST')).status).toBe(404)
   })
 
-  test('yo\'q ilova 404', async () => {
-    expect((await yubor('/api/apps/yoq/amal/restart', 'POST')).status).toBe(404)
+  test('404 for a missing app', async () => {
+    expect((await send('/api/apps/missing/action/restart', 'POST')).status).toBe(404)
   })
 
-  test('amal auditga yoziladi', async () => {
-    await yubor('/api/apps/telegram-bot/amal/restart', 'POST')
+  test('the action is written to the audit log', async () => {
+    await send('/api/apps/telegram-bot/action/restart', 'POST')
 
-    const yozuv = db
+    const entry = db
       .query<{ action: string; level: string; result: string }, []>(
         'SELECT action, level, result FROM audit_log ORDER BY rowid DESC LIMIT 1',
       )
       .get()
 
-    expect(yozuv?.action).toContain('Botni restart qilish')
-    expect(yozuv?.level).toBe("o'zgartirish")
-    expect(yozuv?.result).toBe('OK')
+    expect(entry?.action).toContain('Restart the bot')
+    expect(entry?.level).toBe('write')
+    expect(entry?.result).toBe('OK')
   })
 
-  test('yiqilgan amal auditda "rad etildi"', async () => {
-    await yubor('/api/apps/telegram-bot/amal/yiqiladi', 'POST')
+  test('a crashing action shows as "denied" in the audit log', async () => {
+    await send('/api/apps/telegram-bot/action/crashes', 'POST')
 
-    const yozuv = db
+    const entry = db
       .query<{ result: string }, []>('SELECT result FROM audit_log ORDER BY rowid DESC LIMIT 1')
       .get()
-    expect(yozuv?.result).toBe('rad etildi')
+    expect(entry?.result).toBe('denied')
   })
 
-  test('sirsiz sozlama qiymatlari amalga beriladi', async () => {
-    ilovaSaqla(
+  test('the non-secret setting values are handed to the action', async () => {
+    saveApp(
       {
         ...BOT,
-        amallar: [
+        actions: [
           {
-            nom: 'tekshir',
-            yorliq: 'Tekshirish',
-            kod: 'module.exports = async ({ sozlama }) => ({ xabar: "rejim=" + sozlama.rejim })',
+            name: 'check',
+            label: 'Check',
+            code: 'module.exports = async ({ setting }) => ({ message: "mode=" + setting.mode })',
           },
         ],
       },
       db,
     )
 
-    const { body } = await yubor<{ xabar: string }>(
-      '/api/apps/telegram-bot/amal/tekshir',
+    const { body } = await send<{ message: string }>(
+      '/api/apps/telegram-bot/action/check',
       'POST',
     )
-    // `oqi` dan kelgan sirsiz qiymat
-    expect(body.xabar).toBe('rejim=polling')
+    // The non-secret value that came from `read`
+    expect(body.message).toBe('mode=polling')
   })
 
-  test('parallel bosish BITTA bajarilishga aylanadi', async () => {
+  test('pressing in parallel collapses into ONE run', async () => {
     const [a, b] = await Promise.all([
-      yubor<{ ok: boolean }>('/api/apps/telegram-bot/amal/restart', 'POST'),
-      yubor<{ ok: boolean }>('/api/apps/telegram-bot/amal/restart', 'POST'),
+      send<{ ok: boolean }>('/api/apps/telegram-bot/action/restart', 'POST'),
+      send<{ ok: boolean }>('/api/apps/telegram-bot/action/restart', 'POST'),
     ])
 
     expect(a.body.ok).toBe(true)
     expect(b.body.ok).toBe(true)
-    // Ikki restart emas, bitta
-    expect(buyruqlar).toHaveLength(1)
+    // One restart, not two
+    expect(commands).toHaveLength(1)
   })
 })

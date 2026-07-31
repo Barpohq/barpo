@@ -238,7 +238,7 @@ function GithubModal({
       )
       onClose()
     } catch (e) {
-      setError(e instanceof ApiError ? (x.detail ?? e.message) : 'Could not connect')
+      setError(e instanceof ApiError ? (e.detail ?? e.message) : 'Could not connect')
       setBusy(false)
     }
   }
@@ -564,7 +564,7 @@ function InstallModal({
     for (const field of server.settings) {
       if (field.secret) continue
       initial[field.name] =
-        install?.sozlamaQiymatlari[field.name] ?? field.default ?? ''
+        install?.settingValues[field.name] ?? field.default ?? ''
     }
     return initial
   })
@@ -830,7 +830,7 @@ function Sources({
                     {busyId === m.id ? '…' : 'Sync'}
                   </button>
                 )}
-                {m.kind !== 'default' && (
+                {m.kind !== 'builtin' && (
                   <button
                     onClick={() => void remove(m)}
                     disabled={busyId !== null}

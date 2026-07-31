@@ -2,7 +2,7 @@
 //
 // TWO PLACES, TWO JOBS:
 //
-//   STORE    ~/.platforma/skills-ombor/<sourceId>/<skillId>/
+//   STORE    ~/.platforma/skills-store/<sourceId>/<skillId>/
 //            The SINGLE copy of an installed skill's files. Even when one
 //            skill is used in 10 projects, there is only one copy here.
 //
@@ -47,7 +47,7 @@ import { readTar } from './tar.ts'
 export function storeRoot(): string {
   const env = process.env.PLATFORM_SKILLS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'skills-ombor')
+  return join(homedir(), '.platforma', 'skills-store')
 }
 
 /**

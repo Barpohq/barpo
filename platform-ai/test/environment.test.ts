@@ -18,16 +18,16 @@ let sorovlar: PermissionRequest[]
 /** Har so'rovga oldindan belgilangan javobni beradigan boshqaruvchi */
 function soxtaRuxsat(javob: PermissionAnswer): PermissionManager {
   const b = new PermissionManager('sinov')
-  b.kuzat((sorov) => {
+  b.subscribe((sorov) => {
     sorovlar.push(sorov)
     // Keyingi tick'da javob beramiz — haqiqiy oqimga o'xshash
-    queueMicrotask(() => b.javobBer(sorov.id, javob))
+    queueMicrotask(() => b.answer(sorov.id, javob))
   })
   return b
 }
 
 function muhitYarat(javob: PermissionAnswer): RestrictedEnv {
-  return new RestrictedEnv({ workDir: ish, ruxsat: soxtaRuxsat(javob) })
+  return new RestrictedEnv({ workDir: ish, permission: soxtaRuxsat(javob) })
 }
 
 /**
@@ -41,7 +41,7 @@ function soxtaIchki(yozuv: { timeout?: number }[]) {
       return { ok: true as const, value: { stdout: '', stderr: '', exitCode: 0 } }
     },
     cleanup: async () => undefined,
-  } as unknown as ConstructorParameters<typeof RestrictedEnv>[0]['ichki']
+  } as unknown as ConstructorParameters<typeof RestrictedEnv>[0]['inner']
 }
 
 beforeEach(() => {
@@ -99,8 +99,8 @@ describe('ish papkasidan tashqarida', () => {
     expect(r.ok).toBe(false)
     expect(!r.ok && r.error.code).toBe('permission_denied')
     expect(sorovlar).toHaveLength(1)
-    expect(sorovlar[0]?.tur).toBe('fayl')
-    expect(sorovlar[0]?.amal).toBe('read')
+    expect(sorovlar[0]?.kind).toBe('file')
+    expect(sorovlar[0]?.action).toBe('read')
   })
 
   test('ruxsat berilsa o\'qiydi', async () => {
@@ -129,7 +129,7 @@ describe('ish papkasidan tashqarida', () => {
     const m = muhitYarat('deny')
     const r = await m.writeFile(join(tashqi, 'yangi.txt'), 'x')
     expect(r.ok).toBe(false)
-    expect(sorovlar[0]?.amal).toBe('write')
+    expect(sorovlar[0]?.action).toBe('write')
   })
 
   test('bir marta ruxsat berilgan yo\'l qayta so\'ralmaydi', async () => {
@@ -188,7 +188,7 @@ describe('buyruq bajarish', () => {
     const r = await m.exec('rm -rf ichki.txt')
     expect(r.ok).toBe(false)
     expect(sorovlar).toHaveLength(1)
-    expect(sorovlar[0]?.tur).toBe('buyruq')
+    expect(sorovlar[0]?.kind).toBe('command')
 
     // Fayl joyida turibdi
     const oqish = await m.readTextFile('ichki.txt')
@@ -206,7 +206,7 @@ describe('buyruq bajarish', () => {
     const m = muhitYarat('deny')
     const r = await m.exec('mening-notanish-buyrugim')
     expect(r.ok).toBe(false)
-    expect(sorovlar[0]?.sabab).toContain('notanish')
+    expect(sorovlar[0]?.reason).toContain('notanish')
   })
 
   test('buyruq ish papkasida boshlanadi', async () => {
@@ -230,7 +230,7 @@ describe('remove — ichkarida ham so\'raladi', () => {
     const r = await m.remove('ichki.txt')
     expect(r.ok).toBe(false)
     expect(sorovlar).toHaveLength(1)
-    expect(sorovlar[0]?.amal).toBe('remove')
+    expect(sorovlar[0]?.action).toBe('remove')
   })
 })
 
@@ -242,7 +242,7 @@ describe('cp/mv — mavjud fayl ustiga yozish', () => {
     const r = await m.exec('cp manba.txt ichki.txt')
     expect(r.ok).toBe(false)
     expect(sorovlar).toHaveLength(1)
-    expect(sorovlar[0]?.sabab).toContain('overwrites')
+    expect(sorovlar[0]?.reason).toContain('overwrites')
 
     // Eski mazmun joyida
     const oqish = await m.readTextFile('ichki.txt')
@@ -287,8 +287,8 @@ describe('buyruq timeout', () => {
     const uzatilgan: { timeout?: number }[] = []
     const m = new RestrictedEnv({
       workDir: ish,
-      ruxsat: soxtaRuxsat('deny'),
-      ichki: soxtaIchki(uzatilgan),
+      permission: soxtaRuxsat('deny'),
+      inner: soxtaIchki(uzatilgan),
     })
 
     await m.exec('ls')
@@ -300,8 +300,8 @@ describe('buyruq timeout', () => {
     const uzatilgan: { timeout?: number }[] = []
     const m = new RestrictedEnv({
       workDir: ish,
-      ruxsat: soxtaRuxsat('deny'),
-      ichki: soxtaIchki(uzatilgan),
+      permission: soxtaRuxsat('deny'),
+      inner: soxtaIchki(uzatilgan),
     })
 
     await m.exec('ls', { timeout: 5 })
@@ -312,9 +312,9 @@ describe('buyruq timeout', () => {
     const uzatilgan: { timeout?: number }[] = []
     const m = new RestrictedEnv({
       workDir: ish,
-      ruxsat: soxtaRuxsat('deny'),
-      ichki: soxtaIchki(uzatilgan),
-      buyruqTimeoutMs: 30_000,
+      permission: soxtaRuxsat('deny'),
+      inner: soxtaIchki(uzatilgan),
+      commandTimeoutMs: 30_000,
     })
 
     await m.exec('ls')
@@ -326,8 +326,8 @@ describe('buyruq timeout', () => {
     // shuning uchun ruxsat beruvchi boshqaruvchi kerak.
     const m = new RestrictedEnv({
       workDir: ish,
-      ruxsat: soxtaRuxsat('allow'),
-      buyruqTimeoutMs: 1000,
+      permission: soxtaRuxsat('allow'),
+      commandTimeoutMs: 1000,
     })
 
     const boshlandi = Date.now()

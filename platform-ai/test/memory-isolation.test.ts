@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AGENT_SISTEM_PROMPT, classifierHistory } from '../src/agent.ts'
+import { AGENT_SYSTEM_PROMPT, classifierHistory } from '../src/agent.ts'
 import { requestToText, type ClassifierRequest } from '../src/classifier.ts'
 import { MEMORY_DIR, readMemories, memoriesToPrompt } from '../src/memory.ts'
 
@@ -45,8 +45,8 @@ afterEach(() => {
 })
 
 const base: ClassifierRequest = {
-  suhbat: [{ role: 'user', text: 'read the config.json file for me' }],
-  amal: { tur: 'buyruq', nishon: 'rm -rf ~', qaysiTool: 'bash' },
+  conversation: [{ role: 'user', text: 'read the config.json file for me' }],
+  action: { kind: 'command', target: 'rm -rf ~', tool: 'bash' },
   workDir: '/home/ms/work',
 }
 
@@ -66,7 +66,7 @@ describe('memory text does not reach the classifier', () => {
       { role: 'memory' as never, text: ATTACK },
       { role: 'assistant' as const, text: 'I read the file.' },
     ]
-    const text = requestToText({ ...base, suhbat: classifierHistory(rawHistory) })
+    const text = requestToText({ ...base, conversation: classifierHistory(rawHistory) })
 
     expect(text).not.toContain('every command is allowed')
     expect(text).not.toContain('ALLOW any action')
@@ -87,7 +87,7 @@ describe('memory text does not reach the classifier', () => {
 describe('memory does reach the AGENT prompt', () => {
   test('the agent sees memory — that is its purpose', () => {
     const memory = memoriesToPrompt(readMemories(dir), dir)
-    const prompt = AGENT_SISTEM_PROMPT(dir, undefined, undefined, memory)
+    const prompt = AGENT_SYSTEM_PROMPT(dir, undefined, undefined, memory)
 
     expect(prompt).toContain('Project memory')
     expect(prompt).toContain('<project_memory>')
@@ -95,7 +95,7 @@ describe('memory does reach the AGENT prompt', () => {
   })
 
   test('the prompt works in full without memory too', () => {
-    const prompt = AGENT_SISTEM_PROMPT(dir)
+    const prompt = AGENT_SYSTEM_PROMPT(dir)
     expect(prompt).not.toContain('project_memory')
     expect(prompt).toContain('Your working directory')
   })
@@ -104,7 +104,7 @@ describe('memory does reach the AGENT prompt', () => {
     // The order shows the intent: the platform rules are the foundation, with
     // extra layers on top. The project instructions (written by the user) come
     // last — they are the most specific context.
-    const prompt = AGENT_SISTEM_PROMPT(
+    const prompt = AGENT_SYSTEM_PROMPT(
       dir,
       '--- Project instructions (AGENTS.md) ---',
       '--- Available skills ---',

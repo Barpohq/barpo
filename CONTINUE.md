@@ -87,7 +87,7 @@ What this buys us:
 
 The price: one extra turn (the agent does a `read` first).
 
-**Directory:** `<workDir>/.platforma/sessiyalar/<sessionId>/fayllar/`. It is split
+**Directory:** `<workDir>/.platforma/sessions/<sessionId>/files/`. It is split
 per session because in a project conversation the work directory is shared. For
 the same reason `.platforma` was **excluded from search** (`SKIPPED_DIRS`) —
 otherwise an agent running `grep` would turn up files from unrelated
@@ -273,7 +273,7 @@ installs are not lost.
 **The disk flow:**
 
 ```
-GitHub tarball → STORE ~/.platforma/skills-ombor/<sourceId>/<skillId>/
+GitHub tarball → STORE ~/.platforma/skills-store/<sourceId>/<skillId>/
                         ↓ COPIED at the start of a session
                  <workDir>/.platforma/skills/<name>/
                         ↓ read from there
@@ -384,7 +384,7 @@ confirmed against the server.
 
 - Migration 005: a `projects` table + `chat_sessions.project_id` (NULL = a plain
   chat). `routes/projects.ts`: GET/POST.
-- Only the platform creates the directory: `~/.platforma/loyihalar/<slug>/`
+- Only the platform creates the directory: `~/.platforma/projects/<slug>/`
   (relocatable via the `PLATFORM_PROJECTS` env var). The slug uses the allowlist
   `[a-zA-Z0-9_-]`.
 - A project session's agent tools run in the project directory — all of a
