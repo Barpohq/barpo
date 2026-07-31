@@ -40,7 +40,7 @@ describe('credentials path', () => {
   test('falls back to the home directory when the env var is absent', () => {
     delete process.env.PLATFORM_MCP_CREDENTIALS
     expect(mcpCredentialsPath()).toContain('.platforma')
-    expect(mcpCredentialsPath()).toContain('mcp-kredensiallar.json')
+    expect(mcpCredentialsPath()).toContain('mcp-credentials.json')
   })
 })
 

@@ -8,11 +8,11 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import type { ModelInfo } from '@platforma/shared'
 import { pickClassifierModel } from '../src/classifier.ts'
 
-const ORIGINAL_ENV = process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+const ORIGINAL_ENV = process.env.PLATFORM_CLASSIFIER_MODEL
 
 afterEach(() => {
-  if (ORIGINAL_ENV === undefined) delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-  else process.env.PLATFORMA_KLASSIFIKATOR_MODEL = ORIGINAL_ENV
+  if (ORIGINAL_ENV === undefined) delete process.env.PLATFORM_CLASSIFIER_MODEL
+  else process.env.PLATFORM_CLASSIFIER_MODEL = ORIGINAL_ENV
 })
 
 function model(part: Partial<ModelInfo> & { provider: string; id: string }): ModelInfo {
@@ -30,14 +30,14 @@ function model(part: Partial<ModelInfo> & { provider: string; id: string }): Mod
 }
 
 describe('forcing through env', () => {
-  test('PLATFORMA_KLASSIFIKATOR_MODEL beats everything', () => {
-    process.env.PLATFORMA_KLASSIFIKATOR_MODEL = 'ollama/my-model'
+  test('PLATFORM_CLASSIFIER_MODEL beats everything', () => {
+    process.env.PLATFORM_CLASSIFIER_MODEL = 'ollama/my-model'
     const picked = pickClassifierModel([model({ provider: 'openrouter', id: 'a/b' })])
     expect(picked).toEqual({ provider: 'ollama', model: 'my-model' })
   })
 
   test('a model id containing slashes is split correctly', () => {
-    process.env.PLATFORMA_KLASSIFIKATOR_MODEL = 'openrouter/google/gemini-2.5-flash-lite'
+    process.env.PLATFORM_CLASSIFIER_MODEL = 'openrouter/google/gemini-2.5-flash-lite'
     expect(pickClassifierModel([])).toEqual({
       provider: 'openrouter',
       model: 'google/gemini-2.5-flash-lite',
@@ -49,7 +49,7 @@ describe('unsuitable models are excluded', () => {
   test('models where thinking is mandatory are not picked', () => {
     // In testing: qwen3 gave no answer even after 90 seconds,
     // gpt-5-mini returned "Reasoning is mandatory for this endpoint"
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     const picked = pickClassifierModel([
       model({ provider: 'ollama', id: 'qwen3:8b', cost: { input: 0, output: 0 } }),
       model({ provider: 'openrouter', id: 'openai/gpt-5-mini', cost: { input: 0.1, output: 0.4 } }),
@@ -61,7 +61,7 @@ describe('unsuitable models are excluded', () => {
 
   test('obsolete generations are not picked', () => {
     // claude-3-haiku returned a provider error in testing
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'anthropic/claude-3-haiku', cost: { input: 0, output: 0 } }),
       model({ provider: 'openrouter', id: 'meta/llama-3.3-70b', cost: { input: 5, output: 5 } }),
@@ -70,7 +70,7 @@ describe('unsuitable models are excluded', () => {
   })
 
   test('a model with a small context is not picked', () => {
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     const picked = pickClassifierModel([
       model({ provider: 'x', id: 'small', contextWindow: 4096, cost: { input: 0, output: 0 } }),
       model({ provider: 'x', id: 'large', contextWindow: 128_000, cost: { input: 9, output: 9 } }),
@@ -79,7 +79,7 @@ describe('unsuitable models are excluded', () => {
   })
 
   test('undefined when there is no suitable model', () => {
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     expect(pickClassifierModel([])).toBeUndefined()
     expect(
       pickClassifierModel([model({ provider: 'ollama', id: 'qwen3:0.6b' })]),
@@ -89,7 +89,7 @@ describe('unsuitable models are excluded', () => {
 
 describe('the tested models take priority', () => {
   test('gemini-2.5-flash-lite ranks highest (8/8, ~0.8s)', () => {
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'inclusionai/ling-2.6-flash', cost: { input: 0, output: 0 } }),
       model({ provider: 'openrouter', id: 'google/gemini-2.5-flash-lite', cost: { input: 9, output: 9 } }),
@@ -99,7 +99,7 @@ describe('the tested models take priority', () => {
   })
 
   test('haiku-4.5 comes second (8/8, ~2.3s)', () => {
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'inclusionai/ling-2.6-flash', cost: { input: 0, output: 0 } }),
       model({ provider: 'anthropic', id: 'claude-haiku-4-5', cost: { input: 1, output: 5 } }),
@@ -110,7 +110,7 @@ describe('the tested models take priority', () => {
   test('the reasoning flag does not get in the way of selection', () => {
     // Haiku and Gemini are `reasoning: true`, but thinking is optional — both
     // scored 8/8 in testing. Only the ones where it is MANDATORY are excluded.
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     const picked = pickClassifierModel([
       model({ provider: 'openrouter', id: 'google/gemini-2.5-flash-lite', reasoning: true }),
     ])
@@ -118,7 +118,7 @@ describe('the tested models take priority', () => {
   })
 
   test('among the untested ones a fast family wins, then the cheaper one', () => {
-    delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
     const picked = pickClassifierModel([
       model({ provider: 'x', id: 'large-model', cost: { input: 0, output: 0 } }),
       model({ provider: 'x', id: 'some-flash-lite', cost: { input: 5, output: 5 } }),

@@ -129,7 +129,7 @@ export const CLASSIFIER_PROMPT = [
  *   - Claude Haiku 4.5 — 8/8, ~3 seconds on average.
  *
  * Hence the selection criteria:
- *   1) the `PLATFORMA_KLASSIFIKATOR_MODEL` env var — forced
+ *   1) the `PLATFORM_CLASSIFIER_MODEL` env var — forced
  *   2) `reasoning: false` models (a thinking stage blocks a fast answer)
  *   3) known fast families (haiku, mini, flash) take priority
  *   4) the cheapest of the rest
@@ -140,13 +140,13 @@ export const CLASSIFIER_PROMPT = [
 export function pickClassifierModel(
   models: ModelInfo[],
   /**
-   * `ruxsat.klassifikatorModeli` from the config. It ranks BELOW the env
+   * `permission.classifierModel` from the config. It ranks BELOW the env
    * variable: env is for working around a temporary failure, while the config
    * is a permanent setting, so env has to win.
    */
   configModel?: string | null,
 ): { provider: string; model: string } | undefined {
-  for (const forced of [process.env.PLATFORMA_KLASSIFIKATOR_MODEL?.trim(), configModel?.trim()]) {
+  for (const forced of [process.env.PLATFORM_CLASSIFIER_MODEL?.trim(), configModel?.trim()]) {
     if (!forced) continue
     const [provider, ...rest] = forced.split('/')
     const model = rest.join('/')

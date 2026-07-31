@@ -123,14 +123,14 @@ describe('the classifier model comes from the config', () => {
   test('the env variable BEATS the config', () => {
     // Env is for working around a temporary failure, so it has to override the
     // permanent setting
-    const previous = process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-    process.env.PLATFORMA_KLASSIFIKATOR_MODEL = 'env/model'
+    const previous = process.env.PLATFORM_CLASSIFIER_MODEL
+    process.env.PLATFORM_CLASSIFIER_MODEL = 'env/model'
     try {
       const picked = pickClassifierModel(models, 'config/model')
       expect(picked).toEqual({ provider: 'env', model: 'model' })
     } finally {
-      if (previous === undefined) delete process.env.PLATFORMA_KLASSIFIKATOR_MODEL
-      else process.env.PLATFORMA_KLASSIFIKATOR_MODEL = previous
+      if (previous === undefined) delete process.env.PLATFORM_CLASSIFIER_MODEL
+      else process.env.PLATFORM_CLASSIFIER_MODEL = previous
     }
   })
 })

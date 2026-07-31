@@ -41,7 +41,7 @@ function setUpFake(failing: string[] = []): Call[] {
 
     let output: ((b: string) => void) | undefined
     const proc: McpProcess = {
-      yoz(text) {
+      write(text) {
         for (const line of text.split('\n')) {
           if (!line.trim()) continue
           const x = JSON.parse(line) as {
@@ -83,13 +83,13 @@ function setUpFake(failing: string[] = []): Call[] {
           }
         }
       },
-      chiqishniTingla(fn) {
+      onStdout(fn) {
         output = fn
       },
-      xatoOqiminiTingla() {},
-      toxtat() {},
-      old() {},
-      tugadi: Promise.resolve(0),
+      onStderr() {},
+      stop() {},
+      kill() {},
+      exited: Promise.resolve(0),
     }
     return proc
   })

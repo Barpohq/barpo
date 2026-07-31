@@ -27,7 +27,7 @@ function denyingPermissionManager(sessionId: string) {
   const manager = realPermissionManager(sessionId)
   if (!watched.has(manager)) {
     watched.add(manager)
-    manager.watch((request) => manager.answer(request.id, 'deny'))
+    manager.subscribe((request) => manager.answer(request.id, 'deny'))
   }
   return manager
 }

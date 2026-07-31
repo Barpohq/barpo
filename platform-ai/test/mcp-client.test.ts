@@ -52,12 +52,12 @@ function setUpFake(
     let output: ((b: string) => void) | undefined
     let errorStream: ((b: string) => void) | undefined
     let finish: ((code: number) => void) | undefined
-    const tugadi = new Promise<number>((r) => {
+    const exited = new Promise<number>((r) => {
       finish = r
     })
 
     const proc: McpProcess = {
-      yoz(text) {
+      write(text) {
         state.written.push(text)
         // We answer every incoming line
         for (const line of text.split('\n')) {
@@ -71,22 +71,22 @@ function setUpFake(
           queueMicrotask(() => output?.(`${JSON.stringify(answer)}\n`))
         }
       },
-      chiqishniTingla(fn) {
+      onStdout(fn) {
         output = fn
         if (setting.stderr) queueMicrotask(() => errorStream?.(setting.stderr as string))
       },
-      xatoOqiminiTingla(fn) {
+      onStderr(fn) {
         errorStream = fn
       },
-      toxtat() {
+      stop() {
         state.stopped++
         if (!setting.noSigterm) finish?.(0)
       },
-      old() {
+      kill() {
         state.killed++
         finish?.(137)
       },
-      tugadi,
+      exited,
     }
     return proc
   })
@@ -358,7 +358,7 @@ describe('tools/call', () => {
     setProcessSpawner(() => {
       let output: ((b: string) => void) | undefined
       return {
-        yoz(text) {
+        write(text) {
           for (const line of text.split('\n')) {
             if (!line.trim()) continue
             const x = JSON.parse(line) as {
@@ -390,13 +390,13 @@ describe('tools/call', () => {
             }
           }
         },
-        chiqishniTingla(fn) {
+        onStdout(fn) {
           output = fn
         },
-        xatoOqiminiTingla() {},
-        toxtat() {},
-        old() {},
-        tugadi: Promise.resolve(0),
+        onStderr() {},
+        stop() {},
+        kill() {},
+        exited: Promise.resolve(0),
       }
     })
 
@@ -464,7 +464,7 @@ describe('transport resilience', () => {
     setProcessSpawner(() => {
       let output: ((b: string) => void) | undefined
       return {
-        yoz(text) {
+        write(text) {
           const x = JSON.parse(text.trim()) as { id?: number; method?: string }
           if (x.method !== 'initialize') return
           queueMicrotask(() => {
@@ -473,13 +473,13 @@ describe('transport resilience', () => {
             output?.(`${JSON.stringify({ jsonrpc: '2.0', id: x.id, result: {} })}\n`)
           })
         },
-        chiqishniTingla(fn) {
+        onStdout(fn) {
           output = fn
         },
-        xatoOqiminiTingla() {},
-        toxtat() {},
-        old() {},
-        tugadi: Promise.resolve(0),
+        onStderr() {},
+        stop() {},
+        kill() {},
+        exited: Promise.resolve(0),
       }
     })
 
@@ -493,7 +493,7 @@ describe('transport resilience', () => {
     setProcessSpawner(() => {
       let output: ((b: string) => void) | undefined
       return {
-        yoz(text) {
+        write(text) {
           const x = JSON.parse(text.trim()) as { id?: number; method?: string }
           if (x.method !== 'initialize') return
           const answer = JSON.stringify({ jsonrpc: '2.0', id: x.id, result: { ok: true } })
@@ -504,13 +504,13 @@ describe('transport resilience', () => {
             output?.('\n')
           })
         },
-        chiqishniTingla(fn) {
+        onStdout(fn) {
           output = fn
         },
-        xatoOqiminiTingla() {},
-        toxtat() {},
-        old() {},
-        tugadi: Promise.resolve(0),
+        onStderr() {},
+        stop() {},
+        kill() {},
+        exited: Promise.resolve(0),
       }
     })
 

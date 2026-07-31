@@ -45,7 +45,7 @@ function denyingPermissions(sessionId: string) {
   const manager = realPermissionManager(sessionId)
   if (!listenerAdded.has(manager)) {
     listenerAdded.add(manager)
-    manager.kuzat((request) => manager.javobBer(request.id, 'deny'))
+    manager.subscribe((request) => manager.answer(request.id, 'deny'))
   }
   return manager
 }
@@ -65,7 +65,7 @@ mock.module('@platforma/ai', () => ({
 
 const { app } = await import('../src/app.ts')
 const { openDb, setDb } = await import('../src/db.ts')
-const { runningSessions, streamReply, isStreaming, stopStream } = await import(
+const { runningSessions, streamReply, isStreaming, stopStream, clearRunningStreams } = await import(
   '../src/orchestrator.ts'
 )
 const { createSession, readMessages, writeMessage } = await import('../src/repo.ts')
@@ -86,6 +86,12 @@ function fakeWs() {
 }
 
 beforeEach(() => {
+  // The stream registry is module level, so it is shared with every other test
+  // file. `POST /api/chat/send` starts its stream WITHOUT awaiting it, so
+  // another file may have left an entry behind — and the `runningSessions()`
+  // tests below would then count somebody else's session.
+  clearRunningStreams()
+
   // The work directories go into a temporary place, not the home directory
   worksDir = mkdtempSync(join(tmpdir(), 'orch-works-'))
   process.env.PLATFORM_WORKS = worksDir

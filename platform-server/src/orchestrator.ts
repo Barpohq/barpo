@@ -770,6 +770,26 @@ export function isStreaming(sessionId: string): boolean {
 }
 
 /**
+ * For tests: abort every running stream and empty the registry.
+ *
+ * WHY THIS IS NEEDED. `running` is module level, so it is SHARED by every test
+ * file in the process. `POST /api/chat/send` starts the stream with `void`
+ * (`routes/chat.ts`) — it does not await it, which is correct in production but
+ * means the test that sent the request finishes while the stream is still
+ * registered. That leftover entry then shows up in another file's
+ * `runningSessions()` assertions, so the suite failed at random depending on
+ * the order Bun happened to run the files in.
+ *
+ * `stopStream()` is not enough on its own: `abort()` only requests a stop and
+ * the entry is removed later, in the stream's own `finally`. The registry is
+ * therefore cleared here as well, so the state is clean SYNCHRONOUSLY.
+ */
+export function clearRunningStreams(): void {
+  for (const stream of running.values()) stream.controller.abort()
+  running.clear()
+}
+
+/**
  * Puts the messages from the database into the shape the LLM expects.
  *
  * A message that has `agentMessages` (those written after migration 004) is

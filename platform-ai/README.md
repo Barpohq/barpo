@@ -182,7 +182,7 @@ counter to zero; the total counter stays.
 So the choice is not "the cheapest": models where reasoning is **mandatory**
 (qwen3, the GPT-5/o family, deepseek-r1) and older generations are excluded,
 and tested models take priority. It can be forced with the
-`PLATFORMA_KLASSIFIKATOR_MODEL` env var (in `provider/model` form).
+`PLATFORM_CLASSIFIER_MODEL` env var (in `provider/model` form).
 
 ### `permission.ts` — PermissionManager
 

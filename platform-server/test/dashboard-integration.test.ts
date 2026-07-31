@@ -151,7 +151,10 @@ describe('the full chain through the appPublish tool', () => {
     })
     return {
       text: result.content.map((b) => ('text' in b ? b.text : '')).join(''),
-      isError: result.isError,
+      // `AgentToolResult` has no `isError` field: a rejection is reported by
+      // the result text ("was REJECTED and nothing was saved") and by
+      // `details.ok`.
+      details: result.details,
     }
   }
 
@@ -162,7 +165,7 @@ describe('the full chain through the appPublish tool', () => {
       widgets: [{ type: 'stats', items: [{ label: 'A', value: '1' }] }],
     })
 
-    expect(result.isError).toBeFalsy()
+    expect(result.details?.ok).toBe(true)
     expect(result.text).toContain('published')
     expect(readApp('final-test', db)?.manifest.widgets).toHaveLength(1)
   })
@@ -182,7 +185,7 @@ describe('the full chain through the appPublish tool', () => {
 
   test('a rejected call comes back to the model AS AN ERROR', async () => {
     const result = await publish({ id: 'BAD ID', name: 'x' })
-    expect(result.isError).toBe(true)
-    expect(result.text).toContain('REJECTED')
+    expect(result.details?.ok).toBe(false)
+    expect(result.text).toContain('REJECTED and nothing was saved')
   })
 })

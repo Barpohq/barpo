@@ -50,7 +50,7 @@ export interface McpToolListEntry {
   tool: McpToolSpec
 }
 
-/** The length limit of `nishon` in a permission request */
+/** The length limit of `target` in a permission request */
 const TARGET_LIMIT = 1000
 
 /**

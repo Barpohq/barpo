@@ -28,9 +28,9 @@ import type { JsonRpcIncoming, JsonRpcRequest, JsonRpcNotification } from './mcp
 
 export interface McpTransport {
   /** Sends a single JSON-RPC message (a request or a notification) */
-  send(xabar: JsonRpcRequest | JsonRpcNotification): Promise<void>
+  send(message: JsonRpcRequest | JsonRpcNotification): Promise<void>
   /** Listens for incoming messages. Returns a cancel function. */
-  listen(fn: (xabar: JsonRpcIncoming) => void): () => void
+  listen(fn: (message: JsonRpcIncoming) => void): () => void
   /**
    * Closes the transport — kills the process or drops the connection.
    *
@@ -53,17 +53,17 @@ export interface McpTransport {
  */
 export interface McpProcess {
   /** Write to the server (stdin) */
-  yoz(matn: string): void
+  write(text: string): void
   /** Text coming from the server (stdout) — a raw stream, not split into lines */
-  chiqishniTingla(fn: (chunk: string) => void): void
+  onStdout(fn: (chunk: string) => void): void
   /** The diagnostic stream (stderr) — NOT part of the protocol */
-  xatoOqiminiTingla(fn: (chunk: string) => void): void
+  onStderr(fn: (chunk: string) => void): void
   /** Graceful stop (SIGTERM) */
-  toxtat(): void
+  stop(): void
   /** Forced kill (SIGKILL) */
-  old(): void
+  kill(): void
   /** Wait for the process to finish */
-  tugadi: Promise<number>
+  exited: Promise<number>
 }
 
 export type ProcessSpawner = (
@@ -101,7 +101,7 @@ export type ProcessSpawner = (
  * │ goes inside the method" in `environment.ts`).                        │
  * └──────────────────────────────────────────────────────────────────────┘
  */
-const TAQIQLANGAN_ENV = new Set([
+const FORBIDDEN_ENV = new Set([
   // Dynamic loader — runs arbitrary code
   'LD_PRELOAD',
   'LD_LIBRARY_PATH',
@@ -141,19 +141,19 @@ const TAQIQLANGAN_ENV = new Set([
  * Exported — the test checks this exact function.
  */
 export function sanitiseEnv(env: Record<string, string>): {
-  toza: Record<string, string>
-  tashlangan: string[]
+  clean: Record<string, string>
+  dropped: string[]
 } {
-  const toza: Record<string, string> = {}
-  const tashlangan: string[] = []
+  const clean: Record<string, string> = {}
+  const dropped: string[] = []
   for (const [name, value] of Object.entries(env)) {
-    if (TAQIQLANGAN_ENV.has(name.toUpperCase())) {
-      tashlangan.push(name)
+    if (FORBIDDEN_ENV.has(name.toUpperCase())) {
+      dropped.push(name)
       continue
     }
-    toza[name] = value
+    clean[name] = value
   }
-  return { toza, tashlangan }
+  return { clean, dropped }
 }
 
 /**
@@ -164,20 +164,20 @@ export function sanitiseEnv(env: Record<string, string>): {
  * the given values, they would not come up at all.
  *
  * BUT the keys that alter process behaviour ARE STRIPPED (see the
- * `TAQIQLANGAN_ENV` note) — they keep their real value from `process.env`.
+ * `FORBIDDEN_ENV` note) — they keep their real value from `process.env`.
  */
 const defaultProcessSpawner: ProcessSpawner = (argv, env) => {
-  const { toza, tashlangan } = sanitiseEnv(env)
-  if (tashlangan.length > 0) {
+  const { clean, dropped } = sanitiseEnv(env)
+  if (dropped.length > 0) {
     // We do not drop them silently: the user needs to know why their setting
     // had no effect, and this log line helps spot a malicious entry.
     console.warn(
-      `[mcp] dangerous env variables ignored: ${tashlangan.join(', ')}`,
+      `[mcp] dangerous env variables ignored: ${dropped.join(', ')}`,
     )
   }
 
   const proc = Bun.spawn(argv, {
-    env: { ...process.env, ...toza },
+    env: { ...process.env, ...clean },
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
@@ -186,23 +186,23 @@ const defaultProcessSpawner: ProcessSpawner = (argv, env) => {
   const writer = proc.stdin
 
   return {
-    yoz(text) {
+    write(text) {
       writer.write(text)
       writer.flush()
     },
-    chiqishniTingla(fn) {
+    onStdout(fn) {
       void readStream(proc.stdout, fn)
     },
-    xatoOqiminiTingla(fn) {
+    onStderr(fn) {
       void readStream(proc.stderr, fn)
     },
-    toxtat() {
+    stop() {
       proc.kill('SIGTERM')
     },
-    old() {
+    kill() {
       proc.kill('SIGKILL')
     },
-    tugadi: proc.exited,
+    exited: proc.exited,
   }
 }
 
@@ -256,14 +256,14 @@ export function liveProcessCount(): number {
 /**
  * Force-kills every live MCP process.
  *
- * `toxtat()` in `platform-server/src/index.ts` calls this. It DOES NOT WAIT
+ * `stop()` in `platform-server/src/index.ts` calls this. It DOES NOT WAIT
  * for SIGTERM: we have no time on our hands before the process goes down, so
  * it goes straight to SIGKILL.
  */
 export function killAllMcpProcesses(): void {
   for (const proc of liveProcesses) {
     try {
-      proc.old()
+      proc.kill()
     } catch {
       // it may already be dead
     }
@@ -297,7 +297,7 @@ export function createStdioTransport(
   // Drop it from the registry even when the process dies on its own —
   // otherwise the `Set` would fill up with dead entries on a long-running
   // server.
-  void proc.tugadi.then(
+  void proc.exited.then(
     () => liveProcesses.delete(proc),
     () => liveProcesses.delete(proc),
   )
@@ -307,7 +307,7 @@ export function createStdioTransport(
   let stderrText = ''
   let closed = false
 
-  proc.chiqishniTingla((chunk) => {
+  proc.onStdout((chunk) => {
     buffer += chunk
     // Newline-delimited JSON: every complete line is one message.
     // The last (unfinished) chunk stays in the buffer.
@@ -336,14 +336,14 @@ export function createStdioTransport(
     }
   })
 
-  proc.xatoOqiminiTingla((chunk) => {
+  proc.onStderr((chunk) => {
     stderrText = (stderrText + chunk).slice(-MAX_STDERR)
   })
 
   return {
-    async send(xabar) {
+    async send(message) {
       if (closed) throw new Error('The MCP transport is closed')
-      proc.yoz(`${JSON.stringify(xabar)}\n`)
+      proc.write(`${JSON.stringify(message)}\n`)
     },
 
     listen(fn) {
@@ -369,14 +369,14 @@ export function createStdioTransport(
       liveProcesses.delete(proc)
 
       try {
-        proc.toxtat()
+        proc.stop()
       } catch {
         // it may already be dead
       }
 
       const killTimer = setTimeout(() => {
         try {
-          proc.old()
+          proc.kill()
         } catch {
           // fine if it died in the meantime
         }
@@ -385,7 +385,7 @@ export function createStdioTransport(
       killTimer.unref?.()
 
       try {
-        await proc.tugadi
+        await proc.exited
       } catch {
         // an exit error must not stop closing either
       } finally {
@@ -401,7 +401,7 @@ export function createStdioTransport(
 }
 
 // ---------------------------------------------------------------------------
-// HTTP transport (streamable-http va sse)
+// HTTP transport (streamable-http and sse)
 // ---------------------------------------------------------------------------
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
@@ -478,7 +478,7 @@ export function createHttpTransport(
   }
 
   return {
-    async send(xabar) {
+    async send(message) {
       if (closed) throw new Error('The MCP transport is closed')
 
       const response = await fetch(url, {
@@ -490,7 +490,7 @@ export function createHttpTransport(
           ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
           ...headers,
         },
-        body: JSON.stringify(xabar),
+        body: JSON.stringify(message),
         signal: AbortSignal.timeout(timeoutMs),
       })
 

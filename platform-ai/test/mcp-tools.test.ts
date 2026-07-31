@@ -34,7 +34,7 @@ function setUpFake(toolNames: string[]): { called: string[] } {
   setProcessSpawner(() => {
     let output: ((b: string) => void) | undefined
     const proc: McpProcess = {
-      yoz(text) {
+      write(text) {
         for (const line of text.split('\n')) {
           if (!line.trim()) continue
           const x = JSON.parse(line) as {
@@ -62,13 +62,13 @@ function setUpFake(toolNames: string[]): { called: string[] } {
           }
         }
       },
-      chiqishniTingla(fn) {
+      onStdout(fn) {
         output = fn
       },
-      xatoOqiminiTingla() {},
-      toxtat() {},
-      old() {},
-      tugadi: Promise.resolve(0),
+      onStderr() {},
+      stop() {},
+      kill() {},
+      exited: Promise.resolve(0),
     }
     return proc
   })
@@ -215,7 +215,7 @@ describe('calling', () => {
     setProcessSpawner(() => {
       let output: ((b: string) => void) | undefined
       return {
-        yoz(text) {
+        write(text) {
           for (const line of text.split('\n')) {
             if (!line.trim()) continue
             const x = JSON.parse(line) as { id?: number; method?: string }
@@ -230,13 +230,13 @@ describe('calling', () => {
             }
           }
         },
-        chiqishniTingla(fn) {
+        onStdout(fn) {
           output = fn
         },
-        xatoOqiminiTingla() {},
-        toxtat() {},
-        old() {},
-        tugadi: Promise.resolve(0),
+        onStderr() {},
+        stop() {},
+        kill() {},
+        exited: Promise.resolve(0),
       }
     })
 

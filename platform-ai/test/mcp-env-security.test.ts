@@ -29,7 +29,7 @@ afterEach(() => {
 
 describe('sanitiseEnv', () => {
   test('ordinary keys pass through', () => {
-    const { toza: clean, tashlangan: dropped } = sanitiseEnv({
+    const { clean, dropped } = sanitiseEnv({
       GITHUB_TOKEN: 'ghp_x',
       BASE_URL: 'https://a.b',
       'X-Api-Key': 'k',
@@ -46,7 +46,7 @@ describe('sanitiseEnv', () => {
       'DYLD_INSERT_LIBRARIES',
       'DYLD_LIBRARY_PATH',
     ]) {
-      const { toza: clean, tashlangan: dropped } = sanitiseEnv({ [name]: '/tmp/evil.so' })
+      const { clean, dropped } = sanitiseEnv({ [name]: '/tmp/evil.so' })
       expect(clean).toEqual({})
       expect(dropped).toEqual([name])
     }
@@ -62,13 +62,13 @@ describe('sanitiseEnv', () => {
       'RUBYOPT',
       'BASH_ENV',
     ]) {
-      const { toza: clean } = sanitiseEnv({ [name]: 'malicious' })
+      const { clean } = sanitiseEnv({ [name]: 'malicious' })
       expect(clean).toEqual({})
     }
   })
 
   test('PATH and NODE_PATH ARE DROPPED (protection against a fake npx)', () => {
-    const { toza: clean, tashlangan: dropped } = sanitiseEnv({
+    const { clean, dropped } = sanitiseEnv({
       PATH: '/tmp/fake:/usr/bin',
       NODE_PATH: '/tmp',
     })
@@ -78,14 +78,14 @@ describe('sanitiseEnv', () => {
 
   test('LETTER CASE DOES NOT MATTER', () => {
     // `ld_preload` behaves like `LD_PRELOAD` on some systems
-    expect(sanitiseEnv({ ld_preload: '/tmp/x.so' }).toza).toEqual({})
-    expect(sanitiseEnv({ Node_Options: '--require=/tmp/x' }).toza).toEqual({})
-    expect(sanitiseEnv({ nOdE_oPtIoNs: 'x' }).toza).toEqual({})
+    expect(sanitiseEnv({ ld_preload: '/tmp/x.so' }).clean).toEqual({})
+    expect(sanitiseEnv({ Node_Options: '--require=/tmp/x' }).clean).toEqual({})
+    expect(sanitiseEnv({ nOdE_oPtIoNs: 'x' }).clean).toEqual({})
   })
 
   test('a good key next to a dangerous one IS KEPT', () => {
     // One broken field must not destroy the whole setting
-    const { toza: clean, tashlangan: dropped } = sanitiseEnv({
+    const { clean, dropped } = sanitiseEnv({
       GITHUB_TOKEN: 'ghp_x',
       NODE_OPTIONS: '--require=/tmp/evil.js',
     })
@@ -101,12 +101,12 @@ describe('the spawn layer', () => {
     setProcessSpawner((_argv, env) => {
       state.received = env
       const proc: McpProcess = {
-        yoz() {},
-        chiqishniTingla() {},
-        xatoOqiminiTingla() {},
-        toxtat() {},
-        old() {},
-        tugadi: Promise.resolve(0),
+        write() {},
+        onStdout() {},
+        onStderr() {},
+        stop() {},
+        kill() {},
+        exited: Promise.resolve(0),
       }
       return proc
     })
@@ -158,7 +158,7 @@ describe('the spawn layer', () => {
 
     // Now we call Bun.spawn directly with THE SAME env, but WITH the
     // sanitising — this is exactly what the default spawner does
-    const { toza: clean } = sanitiseEnv({
+    const { clean } = sanitiseEnv({
       NODE_OPTIONS: '--require=/tmp/evil.js',
       MCP_TEST_TOKEN: 'good-value',
     })
