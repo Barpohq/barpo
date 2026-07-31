@@ -81,9 +81,20 @@ machines they read from.
   state-run.ts      — running the state code the AI wrote
   state-cache.ts    — one cache per state, on its own interval, requests coalesced
   action-run.ts     — running actions and settings: a lock, an audit entry, a longer timeout
-  dashboard-save.ts — the `appPublish` tool → validate → compile → upsert
+  apps-dir.ts       — where an app's folder lives, and the path checks that guard it
+  app-store.ts      — reads a folder into an `AppManifest` (the folder ↔ manifest translator)
+  view-cache.ts     — `.build/` next to the source, keyed by a hash of `view.jsx`
+  dashboard-save.ts — the `appPublish` tool → read the folder → validate → record it
+  app-delete.ts     — deletes the publish row AND the folder (confirmed callers only)
   view-build.ts     — compiling the AI's JSX into browser JS (classic transform)
 ```
+
+**An app is a FOLDER, not a database row.** `~/.platforma/apps/<id>/` holds
+`app.json` plus optional `view.jsx`, `states/<name>.js`, `settings.js` and
+`actions/<name>.js`; the `apps` table records only that a folder was published
+and where. Every request reads the folder, which is what makes editing a file —
+by the agent or by the user, in any editor — the whole update. `PLATFORM_APPS`
+relocates the root (tests point it at a temporary directory).
 
 **Migrations, routes, WebSocket**
 
@@ -157,8 +168,15 @@ THIS SERVER, through callbacks handed to `agentStream()` (`orchestrator.ts`):
 | Tool | Supplied via | What it reaches |
 |---|---|---|
 | `serverList` | `serverProvider` | the server rows, re-read from the database on every call |
-| `appPublish` | `dashboardSink` | validate → compile the JSX → upsert into `apps` (`dashboard-save.ts`) |
+| `appPublish` | `dashboardSink` | read the folder → validate → compile the JSX → record the publish (`dashboard-save.ts`) |
+| `appDelete` | `dashboardRemover` | asks the user, then deletes the row and the folder (`app-delete.ts`) |
 | MCP tools | `mcpProvider` | the installed MCP servers, credentials merged in (`mcp-connect.ts`) |
+
+`appDelete` is supplied SEPARATELY from `appPublish` because erasing an app is
+a different capability from creating one, and it is declared only alongside the
+permission manager. It is also the one tool in the system that refuses an
+automated answer: `requireUser` skips auto mode and any stored "always", so an
+app disappears only when a human said so — every time.
 
 This is an **inversion**, and it is the point: `platform-ai` knows nothing about
 the database. It declares the tool and calls a function; where the data comes
@@ -367,8 +385,9 @@ unreachable one.
 
 | Method | Path | Response | Note |
 |---|---|---|---|
-| GET | `/api/apps` | `{apps: AppManifest[]}` | the manifests of the installed apps |
-| GET | `/api/apps/:id` | `{manifest, status, createdAt, updatedAt}` | 404 when not found |
+| GET | `/api/apps` | `{apps: AppManifest[]}` | read from the folders on every call |
+| GET | `/api/apps/:id` | `{manifest, status, createdAt, updatedAt, dir?, errors?}` | 404 when not found |
+| DELETE | `/api/apps/:id` | `{ok, folderRemoved?, error?}` | erases the folder too — the UI confirms first |
 | GET | `/api/apps/:id/state` | `{states: {name: result}}` | every state at once — for the initial page load |
 | GET | `/api/apps/:id/state/:name` | the state result | one state; `?force=1` bypasses the cache |
 | GET | `/api/apps/:id/settings` | `{fields, values, isSet, warning?}` | 404 when the app has no settings |

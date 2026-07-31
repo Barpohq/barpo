@@ -54,6 +54,7 @@ import { SERVER_PROMPT_SECTION, serverToolsRaw, type ServerProvider } from './se
 import {
   DASHBOARD_PROMPT_SECTION,
   dashboardToolsRaw,
+  type DashboardRemover,
   type DashboardSink,
 } from './dashboard-tools.ts'
 import { McpManager, type McpConnectableServer } from './mcp-manager.ts'
@@ -135,14 +136,26 @@ export interface AgentOptions {
    */
   serverProvider?: ServerProvider
   /**
-   * The sink that stores the app manifest (the dynamic dashboard).
+   * The function that registers an app folder (the dynamic dashboard).
    *
    * If not given, the `appPublish` tool is NOT DECLARED AT ALL and the prompt
    * does not mention it either (see `dashboard-tools.ts`). The same inversion
-   * as `serverProvider`, for the same reason: the manifest database lives in
-   * `platform-server`, and this package does not depend on it.
+   * as `serverProvider`, for the same reason: the publish record and the app
+   * folders live in `platform-server`, and this package does not depend on it.
    */
   dashboardSink?: DashboardSink
+  /**
+   * The function that deletes an app and its folder.
+   *
+   * Given SEPARATELY from `dashboardSink` on purpose: publishing and deleting
+   * are not the same kind of permission to hand out. A caller can offer the
+   * agent the ability to create apps without also offering it the ability to
+   * erase them.
+   *
+   * `appDelete` is declared only when this AND the permission manager are
+   * present — the tool always asks the user first (see `dashboard-tools.ts`).
+   */
+  dashboardRemover?: DashboardRemover
   /**
    * The source that supplies the MCP servers to connect for the session.
    *
@@ -630,6 +643,8 @@ export async function* agentStream(
         options.serverProvider,
         options.dashboardSink,
         mcpManager,
+        options.dashboardRemover,
+        options.permission,
       )
       const hasServers = tools.some((t) => t.name === 'serverList')
       const hasDashboard = tools.some((t) => t.name === 'appPublish')
@@ -828,6 +843,8 @@ function prepareTools(
   serverProvider?: ServerProvider,
   dashboardSink?: DashboardSink,
   mcpManager?: McpManager,
+  dashboardRemover?: DashboardRemover,
+  permission?: PermissionManager,
 ): AgentTool<never>[] {
   // pi's ready-made tools + our own search and server tools. They all take the
   // context as their last argument, so the wrapper below applies to them
@@ -840,7 +857,7 @@ function prepareTools(
     createBashTool(),
     ...searchToolsRaw(),
     ...serverToolsRaw(serverProvider),
-    ...dashboardToolsRaw(dashboardSink),
+    ...dashboardToolsRaw(dashboardSink, dashboardRemover, permission),
   ]
 
   // A tool disabled in the config is NOT DECLARED AT ALL — the agent does not

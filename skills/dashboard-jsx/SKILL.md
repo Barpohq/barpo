@@ -1,13 +1,22 @@
 ---
 name: dashboard-jsx
-description: Use when a dashboard needs a custom layout that the built-in widgets cannot express, and you are about to pass `view` (JSX source) to appPublish. Explains the required component shape, the platform components and Tailwind classes available to it, and how live `states` data reaches the code. Read this BEFORE writing any view code.
+description: Use when a dashboard needs a custom layout that the built-in widgets cannot express, and you are about to write an app's view.jsx. Explains the required component shape, the platform components and Tailwind classes available to it, and how live states data reaches the code. Read this BEFORE writing any view code.
 license: internal
 ---
 
 # A custom dashboard view (JSX)
 
-You can pass your own JSX to `appPublish`'s `view` field. Use it when you need a
+You can write your own JSX in the app's `view.jsx` file. Use it when you need a
 layout the widgets cannot express.
+
+```
+~/.platforma/apps/<id>/view.jsx
+```
+
+Write it with `write`/`edit` like any other file. It is picked up automatically
+— the platform compiles it when the app is read, and **editing it later needs
+no republish**. If it does not compile, the widgets keep working and the error
+is shown on the dashboard.
 
 **Try the widgets first** (see the `dashboard-create` skill) — they are more
 reliable and faster. Write code only when it is genuinely necessary.
@@ -22,7 +31,7 @@ export default function View({ data, ui }) {
 
 `export default` is **mandatory**. The component takes two props:
 
-- `data` — the data you gave to `appPublish` plus the live `states` values
+- `data` — the `data` object from `app.json` plus the live state values
 - `ui` — the platform components (below)
 
 ## What is available
@@ -115,19 +124,20 @@ the platform, and validation, secret masking, and the "empty secret = unchanged"
 rule are already handled there. Use `ui.save` only when the schema does not
 fit — the details are in the `dashboard-controls` skill.
 
-## Live data — `states`
+## Live data — `states/`
 
-Do not write a `fetch` for a value that changes over time. Add `states` instead
-(see the `dashboard-create` skill) — they run on the server and land in `data`
-**automatically**:
+Do not write a `fetch` for a value that changes over time. Add a state file
+instead (see the `dashboard-create` skill) — it runs on the server and lands in
+`data` **automatically**:
 
+`states/cpu.js`:
+```js
+module.exports = async () => ({ percent: 3.2 })
 ```
-appPublish({
-  states: [
-    { name: "cpu", interval: 5, code: "module.exports = async () => ({ percent: 3.2 })" }
-  ],
-  view: "..."
-})
+
+`app.json`:
+```json
+{ "states": { "cpu": { "interval": 5 } } }
 ```
 
 Inside your code `data.cpu.percent` will exist and **re-render every 5 seconds

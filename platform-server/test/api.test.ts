@@ -3,26 +3,31 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { AppManifest, AuditEntry, ChatSession, Server, Skill } from '@platforma/shared'
 import { app } from '../src/app.ts'
 import { auditWrite } from '../src/audit.ts'
 import { openDb, setDb } from '../src/db.ts'
-import { saveApp } from '../src/repo.ts'
 import { applySeed } from '../src/seed.ts'
 import { hub } from '../src/ws/hub.ts'
+import { cleanupApps, publishTestApp, useTempApps } from './app-fixture.ts'
 
 let db: Database
+let appsRoot: string
 
 beforeEach(() => {
   db = openDb(':memory:')
   setDb(db)
   applySeed(db)
+  appsRoot = useTempApps()
 })
 
 afterEach(() => {
   setDb(null)
   hub.clear()
   db.close()
+  cleanupApps(appsRoot)
 })
 
 /** Shorthand: sends a GET request and returns the JSON */
@@ -64,19 +69,9 @@ describe('GET /api/skills', () => {
 })
 
 describe('GET /api/apps', () => {
-  // There is NO app seed: a dashboard is built from a real manifest and
-  // installed through `appPublish` in the chat, so the tests write their own
-  // manifest.
-  const testApp: AppManifest = {
-    id: 'expense-bot',
-    icon: '💸',
-    name: 'expense-bot',
-    tagline: 'Expense tracker',
-    version: 'v0.1.0',
-    service: 'frankfurt-1 · docker',
-    status: 'running',
-    widgets: [{ type: 'stats', items: [{ label: 'Today', value: '$0.12' }] }],
-  }
+  // There is NO app seed: an app is a FOLDER on disk, written in the chat and
+  // registered through `appPublish`. So the tests build their own folder.
+  const widgets = [{ type: 'stats', items: [{ label: 'Today', value: '$0.12' }] }]
 
   test('it returns an empty list', async () => {
     const { status, body } = await get<{ apps: AppManifest[] }>('/api/apps')
@@ -85,7 +80,7 @@ describe('GET /api/apps', () => {
   })
 
   test('it returns the list of manifests', async () => {
-    saveApp(testApp, db)
+    await publishTestApp(appsRoot, 'expense-bot', { widgets }, db)
 
     const { status, body } = await get<{ apps: AppManifest[] }>('/api/apps')
     expect(status).toBe(200)
@@ -94,18 +89,58 @@ describe('GET /api/apps', () => {
     expect(body.apps[0]?.widgets.length).toBe(1)
   })
 
-  test('a single app manifest is fetched by id', async () => {
-    saveApp(testApp, db)
+  test('a single app manifest is fetched by id, with its folder', async () => {
+    await publishTestApp(appsRoot, 'expense-bot', { widgets }, db)
 
-    const { status, body } = await get<{ manifest: AppManifest }>('/api/apps/expense-bot')
+    const { status, body } = await get<{ manifest: AppManifest; dir: string }>(
+      '/api/apps/expense-bot',
+    )
     expect(status).toBe(200)
     expect(body.manifest.name).toBe('expense-bot')
     expect(body.manifest.widgets[0]?.type).toBe('stats')
+    // The path is returned because the user edits these files themselves
+    expect(body.dir).toContain('expense-bot')
   })
 
   test('an app that does not exist gives a 404', async () => {
     const { status } = await get('/api/apps/no-such-app')
     expect(status).toBe(404)
+  })
+})
+
+describe('DELETE /api/apps/:id', () => {
+  test('it removes the app and its folder', async () => {
+    await publishTestApp(appsRoot, 'doomed', {}, db)
+    expect(existsSync(join(appsRoot, 'doomed'))).toBe(true)
+
+    const response = await app.request('/api/apps/doomed', { method: 'DELETE' })
+    const body = (await response.json()) as { ok: boolean; folderRemoved: boolean }
+
+    expect(response.status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(body.folderRemoved).toBe(true)
+    expect(existsSync(join(appsRoot, 'doomed'))).toBe(false)
+
+    const { body: list } = await get<{ apps: AppManifest[] }>('/api/apps')
+    expect(list.apps).toEqual([])
+  })
+
+  test('deleting an app that does not exist gives a 404', async () => {
+    const response = await app.request('/api/apps/no-such-app', { method: 'DELETE' })
+    expect(response.status).toBe(404)
+  })
+
+  test('the deletion is recorded in the audit log', async () => {
+    // Erasing files must leave a trace — the audit table blocks UPDATE and
+    // DELETE with a SQL trigger, so the entry cannot be quietly removed later.
+    await publishTestApp(appsRoot, 'doomed', {}, db)
+    await app.request('/api/apps/doomed', { method: 'DELETE' })
+
+    const { body } = await get<{ entries: AuditEntry[] }>('/api/audit')
+    const entry = body.entries.find((e) => e.action.includes('App deleted'))
+    expect(entry).toBeDefined()
+    expect(entry?.target).toBe('doomed')
+    expect(entry?.level).toBe('dangerous')
   })
 })
 

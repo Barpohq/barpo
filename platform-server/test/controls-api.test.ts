@@ -15,11 +15,12 @@ import { clearLocks, setSshFactory } from '../src/action-run.ts'
 import { app } from '../src/app.ts'
 import { openDb, setDb } from '../src/db.ts'
 import type { AppSshApi } from '../src/app-ssh.ts'
-import { saveApp } from '../src/repo.ts'
 import { clearCache } from '../src/state-cache.ts'
 import { hub } from '../src/ws/hub.ts'
+import { cleanupApps, publishManifest, useTempApps } from './app-fixture.ts'
 
 let db: Database
+let appsRoot: string
 let envWrites: { path: string; values: Record<string, string> }[]
 let commands: string[][]
 
@@ -97,7 +98,7 @@ const BOT: AppManifest = {
   ],
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   db = openDb(':memory:')
   setDb(db)
   envWrites = []
@@ -105,7 +106,8 @@ beforeEach(() => {
   clearLocks()
   clearCache()
   setSshFactory(() => fakeSsh())
-  saveApp(BOT, db)
+  appsRoot = useTempApps()
+  await publishManifest(appsRoot, BOT, db)
 })
 
 afterEach(() => {
@@ -115,6 +117,7 @@ afterEach(() => {
   setDb(null)
   hub.clear()
   db.close()
+  cleanupApps(appsRoot)
 })
 
 async function get<T>(path: string): Promise<{ status: number; body: T }> {
@@ -175,8 +178,7 @@ describe('GET /api/apps/:id/settings', () => {
   // the object. Counting it as "present" would show the user "✓ set" even with
   // no token, and they would not understand why the bot is not working.
   test('`isSet` is false when the server has NO token', async () => {
-    saveApp(
-      {
+    await publishManifest(appsRoot, {
         ...BOT,
         settings: {
           ...BOT.settings!,
@@ -192,8 +194,7 @@ describe('GET /api/apps/:id/settings', () => {
   })
 
   test('the form is shown ANYWAY when reading fails', async () => {
-    saveApp(
-      {
+    await publishManifest(appsRoot, {
         ...BOT,
         settings: {
           ...BOT.settings!,
@@ -212,7 +213,7 @@ describe('GET /api/apps/:id/settings', () => {
   })
 
   test('404 for an app without settings', async () => {
-    saveApp({ ...BOT, id: 'no-settings', settings: undefined }, db)
+    await publishManifest(appsRoot, { ...BOT, id: 'no-settings', settings: undefined }, db)
     const { status } = await get('/api/apps/no-settings/settings')
     expect(status).toBe(404)
   })
@@ -314,8 +315,7 @@ describe('PUT /api/apps/:id/settings', () => {
   })
 
   test('500 and a precise error when the write fails', async () => {
-    saveApp(
-      {
+    await publishManifest(appsRoot, {
         ...BOT,
         settings: {
           ...BOT.settings!,
@@ -429,8 +429,7 @@ describe('POST /api/apps/:id/action/:name', () => {
   })
 
   test('the non-secret setting values are handed to the action', async () => {
-    saveApp(
-      {
+    await publishManifest(appsRoot, {
         ...BOT,
         actions: [
           {

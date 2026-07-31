@@ -290,6 +290,18 @@ export interface AppUpdatedEvent {
   manifest: AppManifest
 }
 
+/**
+ * An app was deleted — the UI drops it from the sidebar.
+ *
+ * The ID ALONE is sent, not the manifest: by the time this event goes out the
+ * folder is gone, so there is no manifest left to describe. The sidebar only
+ * needs to know which entry to remove.
+ */
+export interface AppRemovedEvent {
+  type: 'app.removed'
+  id: string
+}
+
 /** A new entry landed in the audit log */
 export interface AuditEntryEvent {
   type: 'audit.entry'
@@ -320,6 +332,7 @@ export type ServerEvent =
   | BuildFailedEvent
   | AppInstalledEvent
   | AppUpdatedEvent
+  | AppRemovedEvent
   | AuditEntryEvent
   | TerminalLineEvent
 
@@ -360,6 +373,7 @@ export function eventChannel(event: ServerEvent): Channel | null {
       return CHANNELS.build
     case 'app.installed':
     case 'app.updated':
+    case 'app.removed':
       return CHANNELS.apps
     case 'audit.entry':
       return CHANNELS.audit

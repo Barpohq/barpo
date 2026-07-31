@@ -1,8 +1,11 @@
+import { useEffect, useState } from 'react'
 import type { AppManifest, Widget } from '../data/mock'
 import AiView from '../components/AiView'
 import ActionButtons from '../components/ActionButtons'
 import SettingsForm from '../components/SettingsForm'
 import { useAppStates } from '../lib/app-states'
+import { deleteApp, fetchApp, type AppDetail } from '../lib/api'
+import { useToast } from '../lib/toast'
 import { Card, StatTile, StatusDot } from '../ui'
 
 /**
@@ -217,6 +220,29 @@ export default function AppView({ app }: { app: AppManifest }) {
   // The AI view now runs in the HOST tree — no separate React runtime has to
   // be loaded (the iframe used to pull in ~190 KB).
 
+  // The folder path and any read errors. They are NOT in the manifest — the
+  // list endpoint returns manifests only — so they are fetched per app.
+  const [detail, setDetail] = useState<AppDetail | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const notify = useToast()
+
+  useEffect(() => {
+    let cancelled = false
+    setDetail(null)
+    fetchApp(app.id)
+      .then((d) => {
+        if (!cancelled) setDetail(d)
+      })
+      .catch(() => {
+        // The page renders from the manifest it was already given — losing the
+        // folder path costs a hint, not the dashboard.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [app.id])
+
   // Live states — each polled on its own interval.
   const { values, entries, refresh, applyResults } = useAppStates(app.id, app.states)
 
@@ -249,8 +275,102 @@ export default function AppView({ app }: { app: AppManifest }) {
         <div className="flex flex-col items-end gap-1">
           <StatusDot status={app.status} pulse={app.status === 'running'} />
           <span className="font-mono text-[11px] text-faint">{app.service}</span>
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="mt-1 rounded-md px-2 py-1 text-[11px] text-faint transition-colors hover:bg-panel2 hover:text-red-400"
+          >
+            Delete app
+          </button>
         </div>
       </header>
+
+      {/*
+        ┌──────────────────────────────────────────────────────────────┐
+        │ THE CONFIRMATION NAMES THE FOLDER, NOT JUST THE APP.         │
+        │                                                              │
+        │ Deleting erases files the user may have edited by hand, and  │
+        │ there is no undo. "Are you sure?" does not carry that — the  │
+        │ path does, because it is the thing about to disappear.       │
+        └──────────────────────────────────────────────────────────────┘
+      */}
+      {confirming && (
+        <Card className="mb-4 border-red-500/30 p-4">
+          <div className="text-sm font-medium">Delete “{app.name}”?</div>
+          <p className="mt-1.5 text-sm text-muted">
+            This removes the app from the platform and permanently deletes its folder,
+            including any files you edited yourself. It cannot be undone.
+          </p>
+          {detail?.dir && (
+            <p className="mt-2 font-mono text-[11px] text-faint">{detail.dir}</p>
+          )}
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              disabled={deleting}
+              onClick={async () => {
+                setDeleting(true)
+                try {
+                  const result = await deleteApp(app.id)
+                  if (result.ok) {
+                    // The sidebar updates itself from the `app.removed` event —
+                    // no navigation is forced here, because the parent decides
+                    // what to show once the app is gone from its list.
+                    notify(
+                      result.folderRemoved
+                        ? `“${app.name}” and its folder were deleted`
+                        : `“${app.name}” was removed`,
+                      'success',
+                    )
+                  } else {
+                    notify(result.error ?? 'Could not delete the app', 'error')
+                  }
+                } catch (error) {
+                  notify(`Could not delete the app: ${String(error)}`, 'error')
+                } finally {
+                  setDeleting(false)
+                  setConfirming(false)
+                }
+              }}
+              className="rounded-md bg-red-500/15 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/25 disabled:opacity-50"
+            >
+              {deleting ? 'Deleting…' : 'Delete permanently'}
+            </button>
+            <button
+              type="button"
+              disabled={deleting}
+              onClick={() => setConfirming(false)}
+              className="rounded-md px-3 py-1.5 text-xs text-muted transition-colors hover:bg-panel2 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {/*
+        Problems found while READING the folder — a view that did not compile,
+        a state file with a bad name. Shown above everything else because the
+        user is now the one who edits these files: a silently dropped view
+        would look like the platform ignoring what they just wrote.
+      */}
+      {detail?.errors && detail.errors.length > 0 && (
+        <Card className="mb-4 border-gold/30 p-4">
+          <div className="text-xs font-medium uppercase tracking-wider text-gold">
+            Problems in this app’s files
+          </div>
+          <ul className="mt-2 space-y-1">
+            {detail.errors.map((e, i) => (
+              <li key={i} className="font-mono text-[11px] text-faint">
+                {e}
+              </li>
+            ))}
+          </ul>
+          {detail.dir && (
+            <p className="mt-2 font-mono text-[11px] text-faint">{detail.dir}</p>
+          )}
+        </Card>
+      )}
 
       <div className="space-y-4">
         {/*
@@ -326,7 +446,9 @@ export default function AppView({ app }: { app: AppManifest }) {
       </div>
 
       <p className="mt-6 font-mono text-[11px] text-faint">
-        This page was rendered dynamically from the app manifest — the host UI was not rebuilt.
+        {detail?.dir
+          ? `Rendered from ${detail.dir} — edit those files and refresh.`
+          : 'This page was rendered dynamically from the app manifest — the host UI was not rebuilt.'}
       </p>
     </div>
   )

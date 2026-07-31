@@ -99,7 +99,22 @@ export const FIELDS = [
   {
     path: 'agent.tools.enabled',
     kind: 'stringList',
-    default: ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'serverList', 'appPublish'],
+    default: [
+      'read',
+      'write',
+      'edit',
+      'bash',
+      'grep',
+      'find',
+      'ls',
+      'serverList',
+      'appPublish',
+      // `appDelete` is on by DEFAULT because it cannot act on its own: it
+      // always asks the user, and — uniquely — the answer cannot come from
+      // auto mode or a stored "always" rule. Removing it from this list is
+      // still the way to take the capability away entirely.
+      'appDelete',
+    ],
     hint: 'Tools given to the agent. A tool removed from the list is invisible — the agent does not know it exists.',
   },
   {
