@@ -8,6 +8,7 @@ import {
   readAppSettings,
   writeAppSettings,
 } from '../action-run.ts'
+import { deleteApp } from '../app-delete.ts'
 import { auditWrite } from '../audit.ts'
 import { readApp, readApps } from '../repo.ts'
 import { normaliseInterval } from '../state-run.ts'
@@ -15,20 +16,51 @@ import { getState } from '../state-cache.ts'
 
 export const appsRoutes = new Hono()
 
-// The list of manifests — the UI only expects manifests, not DB metadata
-appsRoutes.get('/apps', (c) => {
-  return c.json({ apps: readApps().map((a) => a.manifest) })
+/** The actor recorded in the audit log. A single user for now. */
+const ACTOR = 'user'
+
+// The list of manifests — the UI only expects manifests, not DB metadata.
+//
+// This now reads every app's FOLDER, which is why it is async. That is the
+// price of the files-are-the-truth model, and it is what makes a hand-edited
+// `view.jsx` show up with nothing more than a page refresh.
+appsRoutes.get('/apps', async (c) => {
+  const apps = await readApps()
+  return c.json({ apps: apps.map((a) => a.manifest) })
 })
 
-appsRoutes.get('/apps/:id', (c) => {
-  const record = readApp(c.req.param('id'))
+appsRoutes.get('/apps/:id', async (c) => {
+  const record = await readApp(c.req.param('id'))
   if (!record) return c.json({ error: 'App not found' }, 404)
   return c.json({
     manifest: record.manifest,
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    // The folder path and any read errors go to the UI: the user edits these
+    // files by hand, so they need to know where they are and what is wrong.
+    ...(record.dir ? { dir: record.dir } : {}),
+    ...(record.errors ? { errors: record.errors } : {}),
   })
+})
+
+/**
+ * Deletes an app — the publish record AND its folder.
+ *
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ THIS ROUTE ERASES FILES AND CANNOT BE UNDONE.                      │
+ * │                                                                    │
+ * │ The confirmation lives in the UI (a modal naming the app and the   │
+ * │ folder). As with `confirm` on an action, that guards against an    │
+ * │ ACCIDENTAL click rather than against an attack — code calling this │
+ * │ endpoint directly skips it. What the platform guarantees instead   │
+ * │ is that the path really is inside the apps root (`app-delete.ts`). │
+ * └────────────────────────────────────────────────────────────────────┘
+ */
+appsRoutes.delete('/apps/:id', (c) => {
+  const result = deleteApp(c.req.param('id'), ACTOR)
+  if (!result.ok) return c.json(result, 404)
+  return c.json(result)
 })
 
 // ---------------------------------------------------------------------------
@@ -54,7 +86,7 @@ appsRoutes.get('/apps/:id/state/:name', async (c) => {
   const appId = c.req.param('id')
   const name = c.req.param('name')
 
-  const record = readApp(appId)
+  const record = await readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
   const state = record.manifest.states?.find((s) => s.name === name)
@@ -83,7 +115,7 @@ appsRoutes.get('/apps/:id/state/:name', async (c) => {
  */
 appsRoutes.get('/apps/:id/state', async (c) => {
   const appId = c.req.param('id')
-  const record = readApp(appId)
+  const record = await readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
   const states = record.manifest.states ?? []
@@ -116,9 +148,6 @@ appsRoutes.get('/apps/:id/state', async (c) => {
 // │ the controls-layer note in `types.ts`).                               │
 // └──────────────────────────────────────────────────────────────────────┘
 
-/** The actor that ran the action — for the audit log. A single user for now. */
-const ACTOR = 'user'
-
 /**
  * The settings schema and the current values.
  *
@@ -132,7 +161,7 @@ const ACTOR = 'user'
  */
 appsRoutes.get('/apps/:id/settings', async (c) => {
   const appId = c.req.param('id')
-  const record = readApp(appId)
+  const record = await readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
   const settings = record.manifest.settings
@@ -169,7 +198,7 @@ appsRoutes.get('/apps/:id/settings', async (c) => {
  */
 appsRoutes.put('/apps/:id/settings', async (c) => {
   const appId = c.req.param('id')
-  const record = readApp(appId)
+  const record = await readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
   const settings = record.manifest.settings
@@ -292,7 +321,7 @@ appsRoutes.post('/apps/:id/action/:name', async (c) => {
   const appId = c.req.param('id')
   const name = c.req.param('name')
 
-  const record = readApp(appId)
+  const record = await readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
   const action = record.manifest.actions?.find((a) => a.name === name)

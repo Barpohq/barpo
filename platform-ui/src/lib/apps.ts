@@ -43,6 +43,12 @@ export function useApps(): AppsState {
     ws.connect()
     const unsubscribe = ws.subscribe([CHANNELS.apps])
     const unwatch = ws.watch((event) => {
+      // A deletion carries the ID ALONE — by the time it is sent the folder is
+      // gone, so there is no manifest left to describe.
+      if (event.type === 'app.removed') {
+        setApps((previous) => previous.filter((a) => a.id !== event.id))
+        return
+      }
       if (event.type !== 'app.installed' && event.type !== 'app.updated') return
       setApps((previous) => merge(previous, event.manifest))
     })

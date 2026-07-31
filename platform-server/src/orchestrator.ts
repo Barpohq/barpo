@@ -42,7 +42,8 @@ import type {
   ToolCall,
 } from '@platforma/shared'
 import { auditWrite } from './audit.ts'
-import { saveDashboard } from './dashboard-save.ts'
+import { publishDashboard } from './dashboard-save.ts'
+import { deleteApp } from './app-delete.ts'
 import { connectableServers } from './mcp-connect.ts'
 import {
   activeMcpServers,
@@ -366,12 +367,17 @@ export async function streamReply(
               port: s.port,
               username: s.username,
             })),
-          // The source for the `appPublish` tool — this is how a dynamic
-          // dashboard reaches the database. The agent knows nothing about the
-          // database (an inversion): it only supplies a manifest, and the
-          // validation and compilation happen on this side
-          // (`dashboard-save.ts`).
-          dashboardSink: (manifest: unknown) => saveDashboard(manifest),
+          // The source for the `appPublish` tool. The agent knows nothing
+          // about the database or the storage layout (an inversion): it writes
+          // the app's FILES with the ordinary write/edit tools and passes an
+          // id, and the folder is located, validated and registered on this
+          // side (`dashboard-save.ts`).
+          dashboardSink: (id: string) => publishDashboard(id),
+          // The source for `appDelete`. Passed separately from the sink
+          // because erasing an app is a different capability from creating
+          // one — and the tool refuses to act without the permission manager
+          // below, which is the thing that makes the user confirm.
+          dashboardRemover: (id: string) => deleteApp(id, sessionId),
           // The installed MCP servers. The same inversion as `serverManbasi`,
           // but with two extra jobs (`mcp-connect.ts`): the secret credentials
           // are merged in from a separate file, and the placeholders

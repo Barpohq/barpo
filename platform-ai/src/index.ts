@@ -260,11 +260,16 @@ export {
 
 export {
   DASHBOARD_PROMPT_SECTION,
+  createAppDeleteTool,
   createAppPublishTool,
   dashboardTools,
   dashboardToolsRaw,
   resultToText,
+  type AppDeleteInput,
   type AppPublishInput,
+  type DashboardDeleteDetail,
+  type DashboardDeleteResult,
+  type DashboardRemover,
   type DashboardSink,
   type DashboardResult,
   type DashboardDetail,

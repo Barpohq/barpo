@@ -9,7 +9,7 @@ backend on Bun + TypeScript (Hono)**, with the AI layer built on top of
 `pi-agent-core` (pi — [earendil-works/pi](https://github.com/earendil-works/pi),
 a coding agent for the terminal; we adapt its ideas for the web).
 
-**Tests:** 1579/1579 green (`bun test`). All four packages are clean under
+**Tests:** 1610/1610 green (`bun test`). All five packages are clean under
 `tsc` — zero errors.
 
 **The way of working (since 2026-07-28):** the "build the whole system first,
@@ -33,7 +33,7 @@ one to read first — it carries the security model.
 
 ```bash
 bun install
-bun test                                     # 1579 tests
+bun test                                     # 1610 tests
 bun run schema                               # regenerate the config schema
 cd platform-server && bun run src/index.ts   # backend :8787
 cd platform-ui && bun run dev                # UI
@@ -77,6 +77,7 @@ the decision that came out of it — the part that is expensive to rediscover.
 10. **Full English translation** — the codebase was written in Uzbek; it is now
     entirely English. See below, because it left two things behind worth
     knowing.
+11. **An app became a FOLDER, and gained update + delete** — see below.
 
 ### What the translation exposed (2026-07-31)
 
@@ -106,6 +107,67 @@ written for them — a pre-translation install keeps its old directories.
 Migration 014 DOES rewrite the built-in source rows, because those strings are
 duplicate-detection keys: without it, every startup would have created a second
 built-in source and shown every skill twice.
+
+### Apps are folders now (2026-07-31)
+
+The dashboard could be CREATED but never properly updated, and never deleted at
+all. The cause was where the manifest lived: a JSON blob in `apps.manifest`.
+The agent could not `read` it or `edit` one line of it, and the user could not
+open it at all — so "update" meant the model rewriting the whole manifest from
+memory, and whatever it forgot to repeat (`states`, `settings`) was silently
+lost.
+
+**An app is now a directory**, `~/.platforma/apps/<id>/`:
+
+```
+app.json            metadata, widgets, data, and the state/action CONFIG
+view.jsx            optional custom view — source, compiled by the platform
+states/<name>.js    one file per live value (the file name IS the state name)
+settings.js         writes the form values;  settings.read.js reads them back
+actions/<name>.js   one file per button
+.build/             compile cache, keyed by a hash of view.jsx — generated
+```
+
+The consequences worth knowing:
+
+- **`AppManifest` did not change.** `app-store.ts` translates the folder into
+  the same shape, so `state-run.ts`, `action-run.ts` and `AiView.tsx` never
+  learned that anything moved.
+- **The database holds no manifest.** Migration 015 replaced `apps.manifest`
+  with `apps.dir`; the table records only that a folder was published. Every
+  read goes to disk, so `readApp`/`readApps` are now **async**.
+- **Updating needs no tool.** `edit view.jsx` IS the update — no republish, no
+  watcher, no reload button. `appPublish` takes only an `id` now and is needed
+  only to register a folder, or when a NEW file needs config (an action's
+  label, a state's interval).
+- **Code is never inside `app.json`.** That was the whole point: JSX in a JSON
+  string cannot be edited by a human. `states`/`actions` in `app.json` are
+  configuration maps keyed by name; the code sits in real files.
+- **Read errors are shown, not swallowed.** A view that will not compile is
+  still dropped (widgets survive, unchanged rule), but the reason now travels
+  in `AppRecord.errors` to the dashboard — the user writes these files, so the
+  mistakes are theirs to see. Broken state files are REPORTED and left on disk;
+  deleting a file the user can see would be the worse surprise.
+- **No data migration**, by decision: pre-existing rows were test data.
+
+**Delete** exists in two places and both erase the folder:
+
+- `DELETE /api/apps/:id` — the UI confirms in a modal that names the folder.
+- `appDelete` — the agent tool, which asks through the permission layer.
+
+`appDelete` is the only tool in the system that **refuses an automated
+answer**. `PermissionAsk.requireUser` skips auto mode AND any stored "always",
+so a classifier can never authorise erasing an app and one earlier "always"
+cannot authorise the next deletion. The user's rule: an app disappears only
+when a human said so, every time.
+
+Path safety is two-layered, and neither layer is redundant: `isValidAppId`
+allows only `[a-z0-9-]` (so `..` and `/` cannot appear), and `isInsideAppsRoot`
+resolves SYMLINKS and confirms the real path sits under the apps root — which
+catches the case the pattern cannot, a validly-named folder that links
+elsewhere. Deletion uses the RECORDED `dir`, never a recomputed one: if
+`PLATFORM_APPS` changed since publishing, recomputing would point at a
+directory that was never this app's.
 
 ## Idea backlog (no required order)
 
@@ -141,13 +203,18 @@ built-in source and shown every skill twice.
   directory in tests). The agent reads skills from `.platforma/skills/`, where
   `syncToProject()` places the copy — do not put files there by hand, they are
   deleted on the next stream.
+- **Apps:** the root is relocated by `PLATFORM_APPS`. An app is a folder, so
+  `readApp`/`readApps` are async and read from disk every time. `appPublish`
+  only registers a folder — to change an app, EDIT ITS FILES.
 - **In tests:** `openDb(':memory:')` + `setDb(db)`. Reset the stream registry
   with `clearRunningStreams()` in `beforeEach` — it is module-level state shared
-  by every test file in the process.
+  by every test file in the process. For apps use `test/app-fixture.ts`
+  (`useTempApps()` / `publishTestApp()` / `cleanupApps()`) rather than writing
+  folders by hand.
 - The runtime database lives in `platform-server/data/` — not in git; migrations
   and the seed run automatically on first start.
 
-### Seven boundaries that must not be broken
+### Nine boundaries that must not be broken
 
 | Boundary | Where | What happens if it breaks |
 |---|---|---|
@@ -158,6 +225,8 @@ built-in source and shown every skill twice.
 | **Tar paths are sanitised (no `..`)** | `tar.ts` | zip-slip: the archive writes outside the target directory |
 | **Attachment names/paths never reach the classifier** | `agent.ts` (`attachmentNote`), `orchestrator.ts` | a filename (`"; rm -rf ~; #.png`) influences the permission decision |
 | **`afterToolCall` preserves image blocks** | `agent.ts` (`nonTextBlocks`) | the model silently fails to see the image — with no error message |
+| **A deletion path resolves inside the apps root** | `apps-dir.ts` (`isInsideAppsRoot`) | a symlinked app folder makes `rm -rf` follow the link out of our directory |
+| **`appDelete` never accepts an automated answer** | `permission.ts` (`requireUser`) | auto mode or one stored "always" erases the user's apps without a human deciding |
 
 All of them are enforced by tests — fix the code rather than "fixing" the test.
 

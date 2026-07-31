@@ -4,7 +4,6 @@
 
 import type { Database } from 'bun:sqlite'
 import type {
-  AppManifest,
   AppRecord,
   BuildSession,
   BuildSessionStatus,
@@ -29,8 +28,8 @@ import type {
   ToolCall,
   ToolCard,
 } from '@platforma/shared'
-import { validateManifest } from '@platforma/shared'
 import { db as globalDb } from './db.ts'
+import { readAppFolder } from './app-store.ts'
 
 // ---------------------------------------------------------------------------
 // Servers
@@ -681,104 +680,157 @@ export function uninstallMcpServer(
 // Apps
 // ---------------------------------------------------------------------------
 
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ THE DATABASE NO LONGER HOLDS THE MANIFEST.                           │
+// │                                                                      │
+// │ An app is a FOLDER (`apps-dir.ts`, `app-store.ts`); this table only  │
+// │ records that the folder was published, and where it lives. Every     │
+// │ read goes to disk, which is what makes a hand-edited `view.jsx`      │
+// │ take effect with no publish, no watcher and no reload button.        │
+// │                                                                      │
+// │ The cost is that reads are now ASYNC (files, and a possible JSX      │
+// │ compile). That is why `readApp`/`readApps` return promises — the     │
+// │ routes were already async, so it reaches no further.                 │
+// └──────────────────────────────────────────────────────────────────────┘
+
 interface AppRow {
   id: string
-  manifest: string
+  dir: string
   status: AppRecord['status']
   created_at: string
-  updated_at: string
+  published_at: string
+}
+
+/** The publish record — what the database knows, without touching the disk */
+export interface AppPublication {
+  id: string
+  dir: string
+  status: AppRecord['status']
+  createdAt: string
+  publishedAt: string
+}
+
+function publicationFromRow(r: AppRow): AppPublication {
+  return {
+    id: r.id,
+    dir: r.dir,
+    status: r.status,
+    createdAt: r.created_at,
+    publishedAt: r.published_at,
+  }
 }
 
 /**
- * Converts a DB row into an `AppRecord`. Returns `null` if the manifest is
- * INVALID.
+ * The published apps as the DATABASE sees them — no disk access.
  *
- * ┌────────────────────────────────────────────────────────────────────┐
- * │ WHY THE VALIDATION IS HERE. This used to be                        │
- * │ `JSON.parse(...) as AppManifest` — that is, no type GUARANTEE, just │
- * │ a promise. The manifest is written by the AI, then it sits in the   │
- * │ database, and the schema may change later. A malformed value would  │
- * │ pass silently through that cast and then crash during render in the │
- * │ UI — which the user experiences as "the platform is broken".        │
- * │                                                                     │
- * │ Now a malformed record stops HERE: the app drops off the list and   │
- * │ everything else keeps working.                                      │
- * └────────────────────────────────────────────────────────────────────┘
+ * Used by anything that needs the id/folder list without paying for a full
+ * folder read (deletion, existence checks).
  */
-function appFromRow(r: AppRow): AppRecord | null {
-  let raw: unknown
-  try {
-    raw = JSON.parse(r.manifest)
-  } catch {
-    // Malformed JSON — the record cannot be read. Drop it, do not crash.
-    return null
-  }
-
-  const result = validateManifest(raw)
-  if (!result.ok || !result.value) return null
-
-  return {
-    id: r.id,
-    manifest: result.value,
-    status: r.status,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-  }
-}
-
-export function readApps(database?: Database): AppRecord[] {
+export function readPublications(database?: Database): AppPublication[] {
   const d = database ?? globalDb()
   return d
     .query<AppRow, []>('SELECT * FROM apps ORDER BY created_at')
     .all()
-    .map(appFromRow)
-    .filter((a): a is AppRecord => a !== null)
+    .map(publicationFromRow)
 }
 
-export function readApp(id: string, database?: Database): AppRecord | null {
+export function readPublication(id: string, database?: Database): AppPublication | null {
   const d = database ?? globalDb()
   const r = d.query<AppRow, [string]>('SELECT * FROM apps WHERE id = ?').get(id)
-  return r ? appFromRow(r) : null
+  return r ? publicationFromRow(r) : null
 }
 
 /**
- * Writes or updates the manifest (upsert). The same function is used when a new
- * app is installed and when an existing one is updated — which of the two
- * happened is reported by the returned `isNew` flag (needed to pick the WS
- * event).
+ * Reads one app from its folder.
+ *
+ * Returns `null` when the app is not published or its folder is gone —
+ * a folder deleted by hand makes the app disappear from the list rather than
+ * breaking the page (the same isolation rule as before, one level down).
+ *
+ * A folder that EXISTS but is broken still comes back as a record: the errors
+ * ride along in `AppRecord.errors` so the user can read them on the dashboard.
+ * That distinction matters — "gone" and "wrong" need different answers.
  */
-export function saveApp(
-  manifest: AppManifest,
+export async function readApp(id: string, database?: Database): Promise<AppRecord | null> {
+  const publication = readPublication(id, database)
+  if (!publication) return null
+  return recordFromPublication(publication)
+}
+
+export async function readApps(database?: Database): Promise<AppRecord[]> {
+  const publications = readPublications(database)
+  // In parallel: one app with a slow compile must not hold up the list.
+  const records = await Promise.all(publications.map(recordFromPublication))
+  return records.filter((r): r is AppRecord => r !== null)
+}
+
+async function recordFromPublication(p: AppPublication): Promise<AppRecord | null> {
+  const folder = await readAppFolder(p.dir)
+
+  if (!folder.manifest) {
+    // The folder is unreadable — `app.json` missing or not parseable. There is
+    // no id, no name, nothing to render, so the app drops off the list. The
+    // publish row stays: restoring the file brings the app straight back.
+    return null
+  }
+
+  return {
+    id: p.id,
+    manifest: folder.manifest,
+    status: folder.manifest.status,
+    createdAt: p.createdAt,
+    updatedAt: p.publishedAt,
+    dir: p.dir,
+    ...(folder.errors.length > 0 ? { errors: folder.errors } : {}),
+  }
+}
+
+/**
+ * Records a folder as a published app (upsert).
+ *
+ * It stores no content — only the pointer. `isNew` distinguishes the first
+ * publish from a re-publish, which is what picks the WS event.
+ */
+export function publishApp(
+  id: string,
+  dir: string,
+  status: AppRecord['status'],
   database?: Database,
-): { record: AppRecord; isNew: boolean } {
+): { isNew: boolean } {
   const d = database ?? globalDb()
   const now = new Date().toISOString()
-  const existing = readApp(manifest.id, d)
+  const existing = readPublication(id, d)
 
   if (existing) {
-    d.prepare('UPDATE apps SET manifest = ?, status = ?, updated_at = ? WHERE id = ?').run(
-      JSON.stringify(manifest),
-      manifest.status,
+    d.prepare('UPDATE apps SET dir = ?, status = ?, published_at = ? WHERE id = ?').run(
+      dir,
+      status,
       now,
-      manifest.id,
+      id,
     )
-    return {
-      record: { ...existing, manifest, status: manifest.status, updatedAt: now },
-      isNew: false,
-    }
+    return { isNew: false }
   }
 
-  d.prepare('INSERT INTO apps (id, manifest, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(
-    manifest.id,
-    JSON.stringify(manifest),
-    manifest.status,
-    now,
-    now,
-  )
-  return {
-    record: { id: manifest.id, manifest, status: manifest.status, createdAt: now, updatedAt: now },
-    isNew: true,
-  }
+  d.prepare(
+    'INSERT INTO apps (id, dir, status, created_at, published_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, dir, status, now, now)
+  return { isNew: true }
+}
+
+/**
+ * Removes the publish record.
+ *
+ * IT DOES NOT TOUCH THE FOLDER — deleting files is a separate, louder decision
+ * and lives in `app-delete.ts`, behind confirmation. Keeping the two apart
+ * means "take it off the list" can never be mistaken for "erase the user's
+ * work".
+ */
+export function unpublishApp(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  const existing = readPublication(id, d)
+  if (!existing) return false
+  d.prepare('DELETE FROM apps WHERE id = ?').run(id)
+  return true
 }
 
 // ---------------------------------------------------------------------------

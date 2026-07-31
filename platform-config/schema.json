@@ -76,7 +76,8 @@
                 "find",
                 "ls",
                 "serverList",
-                "appPublish"
+                "appPublish",
+                "appDelete"
               ],
               "type": "array",
               "items": {

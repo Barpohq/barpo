@@ -8,7 +8,7 @@
 
 ## Where the code stands
 
-A working backend, AI agent layer and web UI — 1579 tests green.
+A working backend, AI agent layer and web UI — 1610 tests green.
 
 ```bash
 bun install

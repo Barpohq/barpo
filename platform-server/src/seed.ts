@@ -38,10 +38,14 @@ export const seedAuditLog: AuditEntry[] = [
 // Installed apps
 // ---------------------------------------------------------------------------
 
-// There is DELIBERATELY no app seed: an app row points at a real manifest and
-// a running service, so a made-up dashboard would be an empty page wired to
-// nothing. An app is built in the chat and installed through `appPublish`.
-export const seedApps: AppManifest[] = []
+// There is DELIBERATELY no app seed, and now there is not even a way to write
+// one from here: an app is a FOLDER on disk (`apps-dir.ts`), and this table
+// only records that a folder was published. Seeding a row would point the
+// platform at a directory that does not exist.
+//
+// An app is built in the chat: the agent writes the files and calls
+// `appPublish`.
+export const seedApps: readonly never[] = []
 
 // ---------------------------------------------------------------------------
 // Applying the seed
@@ -86,17 +90,8 @@ export function applySeed(db: Database): SeedResult {
     })()
   }
 
-  if (isEmpty(db, 'apps')) {
-    const st = db.prepare(
-      `INSERT INTO apps (id, manifest, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-    )
-    db.transaction(() => {
-      for (const a of seedApps) {
-        st.run(a.id, JSON.stringify(a), a.status, now, now)
-        result.apps++
-      }
-    })()
-  }
+  // No app seed — see the note above `seedApps`. `result.apps` stays 0 and is
+  // kept in the shape so callers and tests do not have to change.
 
   return result
 }

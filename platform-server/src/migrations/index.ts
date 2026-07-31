@@ -38,6 +38,7 @@ import { migration as m011 } from './011-mcp-servers.ts'
 import { migration as m012 } from './012-attachments.ts'
 import { migration as m013 } from './013-english-rename.ts'
 import { migration as m014 } from './014-builtin-source-rename.ts'
+import { migration as m015 } from './015-apps-as-folders.ts'
 
 export const migrations: Migration[] = [
   m001,
@@ -53,4 +54,5 @@ export const migrations: Migration[] = [
   m012,
   m013,
   m014,
+  m015,
 ]

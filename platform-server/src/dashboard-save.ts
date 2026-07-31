@@ -1,112 +1,114 @@
-// The link between the `appPublish` tool and the database.
-//
-// `platform-ai` KNOWS NOTHING about the database (an inversion — see
-// `dashboard-tools.ts`), so the agent's tool is handed the function from this
-// module. Three things happen here, one after another:
-//
-//   1. VALIDATION  — the manifest shape (`validateManifest`)
-//   2. COMPILATION — when there is JSX (`buildView`)
-//   3. SAVING      — an upsert into the database (`saveApp`)
+// The link between the `appPublish` tool and the platform.
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ THE KEY ERROR-ISOLATION DECISION LIVES HERE.                         │
+// │ PUBLISHING NO LONGER WRITES THE APP — IT REGISTERS A FOLDER.         │
 // │                                                                      │
-// │ When the code does not compile the manifest is NOT REJECTED — it is  │
-// │ saved WITHOUT its `view` and the widgets keep working as before.     │
-// │ In other words a mistake in the AI's code does not lose the whole    │
-// │ dashboard, it only turns off the custom view.                        │
+// │ The agent writes `app.json`, `view.jsx` and the state files with the │
+// │ ordinary `write`/`edit` tools. This step reads that folder, checks    │
+// │ it, and records it as published.                                     │
 // │                                                                      │
-// │ There is a condition: there have to be widgets. In a manifest with   │
-// │ no widgets, a failing bit of code leaves nothing to display — in     │
-// │ that case we reject, and the AI sees the error and fixes it.         │
+// │ The consequence is the one the whole change was made for: UPDATING   │
+// │ AN APP NO LONGER GOES THROUGH THIS PATH AT ALL. `edit view.jsx` is   │
+// │ the update. Nothing has to be republished, and nothing the model     │
+// │ forgot to repeat can be lost, because it never resends the manifest. │
 // └──────────────────────────────────────────────────────────────────────┘
+//
+// Validation still happens HERE as well as on read. The reason is timing: at
+// publish the AI is still in the loop and can fix what it wrote, so errors are
+// worth far more now than when the user opens the page three days later.
 
 import type { DashboardResult } from '@platforma/ai'
-import { validateManifest } from '@platforma/shared'
 import type { Database } from 'bun:sqlite'
-import { saveApp } from './repo.ts'
+import { readAppFolder } from './app-store.ts'
+import { appDir, isValidAppId, APP_FILES } from './apps-dir.ts'
+import { publishApp } from './repo.ts'
 import { validateCode } from './state-run.ts'
 import { clearAppCache } from './state-cache.ts'
-import { buildView } from './view-build.ts'
 import { hub } from './ws/hub.ts'
 
 /**
- * Validates the manifest, builds the code and saves it.
+ * Registers an app folder as published.
  *
  * IT DOES NOT THROW — the outcome comes back as a `DashboardResult`, and
- * `appPublish` turns it into text the model reads.
+ * `appPublish` turns it into text the model reads and acts on.
  */
-export async function saveDashboard(
-  raw: unknown,
+export async function publishDashboard(
+  id: unknown,
   database?: Database,
 ): Promise<DashboardResult> {
-  const validation = validateManifest(raw)
-  if (!validation.ok || !validation.value) {
-    return { ok: false, errors: validation.errors }
+  if (typeof id !== 'string' || !isValidAppId(id)) {
+    return {
+      ok: false,
+      errors: [
+        'The app id must be lowercase letters, digits and dashes only (e.g. "ai-news-bot").',
+      ],
+    }
   }
 
-  const manifest = validation.value
-  const warnings = [...validation.warnings]
+  const dir = appDir(id)
+  if (!dir) {
+    return { ok: false, errors: [`"${id}" is not a usable app id.`] }
+  }
 
-  // State code is checked for SYNTAX here — so the error shows up at publish
-  // time rather than on the first poll, and the AI can fix it itself. Invalid
-  // ones are DROPPED, the rest keep working.
+  const folder = await readAppFolder(dir)
+
+  // Checked BEFORE the manifest is judged. A mismatch explains why the app is
+  // not where the user expected it, which is more useful than whatever the
+  // validator would otherwise report first.
+  if (folder.declaredId != null && folder.declaredId !== id) {
+    return {
+      ok: false,
+      errors: [
+        `"${APP_FILES.manifest}" declares id "${folder.declaredId}" but the folder is "${id}". ` +
+          'They must match.',
+      ],
+    }
+  }
+
+  if (!folder.manifest) {
+    // Nothing renderable. The most likely cause by far is that the agent
+    // called publish before writing the files, so the message says where the
+    // files belong rather than just reporting the failure.
+    return {
+      ok: false,
+      errors: [
+        ...folder.errors,
+        `Expected the app files in ${dir} — write ${APP_FILES.manifest} there first, ` +
+          `then call appPublish again.`,
+      ],
+    }
+  }
+
+  const manifest = folder.manifest
+  const warnings = [...folder.errors]
+
+  // State code is checked for SYNTAX at publish time, so the error reaches the
+  // AI while it can still fix it rather than surfacing on the first poll.
   //
-  // NEXT STAGE: the prompt injection classifier gets wired in here (see
-  // `validateCode()` in `state-run.ts`).
-  if (manifest.states?.length) {
-    const valid = manifest.states.filter((s) => {
-      const errors = validateCode(s.code)
-      if (errors.length === 0) return true
-      warnings.push(`State "${s.name}" dropped: ${errors.join('; ')}`)
-      return false
-    })
-    if (valid.length > 0) manifest.states = valid
-    else delete manifest.states
-  }
-
-  if (manifest.view) {
-    const build = await buildView(manifest.view.code)
-
-    if (build.ok && build.code) {
-      // The COMPILED code is what gets stored in the manifest: no transform
-      // load on the browser, and no rebuild on every open.
-      manifest.view = { code: build.code, hash: build.hash ?? '' }
-    } else if (manifest.widgets.length > 0) {
-      // There IS something else to show — we do not lose the app.
-      delete manifest.view
-      warnings.push(
-        'The view code did not compile and was DROPPED (widgets were kept): ' +
-          build.errors.join('; '),
-      )
-    } else {
-      // Nothing would be left to show — we reject, otherwise the user would
-      // be looking at a blank page.
-      return {
-        ok: false,
-        errors: [
-          ...build.errors,
-          'No widgets were provided either, so there is nothing left to display.',
-        ],
-      }
+  // Unlike the old path this does NOT drop the state from what gets stored —
+  // there is nothing stored to drop it from. The file stays where the agent
+  // wrote it and the problem is reported instead. Silently deleting a file the
+  // user can see would be a worse surprise than a broken state.
+  for (const state of manifest.states ?? []) {
+    const errors = validateCode(state.code)
+    if (errors.length > 0) {
+      warnings.push(`${APP_FILES.states}/${state.name}.js: ${errors.join('; ')}`)
     }
   }
 
   try {
-    const { isNew } = saveApp(manifest, database)
+    const { isNew } = publishApp(id, dir, manifest.status, database)
 
     // The code may have changed — old results must not be reused.
-    // (The cache checks the code hash too, but clearing here also refreshes
-    // the FIRST request after a republish.)
-    clearAppCache(manifest.id)
+    clearAppCache(id)
 
     // Tell the UI straight away — the user should not have to reload the page.
-    // Errors are SWALLOWED: the dashboard is saved either way and shows up on
-    // a refresh, so failing the tool over a WS problem would be wrong.
+    // Errors are SWALLOWED: the app is published either way and shows up on a
+    // refresh, so failing the tool over a WS problem would be wrong.
     try {
       hub.broadcast({ type: isNew ? 'app.installed' : 'app.updated', manifest })
     } catch {
-      // A WS error does not undo the save
+      // A WS error does not undo the publish
     }
 
     return {
@@ -115,8 +117,6 @@ export async function saveDashboard(
       ...(warnings.length > 0 ? { warnings } : {}),
     }
   } catch (error) {
-    // A database error (disk full, locked) — we tell the agent, but we do not
-    // bring the process down.
-    return { ok: false, errors: [`Could not save to the database: ${String(error)}`] }
+    return { ok: false, errors: [`Could not record the publish: ${String(error)}`] }
   }
 }

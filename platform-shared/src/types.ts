@@ -999,7 +999,7 @@ export interface BuildSession {
 }
 
 // ---------------------------------------------------------------------------
-// The app's record in the DB (manifest + lifecycle)
+// The app's record — the publish row joined with what its folder contains
 // ---------------------------------------------------------------------------
 
 export interface AppRecord {
@@ -1007,5 +1007,27 @@ export interface AppRecord {
   manifest: AppManifest
   status: 'running' | 'idle'
   createdAt: string
+  /** When it was last published — the FOLDER may be newer (it is edited freely) */
   updatedAt: string
+  /**
+   * The folder the app was read from.
+   *
+   * Shown in the UI so the user knows which directory to open in an editor —
+   * the whole point of an app being files rather than a database blob.
+   */
+  dir?: string
+  /**
+   * Problems found while reading the folder — a state file with an invalid
+   * name, a view that did not compile, a settings block with no code.
+   *
+   * ┌────────────────────────────────────────────────────────────────────┐
+   * │ THESE ARE SHOWN, NOT SWALLOWED.                                    │
+   * │                                                                    │
+   * │ The folder is now editable by hand, so its errors belong to the    │
+   * │ USER as much as to the AI. A silently dropped view would look like │
+   * │ the platform ignoring the file they just wrote. The dashboard      │
+   * │ renders these at the top and carries on with whatever DID load.    │
+   * └────────────────────────────────────────────────────────────────────┘
+   */
+  errors?: string[]
 }

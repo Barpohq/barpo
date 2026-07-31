@@ -32,6 +32,8 @@ interface Pending {
   request: PermissionRequest
   resolve: (answer: PermissionAnswer) => void
   timer: ReturnType<typeof setTimeout>
+  /** Carried from the ask — an "always" answer must not be REMEMBERED for these */
+  requireUser?: boolean
 }
 
 export interface PermissionAsk {
@@ -40,6 +42,28 @@ export interface PermissionAsk {
   target: string
   reason: string
   pattern: string
+  /**
+   * A HUMAN must answer this one — auto mode and "always" are both bypassed.
+   *
+   * ┌────────────────────────────────────────────────────────────────────┐
+   * │ WHY AN ESCAPE HATCH FROM AUTO MODE EXISTS.                         │
+   * │                                                                    │
+   * │ Auto mode exists so the user is not asked about every ordinary     │
+   * │ action, and the classifier is good at judging those. But some      │
+   * │ actions are not reversible and not judgeable: deleting an app      │
+   * │ erases a folder the user may have edited by hand, with no trash    │
+   * │ and no undo.                                                       │
+   * │                                                                    │
+   * │ For those the question is not "is this safe?" — it is "did a       │
+   * │ PERSON decide this?". A model cannot answer that on the user's     │
+   * │ behalf, so it is not asked to. `always` is skipped for the same    │
+   * │ reason: one earlier "always allow" must not silently authorise     │
+   * │ every future deletion.                                             │
+   * └────────────────────────────────────────────────────────────────────┘
+   *
+   * Used sparingly — right now only by `appDelete`.
+   */
+  requireUser?: boolean
 }
 
 /** Called when a request appears — the orchestrator forwards it over WS */
@@ -181,14 +205,16 @@ export class PermissionManager {
       this.emitDecision({ origin: 'cancelled', granted: false, pattern: ask.pattern })
       return 'deny'
     }
-    if (ask.pattern && this.alwaysPatterns.has(ask.pattern)) {
+    // Both shortcuts below are skipped when the caller demands a human answer
+    // (see `requireUser` on `PermissionAsk`).
+    if (!ask.requireUser && ask.pattern && this.alwaysPatterns.has(ask.pattern)) {
       this.emitDecision({ origin: 'always', granted: true, pattern: ask.pattern })
       return 'allow'
     }
 
     // --- Auto mode: the classifier decides ---
     const context = this.classifierContext
-    if (context && context.mode.mode === 'auto') {
+    if (!ask.requireUser && context && context.mode.mode === 'auto') {
       const result = await assessAction(
         {
           conversation: context.conversation,
@@ -288,6 +314,7 @@ export class PermissionManager {
           resolve(answer)
         },
         timer,
+        ...(ask.requireUser ? { requireUser: true } : {}),
       })
 
       for (const k of this.listeners) {
@@ -338,7 +365,10 @@ export class PermissionManager {
     clearTimeout(entry.timer)
     this.pending.delete(requestId)
 
-    if (answer === 'always' && entry.request.pattern) {
+    // "Always" is honoured as an ALLOW for this request either way, but for a
+    // `requireUser` action the pattern is NOT remembered: the next deletion
+    // has to be a fresh human decision (see `requireUser` on `PermissionAsk`).
+    if (answer === 'always' && entry.request.pattern && !entry.requireUser) {
       this.alwaysPatterns.add(entry.request.pattern)
     }
 

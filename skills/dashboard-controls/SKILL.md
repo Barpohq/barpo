@@ -1,6 +1,6 @@
 ---
 name: dashboard-controls
-description: Use when an app's dashboard needs a settings form or control buttons — a bot token, an admin id, a mode switch, a restart/stop button. Covers the `settings` and `actions` layers of appPublish, the `ssh` helper, and the rules that keep user input out of the shell. Read this BEFORE publishing any form or button.
+description: Use when an app's dashboard needs a settings form or control buttons — a bot token, an admin id, a mode switch, a restart/stop button. Covers the settings.js and actions/ files of an app folder, the `ssh` helper, and the rules that keep user input out of the shell. Read this BEFORE writing any form or button.
 license: internal
 ---
 
@@ -8,13 +8,17 @@ license: internal
 
 A dashboard does not only **display** — it can also control. Two layers:
 
-| Layer | What it is | When |
-|---|---|---|
-| `settings` | a form — the user enters values | token, admin id, mode |
-| `actions` | a button — the user presses it | restart, stop, clear the cache |
+| Layer | What it is | Where it lives | When |
+|---|---|---|---|
+| settings | a form — the user enters values | `settings.js` + `app.json` | token, admin id, mode |
+| actions | a button — the user presses it | `actions/<name>.js` + `app.json` | restart, stop, clear the cache |
 
-Both are supplied inside `appPublish`. A new endpoint or a new file is
-**not** needed.
+Both are ordinary files in the app folder. **No endpoint is needed** — the
+platform already serves `PUT /api/apps/:id/settings` and
+`POST /api/apps/:id/action/:name`.
+
+Editing these files later needs **no republish**; adding a NEW action does,
+because its button label lives in `app.json`.
 
 ## The most important rule: WHERE the value is written
 
@@ -35,63 +39,73 @@ The platform **does not store** the token. Which means:
 
 ## Settings
 
-```js
-appPublish({
-  id: "telegram-bot",
-  name: "Telegram bot",
-  widgets: [ /* ... */ ],
+Three pieces: the **schema** in `app.json`, the **write** code, and optionally
+the **read** code.
 
-  settings: {
-    fields: [
+`app.json`:
+```json
+{
+  "id": "telegram-bot",
+  "name": "Telegram bot",
+  "widgets": [],
+  "settings": {
+    "fields": [
       {
-        key: "token",                // a-z0-9_ — becomes the configuration key
-        kind: "secret",              // hidden in the UI, never returned
-        label: "Bot token",
-        hint: "The token from @BotFather",
-        required: true,
-        pattern: "^\\d+:[A-Za-z0-9_-]+$",
-        patternHint: "The token must look like `123456:ABC-DEF`"
+        "key": "token",
+        "kind": "secret",
+        "label": "Bot token",
+        "hint": "The token from @BotFather",
+        "required": true,
+        "pattern": "^\\d+:[A-Za-z0-9_-]+$",
+        "patternHint": "The token must look like `123456:ABC-DEF`"
       },
-      { key: "admin_id", kind: "number", label: "Admin ID" },
-      {
-        key: "mode",
-        kind: "select",
-        label: "Mode",
-        options: ["polling", "webhook"]
-      },
-      { key: "active", kind: "toggle", label: "Enabled" }
-    ],
-
-    write: `module.exports = async function ({ values, ssh }) {
-      const s = ssh('helsinki-1')
-      const env = {}
-      if (values.token) env.TELEGRAM_TOKEN = values.token
-      if (values.admin_id) env.ADMIN_ID = values.admin_id
-      if (values.mode) env.MODE = values.mode
-
-      await s.writeEnv('/opt/bot/.env', env)
-      await s.command(['docker', 'restart', 'telegram-bot'])
-      return { message: 'Saved, the bot was restarted' }
-    }`,
-
-    read: `module.exports = async function ({ ssh }) {
-      const text = await ssh('helsinki-1').readFile('/opt/bot/.env')
-      if (!text) return {}
-      const v = {}
-      for (const line of text.split('\\n')) {
-        const i = line.indexOf('=')
-        if (i > 0) v[line.slice(0, i).trim()] = line.slice(i + 1).trim()
-      }
-      return {
-        admin_id: v.ADMIN_ID,
-        mode: v.MODE,
-        // For a secret, not the VALUE but its PRESENCE — true/false
-        token: Boolean(v.TELEGRAM_TOKEN)
-      }
-    }`
+      { "key": "admin_id", "kind": "number", "label": "Admin ID" },
+      { "key": "mode", "kind": "select", "label": "Mode", "options": ["polling", "webhook"] },
+      { "key": "active", "kind": "toggle", "label": "Enabled" }
+    ]
   }
-})
+}
 ```
+
+`key` is `a-z0-9_` and becomes the configuration key. `kind: "secret"` is
+hidden in the UI and never returned.
+
+`settings.js` — writes the values to the app on its server:
+```js
+module.exports = async function ({ values, ssh }) {
+  const s = ssh('helsinki-1')
+  const env = {}
+  if (values.token) env.TELEGRAM_TOKEN = values.token
+  if (values.admin_id) env.ADMIN_ID = values.admin_id
+  if (values.mode) env.MODE = values.mode
+
+  await s.writeEnv('/opt/bot/.env', env)
+  await s.command(['docker', 'restart', 'telegram-bot'])
+  return { message: 'Saved, the bot was restarted' }
+}
+```
+
+`settings.read.js` — optional, so the form opens filled in:
+```js
+module.exports = async function ({ ssh }) {
+  const text = await ssh('helsinki-1').readFile('/opt/bot/.env')
+  if (!text) return {}
+  const v = {}
+  for (const line of text.split('\n')) {
+    const i = line.indexOf('=')
+    if (i > 0) v[line.slice(0, i).trim()] = line.slice(i + 1).trim()
+  }
+  return {
+    admin_id: v.ADMIN_ID,
+    mode: v.MODE,
+    // For a secret, not the VALUE but its PRESENCE — true/false
+    token: Boolean(v.TELEGRAM_TOKEN)
+  }
+}
+```
+
+⚠️ Declaring `settings` in `app.json` **requires** `settings.js` — without it
+the form has no way to save and the platform reports the problem.
 
 ### Field kinds
 
@@ -135,32 +149,48 @@ arrive at all — so the existing token is not wiped.
 
 ## Actions
 
+One file per button, plus its label in `app.json`. **The file name is the
+action name** — `a-z0-9_`, because it becomes part of the URL path.
+
+`actions/restart.js`:
 ```js
-actions: [
-  {
-    name: "restart",                 // a-z0-9_ — becomes part of the URL path
-    label: "Restart the bot",
-    hint: "Restarts the container",
-    confirm: true,                   // the UI asks for confirmation
-    risk: "write",                   // read | write | dangerous
-    refresh: ["status"],             // these states refresh immediately
-    code: `module.exports = async function ({ ssh }) {
-      await ssh('helsinki-1').command(['docker', 'restart', 'telegram-bot'])
-      return { message: 'The bot was restarted' }
-    }`
-  },
-  {
-    name: "clear_logs",
-    label: "Clear the logs",
-    risk: "dangerous",
-    confirm: true,
-    code: `module.exports = async function ({ ssh }) {
-      await ssh('helsinki-1').command(['truncate', '-s', '0', '/opt/bot/bot.log'])
-      return { message: 'Logs cleared' }
-    }`
-  }
-]
+module.exports = async function ({ ssh }) {
+  await ssh('helsinki-1').command(['docker', 'restart', 'telegram-bot'])
+  return { message: 'The bot was restarted' }
+}
 ```
+
+`actions/clear_logs.js`:
+```js
+module.exports = async function ({ ssh }) {
+  await ssh('helsinki-1').command(['truncate', '-s', '0', '/opt/bot/bot.log'])
+  return { message: 'Logs cleared' }
+}
+```
+
+`app.json`:
+```json
+{
+  "actions": {
+    "restart": {
+      "label": "Restart the bot",
+      "hint": "Restarts the container",
+      "confirm": true,
+      "risk": "write",
+      "refresh": ["status"]
+    },
+    "clear_logs": {
+      "label": "Clear the logs",
+      "risk": "dangerous",
+      "confirm": true
+    }
+  }
+}
+```
+
+⚠️ An action file with **no entry in `app.json`** is skipped — its button would
+have no label. Adding a new action is therefore one of the few times you do
+need to call `appPublish` again.
 
 The `{ message }` you return is shown to the user.
 

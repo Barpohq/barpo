@@ -5,21 +5,33 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { openDb } from '../src/db.ts'
-import { saveDashboard } from '../src/dashboard-save.ts'
+import { publishDashboard } from '../src/dashboard-save.ts'
 import { readApp } from '../src/repo.ts'
 import { MIN_INTERVAL, normaliseInterval, runState, validateCode } from '../src/state-run.ts'
 import { cacheSize, clearAppCache, clearCache, getState } from '../src/state-cache.ts'
+import {
+  cleanupApps,
+  publishManifest,
+  useTempApps,
+  writeAppFile,
+  writeManifestAsFolder,
+} from './app-fixture.ts'
 
 let db: Database
+let appsRoot: string
 
 beforeEach(() => {
   db = openDb(':memory:')
   clearCache()
+  appsRoot = useTempApps()
 })
 
 afterEach(() => {
   db.close()
+  cleanupApps(appsRoot)
 })
 
 describe('runState', () => {
@@ -166,15 +178,16 @@ describe('validateCode', () => {
   })
 })
 
-describe('integration with the manifest', () => {
+describe('integration with the app folder', () => {
   const base = {
     id: 'state-test',
     name: 'State test',
     widgets: [{ type: 'note', text: 'hello' }],
   }
 
-  test('states are stored alongside the manifest', async () => {
-    const result = await saveDashboard(
+  test('each state keeps its own interval', async () => {
+    await publishManifest(
+      appsRoot,
       {
         ...base,
         states: [
@@ -184,53 +197,66 @@ describe('integration with the manifest', () => {
       },
       db,
     )
-    expect(result.ok).toBe(true)
 
-    const states = readApp('state-test', db)?.manifest.states
+    const states = (await readApp('state-test', db))?.manifest.states
     expect(states).toHaveLength(2)
-    // Each state MUST keep its own interval
+    // Each state MUST keep its own interval — otherwise `df` would run as
+    // often as the CPU reading, for no reason.
     expect(states?.find((s) => s.name === 'cpu')?.interval).toBe(5)
     expect(states?.find((s) => s.name === 'disk')?.interval).toBe(60)
   })
 
-  test('a broken state is DROPPED and the healthy one survives', async () => {
-    const result = await saveDashboard(
-      {
-        ...base,
-        states: [
-          { name: 'good', code: 'module.exports = async () => 1' },
-          { name: 'broken', code: 'this ( is a syntax error' },
-        ],
-      },
-      db,
-    )
+  test('a state with broken syntax is REPORTED, and the file is left alone', async () => {
+    writeManifestAsFolder(appsRoot, {
+      ...base,
+      states: [
+        { name: 'good', code: 'module.exports = async () => 1' },
+        { name: 'broken', code: 'this ( is a syntax error' },
+      ],
+    })
+    const result = await publishDashboard('state-test', db)
+
     expect(result.ok).toBe(true)
-    expect(readApp('state-test', db)?.manifest.states).toHaveLength(1)
     expect(result.warnings?.join(' ')).toContain('broken')
+
+    // ┌────────────────────────────────────────────────────────────────┐
+    // │ THE FILE MODEL CHANGED WHAT "DROPPED" MEANS.                   │
+    // │                                                                │
+    // │ The old path deleted the broken state from the stored blob.    │
+    // │ There is no blob now — the file is on disk where the agent or  │
+    // │ the user put it, so silently erasing it would be a far worse   │
+    // │ surprise than a state that does not run. It is reported and    │
+    // │ left in place to be fixed.                                     │
+    // └────────────────────────────────────────────────────────────────┘
+    expect(existsSync(join(appsRoot, 'state-test', 'states', 'broken.js'))).toBe(true)
+    expect((await readApp('state-test', db))?.manifest.states).toHaveLength(2)
   })
 
-  test('an invalid name is dropped (it ends up in a URL path)', async () => {
-    const result = await saveDashboard(
-      { ...base, states: [{ name: '../etc', code: 'module.exports = async () => 1' }] },
-      db,
-    )
+  test('a file whose name is not a valid state name is skipped', async () => {
+    // The name ends up in a URL path, so only `[a-z][a-z0-9_]*` is accepted.
+    // A file called `../etc.js` cannot exist in the first place — the folder
+    // layout closes that off — but an editor's leftovers can.
+    writeManifestAsFolder(appsRoot, base)
+    writeAppFile(appsRoot, 'state-test', join('states', 'Bad-Name.js'), 'module.exports = 1')
+    const result = await publishDashboard('state-test', db)
+
     expect(result.ok).toBe(true)
-    expect(readApp('state-test', db)?.manifest.states).toBeUndefined()
+    expect(result.warnings?.join(' ')).toContain('not a valid state name')
+    expect((await readApp('state-test', db))?.manifest.states).toBeUndefined()
   })
 
-  test('a duplicate name REJECTS the manifest', async () => {
-    // `data[name]` is a single slot — which code survived would be down to chance
-    const result = await saveDashboard(
-      {
-        ...base,
-        states: [
-          { name: 'cpu', code: 'module.exports = async () => 1' },
-          { name: 'cpu', code: 'module.exports = async () => 2' },
-        ],
-      },
-      db,
-    )
-    expect(result.ok).toBe(false)
-    expect(result.errors?.join(' ')).toContain('Duplicate')
+  test('a duplicate state name is IMPOSSIBLE — the file name is the name', async () => {
+    // `data[name]` is a single slot, so two states sharing a name used to be a
+    // rejection. The folder model removes the failure mode entirely: writing
+    // `states/cpu.js` twice is one file.
+    writeManifestAsFolder(appsRoot, base)
+    writeAppFile(appsRoot, 'state-test', join('states', 'cpu.js'), 'module.exports = async () => 1')
+    writeAppFile(appsRoot, 'state-test', join('states', 'cpu.js'), 'module.exports = async () => 2')
+    const result = await publishDashboard('state-test', db)
+
+    expect(result.ok).toBe(true)
+    const states = (await readApp('state-test', db))?.manifest.states
+    expect(states).toHaveLength(1)
+    expect(states?.[0]?.code).toContain('2')
   })
 })

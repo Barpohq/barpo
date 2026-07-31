@@ -2,41 +2,32 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { AppManifest } from '@platforma/shared'
 import { openDb } from '../src/db.ts'
-import { saveApp, readApps } from '../src/repo.ts'
+import { publishApp, readApps, readPublication } from '../src/repo.ts'
 import { applySeed } from '../src/seed.ts'
+import { cleanupApps, publishTestApp, useTempApps, writeManifest } from './app-fixture.ts'
 
 let db: Database
+let root: string
 
 beforeEach(() => {
   db = openDb(':memory:')
+  root = useTempApps()
 })
 
 afterEach(() => {
   db.close()
+  cleanupApps(root)
 })
 
-/** Test manifest — the seed ships no apps, so the tests create their own */
-const testApp: AppManifest = {
-  id: 'expense-bot',
-  icon: '💸',
-  name: 'expense-bot',
-  tagline: 'Expense tracker',
-  version: 'v0.1.0',
-  service: 'frankfurt-1 · docker',
-  status: 'running',
-  widgets: [{ type: 'note', text: 'trial' }],
-}
-
 describe('applySeed', () => {
-  test('the first call fills every table', () => {
+  test('the first call fills every table', async () => {
     const result = applySeed(db)
     expect(result.audit).toBe(12)
-    // The app seed is deliberately empty: a dashboard is built from a real
-    // manifest.
+    // The app seed is deliberately empty — and now it CANNOT be anything else:
+    // an app is a folder on disk, so a seeded row would point nowhere.
     expect(result.apps).toBe(0)
-    expect(readApps(db)).toHaveLength(0)
+    expect(await readApps(db)).toHaveLength(0)
   })
 
   test('a second call writes nothing (idempotent)', () => {
@@ -47,23 +38,31 @@ describe('applySeed', () => {
   })
 })
 
-describe('saveApp (upsert)', () => {
-  test('a new manifest is inserted and reported as new', () => {
-    const { record, isNew } = saveApp(testApp, db)
+describe('publishApp (upsert)', () => {
+  test('a new folder is recorded and reported as new', async () => {
+    await publishTestApp(root, 'expense-bot', {}, db)
 
-    expect(isNew).toBe(true)
-    expect(record.id).toBe('expense-bot')
-    expect(readApps(db)).toHaveLength(1)
+    expect(readPublication('expense-bot', db)).not.toBeNull()
+    expect(await readApps(db)).toHaveLength(1)
   })
 
-  test('an existing manifest is updated and reported as not new', () => {
-    saveApp(testApp, db)
+  test('publishing the same id again is not a duplicate', async () => {
+    await publishTestApp(root, 'expense-bot', {}, db)
 
-    const { isNew } = saveApp({ ...testApp, version: 'v9.9.9', status: 'idle' }, db)
+    const { isNew } = publishApp('expense-bot', `${root}/expense-bot`, 'idle', db)
 
     expect(isNew).toBe(false)
-    expect(readApps(db)).toHaveLength(1)
-    expect(readApps(db)[0]?.manifest.version).toBe('v9.9.9')
-    expect(readApps(db)[0]?.status).toBe('idle')
+    expect(await readApps(db)).toHaveLength(1)
+  })
+
+  test('the manifest comes from the FILE, not from the publish row', async () => {
+    // The row records only that a folder was published. Everything the user
+    // sees is read back from disk, which is why editing the file is enough.
+    await publishTestApp(root, 'expense-bot', { version: 'v0.1.0' }, db)
+    writeManifest(root, 'expense-bot', { version: 'v9.9.9', status: 'idle' })
+
+    const apps = await readApps(db)
+    expect(apps[0]?.manifest.version).toBe('v9.9.9')
+    expect(apps[0]?.status).toBe('idle')
   })
 })

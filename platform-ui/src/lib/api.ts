@@ -317,6 +317,53 @@ export async function fetchApps(): Promise<AppManifest[]> {
   return response.apps
 }
 
+/** One app, with the details the list endpoint leaves out */
+export interface AppDetail {
+  manifest: AppManifest
+  status: 'running' | 'idle'
+  createdAt: string
+  updatedAt: string
+  /**
+   * The folder the app was read from.
+   *
+   * Shown to the user because an app IS its folder now — this is the path they
+   * open in an editor to change the dashboard by hand.
+   */
+  dir?: string
+  /**
+   * Problems found while reading the folder — a view that did not compile, a
+   * state file with an invalid name.
+   *
+   * These are DISPLAYED rather than swallowed: the user edits these files
+   * themselves, so a silently ignored mistake would look like the platform
+   * dropping what they just wrote.
+   */
+  errors?: string[]
+}
+
+export async function fetchApp(id: string): Promise<AppDetail> {
+  return request<AppDetail>(`/api/apps/${encodeURIComponent(id)}`)
+}
+
+export interface AppDeleteResponse {
+  ok: boolean
+  folderRemoved?: boolean
+  error?: string
+}
+
+/**
+ * Deletes an app — the sidebar entry AND its folder on disk.
+ *
+ * ⚠️ THE CALLER MUST CONFIRM FIRST. There is no undo and no trash: the files
+ * are erased. The confirmation lives in the UI (`AppView`), which is also the
+ * only place that knows the folder path to show the user.
+ */
+export async function deleteApp(id: string): Promise<AppDeleteResponse> {
+  return request<AppDeleteResponse>(`/api/apps/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
 // ---------------------------------------------------------------------------
 // App controls — settings and actions
 // ---------------------------------------------------------------------------
