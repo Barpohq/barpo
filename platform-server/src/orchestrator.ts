@@ -1,833 +1,881 @@
-// Chat orchestratori — foydalanuvchi xabari bilan LLM javobi orasidagi ko'prik.
+// The chat orchestrator — the bridge between a user message and the LLM reply.
 //
-// Bitta ish qiladi: sessiya tarixini olib, @platforma/ai dan javob oqizadi va
-// har bo'lakni WS orqali tarqatadi. AI tafsilotlari (provider, kalit, oqim
-// formati, tool'lar, ruxsat) bu yerga kirmaydi — ular @platforma/ai ichida.
+// It does one job: take the session history, stream a reply from @platforma/ai
+// and broadcast every chunk over WS. AI details (provider, key, stream format,
+// tools, permissions) do not belong here — they live inside @platforma/ai.
 //
-// Oqim ketma-ketligi:
-//   chat.delta × N                              → chat.done    (muvaffaqiyat)
-//   chat.tool / chat.permission aralashib keladi
-//   chat.delta × N                              → chat.error   (xato)
+// The stream sequence:
+//   chat.delta × N                               → chat.done    (success)
+//   chat.tool / chat.permission are interleaved
+//   chat.delta × N                               → chat.error   (failure)
 //
-// Javob bazaga OQIM TUGAGACH yoziladi, bo'laklab emas: yarim javob chat
-// tarixida qolib ketmasin. Xato bo'lsa ham to'plangan matn saqlanadi (xato
-// belgisi bilan) — foydalanuvchi nima kelganini ko'rsin.
+// The reply is written to the database AFTER THE STREAM FINISHES, not chunk by
+// chunk: a half-finished reply should not be left in the chat history. On error
+// the collected text is stored too (with an error marker) — the user should see
+// what did arrive.
 
 import {
-  agentOqimi,
-  keshdagiNatija,
-  klassifikatorModeliniTanla,
-  mcpTooliMi,
-  modellarniAniqla,
-  rejimBoshqaruvchisi,
-  ruxsatBoshqaruvchisi,
-  suhbatOqimi,
-  XOTIRA_PAPKASI,
-  type SaqlanganXabar,
-  type SuhbatXabari,
+  agentStream,
+  cachedResult,
+  conversationStream,
+  detectModels,
+  isMcpTool,
+  MEMORY_DIR,
+  modeManager,
+  permissionManager,
+  pickClassifierModel,
+  type AgentEvent,
+  type ConversationEvent,
+  type ConversationMessage,
+  type StoredMessage,
 } from '@platforma/ai'
 import { config } from '@platforma/config'
 import { mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
-  ModelTanlovi,
-  OqimHolati,
-  RejimHolati,
-  RuxsatJavobi,
-  RuxsatRejimi,
-  RuxsatSorovi,
-  ToolChaqiruv,
+  ModeState,
+  ModelChoice,
+  PermissionAnswer,
+  PermissionMode,
+  PermissionRequest,
+  StreamStatus,
+  ToolCall,
 } from '@platforma/shared'
-import { auditYoz } from './audit.ts'
-import { dashboardniSaqla } from './dashboard-saqlash.ts'
-import { sessiyaIshPapkasi } from './ish-papkasi.ts'
-import { ulanadiganServerlar } from './mcp-ulash.ts'
+import { auditWrite } from './audit.ts'
+import { saveDashboard } from './dashboard-save.ts'
+import { connectableServers } from './mcp-connect.ts'
 import {
-  faolMcpServerlar,
-  faolSkilllar,
-  serverlarOqi,
-  sessiyaLoyihaPapkasi,
-  sessiyaOqi,
-  toolChaqiruvYoz,
-  xabarlarOqi,
-  xabarYoz,
-  yetimBiriktirmalarniOchir,
+  activeMcpServers,
+  activeSkills,
+  deleteOrphanAttachments,
+  readMessages,
+  readServers,
+  readSession,
+  sessionProjectDir,
+  writeMessage,
+  writeToolCall,
 } from './repo.ts'
-import { loyihagaSinxronla } from './skill-ombor.ts'
+import { syncToProject } from './skill-store.ts'
+import { sessionWorkDir } from './work-dir.ts'
 import { hub } from './ws/hub.ts'
 
 /**
- * Sessiya uchun ish papkasi — loyihaga ulangan bo'lsa loyiha papkasi.
+ * The work directory for a session — the project folder when it is attached to
+ * a project.
  *
- * Papka tanlovi HAR CHAQIRUVDA bazadan o'qiladi (keshlanmaydi): sessiya
- * yaratilgach loyihasi o'zgarmaydi, lekin kesh xotirada eskirib qolish
- * xavfini olib kelardi va bu bitta indeksli SELECT.
+ * The folder choice is read from the database ON EVERY CALL (never cached): a
+ * session's project does not change once it is created, but a cache would carry
+ * the risk of going stale in memory, and this is a single indexed SELECT.
  *
- * Papka `ChegaralanganMuhit` ga `ishPapkasi` bo'lib boradi, ya'ni chegara
- * tekshiruvi loyiha papkasiga xuddi sessiya papkasidagidek qo'llanadi:
- * ichkarida — o'tadi, tashqarida — ruxsat so'raladi. Loyiha papkasi uchun
- * hech qanday imtiyoz yo'q.
+ * The folder is handed to `RestrictedEnv` as its work directory, so the
+ * boundary check applies to a project folder exactly as it does to a session
+ * folder: inside — allowed, outside — permission is requested. A project folder
+ * gets no privilege of any kind.
  */
-function sessiyaPapkasi(sessionId: string): string {
-  return sessiyaIshPapkasi(sessionId, sessiyaLoyihaPapkasi(sessionId))
+function sessionDir(sessionId: string): string {
+  return sessionWorkDir(sessionId, sessionProjectDir(sessionId))
 }
 
 /**
- * Sessiyada faol skilllarni ish papkasiga nusxalaydi.
+ * Copies the skills active in a session into its work directory.
  *
- * Faol = global o'rnatilganlar + shu sessiya loyihasiga o'rnatilganlar.
- * Loyihasiz sessiyada faqat global (`projectId: null`).
+ * Active = the globally installed ones plus those installed for this session's
+ * project. For a session with no project, only the global ones
+ * (`projectId: null`).
  *
- * XATO TASHLAMAYDI: skill tayyorlanmasa suhbat baribir boshlanadi, faqat
- * `<available_skills>` ro'yxati bo'sh bo'ladi. Bu qatlam qulaylik uchun —
- * uning nosozligi butun sessiyani yiqitmasligi kerak.
+ * DOES NOT THROW: if the skills cannot be prepared the conversation still
+ * starts, only the `<available_skills>` list will be empty. This layer is a
+ * convenience — a fault in it must not bring down the whole session.
  */
-function skilllarniTayyorla(sessionId: string, papka: string): void {
+function prepareSkills(sessionId: string, dir: string): void {
   try {
-    const sessiya = sessiyaOqi(sessionId)
-    loyihagaSinxronla(papka, faolSkilllar(sessiya?.projectId ?? null))
+    const session = readSession(sessionId)
+    syncToProject(dir, activeSkills(session?.projectId ?? null))
   } catch {
-    // jim o'tamiz — sabab yuqoridagi izohda
+    // pass silently — the reason is in the comment above
   }
 }
 
 /**
- * Xotira papkasini yaratadi (`.platforma/memory/`).
+ * Creates the memory directory (`.platforma/memory/`).
  *
- * Skilllardan MUHIM FARQ: bu papka SINXRONLANMAYDI. Skilllarning haqiqat
- * manbai baza va ortiqcha papka o'chiriladi; xotirani esa agentning o'zi
- * yozadi va uni hech kim o'chirmaydi. Bu yerda faqat papka MAVJUDLIGI
- * kafolatlanadi.
+ * AN IMPORTANT DIFFERENCE FROM SKILLS: this directory IS NOT SYNCHRONISED. The
+ * source of truth for skills is the database and any extra folder is deleted;
+ * memory, by contrast, is written by the agent itself and nobody deletes it.
+ * All that is guaranteed here is that the directory EXISTS.
  *
- * Nega oldindan yaratamiz: `write` tool'i yo'q papkaga yozganda uni o'zi
- * yaratadi, lekin bo'sh papkani `xotiralarniOqi` o'qiy olmasa promptga
- * "hozircha xotira yo'q" tushadi va agent birinchi faylni yozishga
- * urinadi — o'sha payt papka bo'lmasa ham ish bitadi. Ya'ni bu qat'iy shart
- * emas, lekin papka borligi diskda tuzilmani ko'rinarli qiladi va agent
- * `ls` bilan tekshirganda bo'sh papkani ko'radi.
+ * Why create it up front: the `write` tool creates a missing directory itself,
+ * but if `readMemories` cannot read an empty directory the prompt says "no
+ * memories yet" and the agent tries to write the first file — which works even
+ * without the directory. So this is not a strict requirement, but having the
+ * directory makes the structure visible on disk and the agent sees an empty
+ * folder when it checks with `ls`.
  *
- * XATO TASHLAMAYDI — skilllardagi bilan bir xil qoida.
+ * DOES NOT THROW — the same rule as for skills.
  */
-function xotiraniTayyorla(papka: string): void {
+function prepareMemory(dir: string): void {
   try {
-    mkdirSync(join(papka, XOTIRA_PAPKASI), { recursive: true })
+    mkdirSync(join(dir, MEMORY_DIR), { recursive: true })
   } catch {
-    // jim o'tamiz — xotirasiz ham suhbat to'liq ishlaydi
+    // pass silently — the conversation works perfectly well without memory
   }
 }
 
 /**
- * Xabarga bog'lanmagan eski biriktirmalarni bazadan va diskdan o'chiradi.
+ * Deletes stale attachments that were never linked to a message, from both the
+ * database and the disk.
  *
- * NEGA SHU YERDA, cron'da emas: tozalash foydalanish paytida tabiiy ravishda
- * bo'ladi va alohida jadval kuzatuvchisi kerak emas. Har oqim boshida bitta
- * indeksli SELECT — arzon.
+ * WHY HERE rather than in a cron job: the cleanup then happens naturally as the
+ * platform is used, and no separate table watcher is needed. One indexed SELECT
+ * at the start of each stream — cheap.
  *
- * Baza yozuvi AVVAL o'chiriladi (`yetimBiriktirmalarniOchir` ichida), keyin
- * fayl. Teskari tartibda "bazada bor, diskda yo'q" holati paydo bo'lardi va
- * agent mavjud bo'lmagan faylni o'qishga urinardi.
+ * The database record is deleted FIRST (inside `deleteOrphanAttachments`), then
+ * the file. The other way round would produce a "in the database but not on
+ * disk" state, and the agent would try to read a file that no longer exists.
  *
- * XATO TASHLAMAYDI — `skilllarniTayyorla`/`xotiraniTayyorla` bilan bir xil
- * qoida: bu qatlam qulaylik uchun, uning nosozligi suhbatni yiqitmasligi kerak.
+ * DOES NOT THROW — the same rule as `prepareSkills`/`prepareMemory`: this layer
+ * is a convenience and a fault in it must not bring down the conversation.
  */
-function yetimlarniTozala(sessionId: string, papka: string): void {
+function cleanOrphans(sessionId: string, dir: string): void {
   try {
-    for (const yetim of yetimBiriktirmalarniOchir(sessionId)) {
+    for (const orphan of deleteOrphanAttachments(sessionId)) {
       try {
-        unlinkSync(join(papka, yetim.yol))
+        unlinkSync(join(dir, orphan.path))
       } catch {
-        // Fayl allaqachon yo'q — yozuv baribir tozalandi
+        // The file is already gone — the record was cleaned up regardless
       }
     }
   } catch {
-    // jim o'tamiz — sabab yuqoridagi izohda
+    // pass silently — the reason is in the comment above
   }
 }
 
 /**
- * Ishlab turgan oqim haqidagi ma'lumot.
+ * Information about a stream that is currently running.
  *
- * `holat` faqat ikki qiymatni oladi — oqim tugagach yozuv Map'dan butunlay
- * chiqariladi, ya'ni 'tugadi'/'xato' bu yerda hech qachon saqlanmaydi.
+ * `status` only ever takes two values — once a stream finishes its entry is
+ * removed from the Map entirely, so 'done'/'error' are never stored here.
  */
-interface IshlayotganOqim {
-  boshqaruv: AbortController
-  holat: 'ishlayapti' | 'ruxsat-kutmoqda'
+interface RunningStream {
+  controller: AbortController
+  status: 'running' | 'awaiting-permission'
 }
 
-/** Ishlab turgan oqimlar — sessiya bo'yicha, bekor qilish va ko'rsatish uchun */
-const ishlayotgan = new Map<string, IshlayotganOqim>()
+/** Running streams — keyed by session, for cancelling and for display */
+const running = new Map<string, RunningStream>()
 
-/** Ishlayotgan bitta sessiyaning tashqariga ko'rinadigan tavsifi */
-export interface IshlayotganSessiya {
+/** The externally visible description of one running session */
+export interface RunningSession {
   sessionId: string
-  holat: 'ishlayapti' | 'ruxsat-kutmoqda'
+  status: 'running' | 'awaiting-permission'
 }
 
 /**
- * Hozir oqim ketayotgan sessiyalar ro'yxati.
+ * The list of sessions with a stream in flight right now.
  *
- * UI sahifa ochilganda boshlang'ich holatni shu yerdan oladi (GET
- * /api/chat/running), keyin `chat.status` eventlari bilan yangilab boradi:
- * WS ulanishi sahifa ochilishidan keyin ulanadi, ya'ni undan oldingi
- * holat o'zgarishlari yo'qolgan bo'lishi mumkin.
+ * When the UI opens a page it takes the initial state from here (GET
+ * /api/chat/running) and then keeps it up to date with `chat.status` events:
+ * the WS connection is established after the page opens, so state changes from
+ * before that may have been missed.
  */
-export function ishlayotganSessiyalar(): IshlayotganSessiya[] {
-  return [...ishlayotgan.entries()].map(([sessionId, oqim]) => ({
+export function runningSessions(): RunningSession[] {
+  return [...running.entries()].map(([sessionId, stream]) => ({
     sessionId,
-    holat: oqim.holat,
+    status: stream.status,
   }))
 }
 
 /**
- * Sessiya oqimining holatini yangilaydi va WS orqali tarqatadi.
+ * Updates a session's stream status and broadcasts it over WS.
  *
- * 'tugadi'/'xato' — yakuniy holatlar, ular Map'ga yozilmaydi (yozuv allaqachon
- * `finally` da o'chirilgan bo'ladi), faqat tarqatiladi.
+ * 'done'/'error' are terminal states; they are not written to the Map (the
+ * entry has already been removed in `finally`), only broadcast.
  */
-function holatTarqat(sessionId: string, holat: OqimHolati): void {
-  const oqim = ishlayotgan.get(sessionId)
-  if (oqim && (holat === 'ishlayapti' || holat === 'ruxsat-kutmoqda')) {
-    oqim.holat = holat
+function broadcastStatus(sessionId: string, status: StreamStatus): void {
+  const stream = running.get(sessionId)
+  if (stream && (status === 'running' || status === 'awaiting-permission')) {
+    stream.status = status
   }
-  hub.broadcast({ type: 'chat.status', sessionId, holat })
+  hub.broadcast({ type: 'chat.status', sessionId, status })
 }
 
-export interface OqizishNatijasi {
+export interface StreamResult {
   messageId: string
-  matn: string
-  toolCards: ToolChaqiruv[]
-  xato?: string
+  text: string
+  toolCards: ToolCall[]
+  error?: string
 }
 
-export interface OqizishSozlamalari {
+export interface StreamOptions {
   /**
-   * Tool'lar yoqilganmi. `false` bo'lsa oddiy suhbat oqimi ishlatiladi
-   * (`suhbat.ts`) — tezroq va xavfsizroq, sinovlarda qulay.
+   * Whether tools are enabled. When `false` the plain conversation stream is
+   * used (`conversation.ts`) — faster and safer, and convenient in tests.
    */
-  toollar?: boolean
+  tools?: boolean
 }
 
 /**
- * Sessiyaga javob oqizadi. Chaqiruvchi kutmasligi mumkin — natija WS orqali
- * boradi. Xato tashlamaydi: har qanday muammo `chat.error` bo'lib ketadi.
+ * Streams a reply into a session. The caller need not await it — the result
+ * travels over WS. It does not throw: any problem becomes a `chat.error`.
  *
- * @param messageId javob xabarining oldindan berilgan id'si — UI shu id
- *   bo'yicha kelayotgan bo'laklarni to'g'ri xabarga yopishtiradi.
+ * @param messageId the id assigned to the reply message up front — the UI uses
+ *   it to attach the arriving chunks to the right message.
  */
-export async function javobOqizi(
+export async function streamReply(
   sessionId: string,
   messageId: string,
-  tanlov: ModelTanlovi,
-  sozlama?: OqizishSozlamalari,
-): Promise<OqizishNatijasi> {
-  // Shu sessiyada oldingi oqim ketayotgan bo'lsa — to'xtatamiz. Foydalanuvchi
-  // javob tugashini kutmay yangi xabar yuborgan bo'lishi mumkin.
-  ishlayotgan.get(sessionId)?.boshqaruv.abort()
-  const boshqaruv = new AbortController()
-  ishlayotgan.set(sessionId, { boshqaruv, holat: 'ishlayapti' })
-  // Oqim boshlandi — sidebar darhol jonli indikatorni ko'rsatadi
-  holatTarqat(sessionId, 'ishlayapti')
+  choice: ModelChoice,
+  options?: StreamOptions,
+): Promise<StreamResult> {
+  // If a previous stream is running for this session — stop it. The user may
+  // have sent a new message without waiting for the reply to finish.
+  running.get(sessionId)?.controller.abort()
+  const controller = new AbortController()
+  running.set(sessionId, { controller, status: 'running' })
+  // The stream has started — the sidebar shows the live indicator immediately
+  broadcastStatus(sessionId, 'running')
 
-  // Sessiya loyihaga ulangan bo'lsa tool'lar LOYIHA papkasida ishlaydi —
-  // bir loyihaning hamma suhbatlari bitta fayllar to'plamini ko'rsin.
-  const papka = sessiyaPapkasi(sessionId)
-  const { config: sozlamalar } = config({ ishPapkasi: papka })
+  // When the session is attached to a project, the tools work in the PROJECT
+  // folder — so all conversations of one project see one set of files.
+  const dir = sessionDir(sessionId)
+  const { config: settings } = config({ workDir: dir })
 
-  // O'rnatilgan skilllarni ish papkasiga tushiramiz. Har oqim boshida
-  // qayta sinxronlanadi: foydalanuvchi suhbat davomida yangi skill
-  // o'rnatgan bo'lishi mumkin. Agent ro'yxatni `.platforma/skills/` dan
-  // o'zi o'qiydi (`skill-yuklash.ts`).
-  skilllarniTayyorla(sessionId, papka)
+  // Copy the installed skills into the work directory. They are re-synced at
+  // the start of every stream: the user may have installed a new skill during
+  // the conversation. The agent reads the list from `.platforma/skills/`
+  // itself (`skill-load.ts`).
+  prepareSkills(sessionId, dir)
 
-  // Xotira papkasi — agent o'z yozuvlarini shu yerga qo'yadi. Sinxronlash
-  // yo'q, faqat papka mavjudligi kafolatlanadi (`xotiraniTayyorla` ga q.).
-  xotiraniTayyorla(papka)
+  // The memory directory — the agent puts its own notes here. There is no
+  // synchronisation, only the guarantee that the directory exists (see
+  // `prepareMemory`).
+  prepareMemory(dir)
 
-  // Tashlab ketilgan yuklamalarni tozalaymiz — foydalanuvchi fayl biriktirib,
-  // keyin fikridan qaytishi oddiy holat.
-  yetimlarniTozala(sessionId, papka)
+  // Clear abandoned uploads — a user attaching a file and then changing their
+  // mind is a normal thing to do.
+  cleanOrphans(sessionId, dir)
 
-  const tarix = tarixniTayyorla(sessionId)
-  const toolKartalari = new Map<string, ToolChaqiruv>()
-  let toplangan = ''
-  let xato: string | undefined
-  // Agent qurgan to'liq kontekst — javob bilan birga saqlanadi, keyingi
-  // turn'da tool natijalari bilan qaytariladi
-  let agentXabarlari: unknown[] | undefined
-  let kontekstTokenlari: number | undefined
+  const history = prepareHistory(sessionId)
+  const toolCardsById = new Map<string, ToolCall>()
+  let collected = ''
+  let error: string | undefined
+  // The full context the agent built — stored with the reply and returned on
+  // the next turn together with the tool results
+  let agentMessages: unknown[] | undefined
+  let contextTokens: number | undefined
   /**
-   * Oqim tugaganda ro'yxatdagi yozuv hali ham BIZNIKI edimi.
+   * Whether the entry in the registry was STILL OURS when the stream ended.
    *
-   * `false` bo'lsa bizni yangi oqim to'xtatgan (foydalanuvchi kutmay yana
-   * xabar yubordi) — u holda yakuniy `chat.status` TARQATILMAYDI, aks holda
-   * endigina boshlangan yangi oqim UI'da darhol "tugadi" bo'lib ko'rinardi.
+   * When `false` a newer stream has stopped us (the user sent another message
+   * without waiting) — in that case the final `chat.status` IS NOT BROADCAST,
+   * otherwise the stream that has only just started would immediately appear as
+   * "done" in the UI.
    */
-  let ozimizniki = true
-
-  /**
-   * Hozir bajarilayotgan tool chaqiruvining id'si.
-   *
-   * Ruxsat so'rovi va uning qarori QAYSI chaqiruvga tegishli ekanini shu
-   * bilan bog'laymiz. Bu ishonchli, chunki tool'lar KETMA-KET bajariladi
-   * (`agent.ts`: `toolExecution: 'sequential'`) — bir vaqtda faqat bittasi
-   * ruxsat kutishi mumkin. Muqobil yo'l (`toolCallId` ni muhit va ruxsat
-   * qatlamlaridan o'tkazish) uch faylning interfeysini buzardi.
-   */
-  let faolTool: string | undefined
+  let stillOurs = true
 
   /**
-   * So'rov id → qaysi tool chaqiruvi uni so'ragan.
+   * The id of the tool call being executed right now.
    *
-   * `faolTool` YETARLI EMAS. Ruxsat so'rovi javob kelguncha kutadi, ya'ni
-   * qaror so'rovdan ANCHA KEYIN keladi va o'sha paytda `faolTool` boshqa
-   * chaqiruvni ko'rsatayotgan bo'lishi mumkin. Bir sessiyada ikkita oqim
-   * qisqa vaqt yonma-yon yashashi ham mumkin (foydalanuvchi to'xtatib,
-   * darhol yangi xabar yubordi) — u holda ruxsat boshqaruvchisi ikkalasiga
-   * ham xabar beradi.
-   *
-   * Shuning uchun `sorovId` bor qaror SHU jadval bo'yicha bog'lanadi va
-   * begona so'rov (boshqa oqimniki) JIMGINA TASHLANADI — noto'g'ri kartaga
-   * yozilgandan ko'ra yozilmagani yaxshi.
+   * This is how a permission request and its decision are tied to the call they
+   * belong to. It is reliable because tools run SEQUENTIALLY (`agent.ts`:
+   * `toolExecution: 'sequential'`) — only one of them can be waiting for
+   * permission at a time. The alternative (threading `toolCallId` through the
+   * environment and permission layers) would break the interface of three
+   * files.
    */
-  const sorovningTooli = new Map<string, string>()
+  let activeTool: string | undefined
 
   /**
-   * Tool chaqiruvini AVVAL bazaga yozadi, KEYIN UI'ga tarqatadi.
+   * Request id → the tool call that asked for it.
    *
-   * Tartib muhim: WS eventi yo'qolishi mumkin va oqim o'rtasida uzilishi
-   * ham mumkin, bazadagi yozuv esa qoladi. Aks holda (ilgarigidek) uzilgan
-   * javobda bajarilgan buyruqlar izsiz yo'qolardi.
+   * `activeTool` IS NOT ENOUGH. A permission request waits for an answer, so
+   * the decision arrives LONG AFTER the request, by which time `activeTool` may
+   * point at a different call. Two streams can also briefly coexist in one
+   * session (the user stopped one and immediately sent a new message) — in
+   * which case the permission manager notifies both of them.
    *
-   * Baza xatosi oqimni TO'XTATMAYDI: suhbat davom etgani yozuvdan muhimroq
-   * va xato holatida ham kamida UI to'g'ri ko'rsatadi.
+   * So a decision carrying a `requestId` is matched through THIS table, and a
+   * foreign request (belonging to another stream) IS SILENTLY DROPPED — better
+   * not written at all than written to the wrong card.
    */
-  const toolYubor = (tool: ToolChaqiruv) => {
-    toolKartalari.set(tool.id, tool)
+  const toolByRequest = new Map<string, string>()
+
+  /**
+   * Writes a tool call to the database FIRST, then broadcasts it to the UI.
+   *
+   * The order matters: a WS event can be lost and a stream can be cut short
+   * mid-way, whereas the database record survives. Otherwise (as it used to be)
+   * commands executed during an interrupted reply vanished without a trace.
+   *
+   * A database error DOES NOT STOP the stream: the conversation continuing
+   * matters more than the record, and even in the error case the UI at least
+   * displays it correctly.
+   */
+  const sendTool = (tool: ToolCall) => {
+    toolCardsById.set(tool.id, tool)
     try {
-      toolChaqiruvYoz({ ...tool, sessionId, messageId })
+      writeToolCall({ ...tool, sessionId, messageId })
     } catch {
-      // jim o'tamiz — sabab yuqoridagi izohda
+      // pass silently — the reason is in the comment above
     }
     hub.broadcast({ type: 'chat.tool', sessionId, messageId, tool })
   }
 
   /**
-   * Mavjud kartani yangilaydi (ruxsat qarori, klassifikator yorlig'i).
+   * Updates an existing card (permission decision, classifier label).
    *
-   * Karta hali yo'q bo'lsa jim o'tamiz: ruxsat so'raladigan amallarning
-   * hammasi tool orqali keladi, ya'ni bunday holat kutilmaydi — lekin
-   * kelsa ham oqim buzilmasligi kerak.
+   * If the card does not exist yet we pass silently: everything that asks for
+   * permission arrives through a tool, so this should not happen — but if it
+   * does, the stream must not break.
    */
-  const toolniYangila = (id: string | undefined, ozgarish: Partial<ToolChaqiruv>) => {
+  const updateTool = (id: string | undefined, change: Partial<ToolCall>) => {
     if (!id) return
-    const mavjud = toolKartalari.get(id)
-    if (!mavjud) return
-    toolYubor({ ...mavjud, ...ozgarish })
+    const existing = toolCardsById.get(id)
+    if (!existing) return
+    sendTool({ ...existing, ...change })
   }
 
   try {
-    const oqim = sozlama?.toollar === false
-      ? suhbatOqimi(tanlov, klassifikatorTarixiniTayyorla(sessionId), { signal: boshqaruv.signal })
-      : agentOqimi(tanlov, tarix, {
+    // The two stream functions return different generators. Both event unions
+    // discriminate on `kind`, but TypeScript will not narrow across two
+    // separate generator types — so the union is stated here explicitly and the
+    // `switch` below narrows it as usual. `ConversationEvent` is a subset of
+    // `AgentEvent`'s shape (delta/done/error), which is why the tool-free mode
+    // simply never reaches the tool cases.
+    const stream = (options?.tools === false
+      ? conversationStream(choice, prepareClassifierHistory(sessionId), { signal: controller.signal })
+      : agentStream(choice, history, {
           sessionId,
-          ishPapkasi: papka,
-          ruxsat: ruxsatBoshqaruvchisi(sessionId),
-          rejim: rejimBoshqaruvchisi(sessionId),
-          signal: boshqaruv.signal,
-          sozlamalar,
-          // Klassifikator FAQAT matnli tarixni ko'radi — tool natijalari
-          // unga hech qachon bormaydi (prompt injection himoyasi)
-          klassifikatorTarixi: klassifikatorTarixiniTayyorla(sessionId),
-          // `serverList` tool'ining manbai. Funksiya sifatida beriladi —
-          // ro'yxat har chaqiruvda bazadan yangi o'qiladi, chunki
-          // foydalanuvchi suhbat davomida server qo'shishi/o'chirishi
-          // mumkin. Faqat ulanish maydonlari uzatiladi (`id`/`createdAt`
-          // agentga kerak emas).
-          serverManbasi: () =>
-            serverlarOqi().map((s) => ({
+          workDir: dir,
+          permission: permissionManager(sessionId),
+          mode: modeManager(sessionId),
+          signal: controller.signal,
+          config: settings,
+          // The classifier sees ONLY the text history — tool results never
+          // reach it (prompt injection protection)
+          classifierHistory: prepareClassifierHistory(sessionId),
+          // The source for the `serverList` tool. Supplied as a function — the
+          // list is read fresh from the database on every call, because the
+          // user may add or remove a server during the conversation. Only the
+          // connection fields are passed on (`id`/`createdAt` are of no use to
+          // the agent).
+          serverProvider: () =>
+            readServers().map((s) => ({
               name: s.name,
               host: s.host,
               port: s.port,
               username: s.username,
             })),
-          // `appPublish` tool'ining manbai — dinamik dashboard shu yo'l
-          // bilan bazaga tushadi. Agent bazani bilmaydi (inversiya):
-          // u faqat manifest beradi, tekshiruv va kompilyatsiya bu
-          // tomonda bo'ladi (`dashboard-saqlash.ts`).
-          dashboardManbasi: (manifest) => dashboardniSaqla(manifest),
-          // O'rnatilgan MCP serverlar. `serverManbasi` bilan bir xil
-          // inversiya, lekin qo'shimcha ikki ish bor (`mcp-ulash.ts`):
-          // maxfiy kredensiallar alohida fayldan qo'shiladi va o'rin
-          // egallovchilar (`{token}`) almashtiriladi.
+          // The source for the `appPublish` tool — this is how a dynamic
+          // dashboard reaches the database. The agent knows nothing about the
+          // database (an inversion): it only supplies a manifest, and the
+          // validation and compilation happen on this side
+          // (`dashboard-save.ts`).
+          dashboardSink: (manifest: unknown) => saveDashboard(manifest),
+          // The installed MCP servers. The same inversion as `serverManbasi`,
+          // but with two extra jobs (`mcp-connect.ts`): the secret credentials
+          // are merged in from a separate file, and the placeholders
+          // (`{token}`) are substituted.
           //
-          // BO'SH RO'YXAT = MCP UMUMAN ISHGA TUSHMAYDI: tool e'lon
-          // qilinmaydi va prompt MCP'ni tilga olmaydi. Ya'ni server
-          // o'rnatilmagan bo'lsa agent uning borligini bilmaydi.
-          mcpManbasi: () => {
-            const sessiya = sessiyaOqi(sessionId)
-            return ulanadiganServerlar(
-              faolMcpServerlar(sessiya?.projectId ?? null),
-              sessiya?.projectId ?? null,
+          // AN EMPTY LIST = MCP DOES NOT START AT ALL: no tool is declared and
+          // the prompt does not mention MCP. In other words, if no server is
+          // installed the agent does not know it exists.
+          mcpProvider: () => {
+            const session = readSession(sessionId)
+            return connectableServers(
+              activeMcpServers(session?.projectId ?? null),
+              session?.projectId ?? null,
             )
           },
-          toolKuzatuvchi: (nom, args) => {
-            auditYoz('agent', `tool: ${nom}`, toolNishoni(nom, args), toolDarajasi(nom), 'OK')
+          toolObserver: (name: string, args: unknown) => {
+            auditWrite('agent', `tool: ${name}`, toolTarget(name, args), toolLevel(name), 'OK')
           },
-        })
+        })) as AsyncIterable<ConversationEvent | AgentEvent>
 
-    for await (const hodisa of oqim) {
-      // Ruxsat kutayotgan oqim yana harakatga keldi — demak javob berildi
-      // (yoki muddat tugab rad etildi) va agent davom etmoqda. Alohida
-      // "ruxsat javob berildi" hodisasi yo'q, shuning uchun har qanday
-      // KEYINGI hodisa shu signal bo'lib xizmat qiladi.
+    for await (const event of stream) {
+      // A stream that was awaiting permission has moved again — so an answer
+      // was given (or it timed out and was denied) and the agent is carrying
+      // on. There is no separate "permission answered" event, so any
+      // SUBSEQUENT event serves as that signal.
       if (
-        hodisa.tur !== 'ruxsat_kerak' &&
-        ishlayotgan.get(sessionId)?.holat === 'ruxsat-kutmoqda'
+        event.kind !== 'permission_required' &&
+        running.get(sessionId)?.status === 'awaiting-permission'
       ) {
-        holatTarqat(sessionId, 'ishlayapti')
+        broadcastStatus(sessionId, 'running')
       }
 
-      switch (hodisa.tur) {
+      switch (event.kind) {
         case 'delta':
-          toplangan += hodisa.matn
-          hub.broadcast({ type: 'chat.delta', sessionId, messageId, delta: hodisa.matn })
+          collected += event.text
+          hub.broadcast({ type: 'chat.delta', sessionId, messageId, delta: event.text })
           break
 
-        case 'tool_boshlandi':
-          // Ruxsat so'rovi shu chaqiruv ichida keladi — qaysi kartaga
-          // biriktirishni bilishimiz uchun eslab qolamiz
-          faolTool = hodisa.id
-          toolYubor({
-            id: hodisa.id,
-            nom: hodisa.nom,
-            args: hodisa.args,
-            holat: 'ishlamoqda',
+        case 'tool_start':
+          // The permission request arrives inside this call — remember it so we
+          // know which card to attach it to
+          activeTool = event.id
+          sendTool({
+            id: event.id,
+            name: event.name,
+            args: event.args,
+            status: 'running',
           })
           break
 
-        case 'tool_yangilandi': {
-          const mavjud = toolKartalari.get(hodisa.id)
-          if (mavjud) toolYubor({ ...mavjud, natija: hodisa.matn })
+        case 'tool_update': {
+          const existing = toolCardsById.get(event.id)
+          if (existing) sendTool({ ...existing, result: event.text })
           break
         }
 
-        case 'tool_tugadi': {
-          const mavjud = toolKartalari.get(hodisa.id)
-          toolYubor({
-            id: hodisa.id,
-            nom: mavjud?.nom ?? 'tool',
-            args: mavjud?.args ?? '',
-            holat: hodisa.xatomi ? xatoHolati(hodisa.natija) : 'tugadi',
-            natija: hodisa.natija,
-            tafsilot: hodisa.tafsilot,
-            // Ruxsat va klassifikator qarorlari chaqiruv O'RTASIDA kelgan —
-            // tugash eventi ularni bilmaydi, shuning uchun ko'chirib olamiz
-            ruxsat: mavjud?.ruxsat,
-            klassifikator: mavjud?.klassifikator,
+        case 'tool_end': {
+          const existing = toolCardsById.get(event.id)
+          sendTool({
+            id: event.id,
+            name: existing?.name ?? 'tool',
+            args: existing?.args ?? '',
+            status: event.isError ? errorStatus(event.result) : 'done',
+            result: event.result,
+            detail: event.detail,
+            // The permission and classifier decisions arrived IN THE MIDDLE of
+            // the call — the completion event knows nothing about them, so we
+            // carry them across
+            permission: existing?.permission,
+            classifier: existing?.classifier,
           })
-          if (faolTool === hodisa.id) faolTool = undefined
+          if (activeTool === event.id) activeTool = undefined
           break
         }
 
-        case 'ruxsat_kerak':
-          // Qaysi chaqiruv so'raganini ESLAB QOLAMIZ: javob keyinroq
-          // keladi va o'shanda `faolTool` boshqasini ko'rsatishi mumkin
-          if (faolTool) sorovningTooli.set(hodisa.sorov.id, faolTool)
-          hub.broadcast({ type: 'chat.permission', sessionId, messageId, sorov: hodisa.sorov })
-          // Oqim javob kelguncha to'xtab turadi — sidebar buni sariq badge
-          // bilan ajratib ko'rsatadi, chunki bu foydalanuvchi aralashuvini
-          // kutayotgan yagona holat.
-          holatTarqat(sessionId, 'ruxsat-kutmoqda')
-          auditYoz(
+        case 'permission_required':
+          // REMEMBER which call asked: the answer arrives later and by then
+          // `activeTool` may point at a different one
+          if (activeTool) toolByRequest.set(event.request.id, activeTool)
+          hub.broadcast({ type: 'chat.permission', sessionId, messageId, request: event.request })
+          // The stream pauses until an answer arrives — the sidebar marks this
+          // with a yellow badge, because it is the only state waiting on user
+          // intervention.
+          broadcastStatus(sessionId, 'awaiting-permission')
+          auditWrite(
             'agent',
             'permission requested',
-            `${hodisa.sorov.amal}: ${hodisa.sorov.nishon}`.slice(0, 120),
-            'xavfli',
-            'kutmoqda',
+            `${event.request.action}: ${event.request.target}`.slice(0, 120),
+            'dangerous',
+            'pending',
           )
           break
 
-        case 'ruxsat_qarori': {
-          // Amal QANDAY tasdiqdan o'tgani kartaga (va u orqali bazaga)
-          // yoziladi: auto klassifikatormi, foydalanuvchi bosdimi, "har
-          // doim" naqshi ishladimi, rad etildimi yoki muddat tugadimi.
-          // Shusiz "bu buyruq nega bajarildi?" savoliga javob yo'q edi.
+        case 'permission_decision': {
+          // HOW the action was approved is written to the card (and through it
+          // to the database): was it the auto classifier, did the user press a
+          // button, did an "always" pattern match, was it denied, or did it time
+          // out. Without this there was no answer to "why was this command run?".
           //
-          // `sorovId` bor bo'lsa — so'ragan chaqiruvga bog'lanadi (u allaqachon
-          // tugagan bo'lishi mumkin). Yo'q bo'lsa (hardoim/auto/taqiq) qaror
-          // ayni shu payt ishlayotgan chaqiruv ichida sinxron chiqqan.
-          const nishonTool = hodisa.qaror.sorovId
-            ? sorovningTooli.get(hodisa.qaror.sorovId)
-            : faolTool
-          // Begona so'rov (boshqa oqimniki) — jimgina tashlaymiz
-          if (hodisa.qaror.sorovId && !nishonTool) break
-          toolniYangila(nishonTool, { ruxsat: hodisa.qaror })
-          if (hodisa.qaror.sorovId) sorovningTooli.delete(hodisa.qaror.sorovId)
-          auditYoz(
+          // When a `requestId` is present the decision is tied to the call that
+          // asked (which may already have finished). Without one (always/auto/
+          // deny) the decision came out synchronously inside the call running
+          // right now.
+          const targetTool = event.decision.requestId
+            ? toolByRequest.get(event.decision.requestId)
+            : activeTool
+          // A foreign request (belonging to another stream) — drop it silently
+          if (event.decision.requestId && !targetTool) break
+          updateTool(targetTool, { permission: event.decision })
+          if (event.decision.requestId) toolByRequest.delete(event.decision.requestId)
+          auditWrite(
             'platform',
             'permission decision',
-            `${hodisa.qaror.manba}: ${hodisa.qaror.naqsh ?? '—'}`.slice(0, 120),
-            'xavfli',
-            hodisa.qaror.berildi ? 'tasdiqlandi' : 'rad etildi',
+            `${event.decision.origin}: ${event.decision.pattern ?? '—'}`.slice(0, 120),
+            'dangerous',
+            event.decision.granted ? 'approved' : 'denied',
           )
           break
         }
 
-        case 'klassifikator':
-          toolniYangila(faolTool, {
-            klassifikator: { qaror: hodisa.qaror, izoh: hodisa.izoh },
+        case 'classifier': {
+          const verdict = event.verdict
+          updateTool(activeTool, {
+            classifier: { verdict, note: event.note },
           })
           hub.broadcast({
-            type: 'chat.klassifikator',
+            type: 'chat.classifier',
             sessionId,
             messageId,
-            qaror: { qaror: hodisa.qaror, izoh: hodisa.izoh },
+            verdict: { verdict, note: event.note },
           })
-          auditYoz(
-            'klassifikator',
-            hodisa.qaror === 'ruxsat' ? 'allowed' : 'blocked',
-            hodisa.izoh.slice(0, 120),
-            'xavfli',
-            hodisa.qaror === 'ruxsat' ? 'tasdiqlandi' : 'rad etildi',
+          auditWrite(
+            'classifier',
+            verdict === 'allow' ? 'allowed' : 'blocked',
+            event.note.slice(0, 120),
+            'dangerous',
+            verdict === 'allow' ? 'approved' : 'denied',
           )
           break
+        }
 
-        case 'rejim':
+        case 'mode':
           hub.broadcast({
-            type: 'chat.rejim',
+            type: 'chat.mode',
             sessionId,
-            holat: {
-              rejim: hodisa.rejim,
-              sabab: hodisa.sabab,
-              klassifikatorModeli: klassifikatorNomi(sessionId),
+            state: {
+              mode: event.mode,
+              reason: event.reason,
+              classifierModel: classifierName(sessionId),
             },
           })
-          if (hodisa.sabab) {
-            auditYoz('platform', 'auto mode turned off', hodisa.sabab.slice(0, 120), 'xavfli', 'OK')
+          if (event.reason) {
+            auditWrite('platform', 'auto mode turned off', event.reason.slice(0, 120), 'dangerous', 'OK')
           }
           break
 
-        case 'siqildi':
-          // Kontekst siqildi — foydalanuvchi buni bilishi kerak, chunki
-          // agent endi eski tafsilotlarni xulosadan ko'radi
-          auditYoz(
+        case 'compacted':
+          // The context was compacted — the user should know, because the agent
+          // now sees the older details only through a summary
+          auditWrite(
             'platform',
             'context compacted',
-            `${hodisa.oldingiTokenlar} → ~${hodisa.yangiTokenlar} token`,
-            "o'zgartirish",
+            `${event.previousTokens} → ~${event.newTokens} tokens`,
+            'write',
             'OK',
           )
           break
 
-        case 'tugadi':
-          // Oqim davomida to'plangan matn `tugadi` dagi bilan bir xil bo'lishi
-          // kerak, lekin oxirgisi ishonchliroq (provider oxirida to'g'rilashi mumkin)
-          toplangan = hodisa.matn || toplangan
-          // Keyingi turn shu kontekstdan davom etadi — tool natijalari bilan.
-          // `suhbatOqimi` (tool'siz rejim) kontekst qaytarmaydi — u holda
-          // keyingi turn `text` dan quriladi, bu yetarli (tool natijasi yo'q).
-          if ('xabarlar' in hodisa) {
-            agentXabarlari = hodisa.xabarlar
-            kontekstTokenlari = hodisa.kontekstTokenlari
+        case 'done':
+          // The text collected during the stream should match the one in
+          // `done`, but the latter is more reliable (the provider may correct
+          // it at the end)
+          collected = event.text || collected
+          // The next turn continues from this context — with the tool results.
+          // `conversationStream` (the tool-free mode) returns no context — in
+          // that case the next turn is built from `text`, which is enough
+          // (there are no tool results).
+          if ('messages' in event) {
+            agentMessages = event.messages
+            contextTokens = event.contextTokens
           }
           hub.broadcast({
             type: 'chat.done',
             sessionId,
             messageId,
             usage: {
-              input: hodisa.sarflov.input,
-              output: hodisa.sarflov.output,
-              cost: hodisa.sarflov.cost,
+              input: event.usage.input,
+              output: event.usage.output,
+              cost: event.usage.cost,
             },
           })
           break
 
-        case 'xato':
-          xato = hodisa.xabar
+        case 'error':
+          error = event.message
           break
       }
-      if (xato) break
+      if (error) break
     }
   } catch (e) {
-    // Oqim funksiyalari o'zi xatolarni ushlaydi, bu qo'shimcha himoya qatlami
-    xato = e instanceof Error ? e.message : String(e)
+    // The stream functions catch their own errors; this is an extra layer of
+    // protection
+    error = e instanceof Error ? e.message : String(e)
   } finally {
-    // Yozuvni faqat U HALI HAM BIZNIKI bo'lsa o'chiramiz. Foydalanuvchi javob
-    // tugashini kutmay yangi xabar yuborgan bo'lsa, bizni to'xtatib yangi oqim
-    // boshlangan — o'sha yangisining yozuvini o'chirib yuborsak, sessiya
-    // "ishlamayapti" bo'lib ko'rinardi.
-    ozimizniki = ishlayotgan.get(sessionId)?.boshqaruv === boshqaruv
-    if (ozimizniki) ishlayotgan.delete(sessionId)
+    // Only remove the entry if IT IS STILL OURS. If the user sent a new message
+    // without waiting for the reply, a new stream stopped us and started — and
+    // deleting that new one's entry would make the session look "not running".
+    stillOurs = running.get(sessionId)?.controller === controller
+    if (stillOurs) running.delete(sessionId)
   }
 
-  const toolCards = [...toolKartalari.values()]
+  const toolCards = [...toolCardsById.values()]
 
-  // Foydalanuvchi o'zi to'xtatgani XATO EMAS. Ilgari abort ham `xato` yo'lidan
-  // o'tib, javob matniga "⚠︎ Javob to'liq kelmadi: So'rov bekor qilindi"
-  // qo'shilardi — ustiga tool kartasi allaqachon "to'xtatildi" deb turgani
-  // uchun bir hodisa ikki marta ogohlantirish sifatida ko'rinardi.
-  const toxtatildi = boshqaruv.signal.aborted
+  // The user stopping it themselves IS NOT AN ERROR. An abort used to travel
+  // the `error` path too, which appended "⚠︎ The response did not arrive in
+  // full: request cancelled" to the reply text — and since the tool card
+  // already said "stopped", one event showed up as two warnings.
+  const stopped = controller.signal.aborted
 
-  // Javobni saqlash: bo'sh bo'lsa ham yozamiz (xato holatida sabab ko'rinsin)
-  const saqlanadigan = xato && !toxtatildi ? xatoliMatn(toplangan, xato) : toplangan
-  // Sessiya oqim davomida o'chirilgan bo'lishi mumkin (DELETE /chat/sessions/:id
-  // avval `abort()` qiladi, lekin oqim shu nuqtaga baribir yetib keladi).
-  // Tekshirmasak `xabarYoz` foreign key xatosi tashlardi — u esa bu yerda
-  // ushlanmaydi, chunki `finally` allaqachon o'tgan.
-  const sessiyaBor = sessiyaOqi(sessionId) !== null
-  // Turn'ni YO'QOTMASLIK sharti: matn, tool yoki agent konteksti — uchtadan
-  // biri bo'lsa yoziladi. Ilgari faqat birinchi ikkitasi tekshirilardi va
-  // provider bo'sh javob qaytarganda (yoki xato jimgina yutilganda) butun
-  // javob bazaga umuman tushmasdi: foydalanuvchi xabari tarixda yolg'iz
-  // qolib, keyingi turn'da nima bo'lganini hech kim bilmasdi.
-  const yozishKerak =
-    saqlanadigan.length > 0 || toolCards.length > 0 || (agentXabarlari?.length ?? 0) > 0
-  if (sessiyaBor && yozishKerak) {
-    xabarYoz({
+  // Storing the reply: it is written even when empty (so the reason is visible
+  // in the error case)
+  const toStore = error && !stopped ? textWithError(collected, error) : collected
+  // The session may have been deleted while the stream was running (DELETE
+  // /chat/sessions/:id calls `abort()` first, but the stream still reaches this
+  // point). Without the check `writeMessage` would raise a foreign key error —
+  // and that would not be caught here, because `finally` has already run.
+  const sessionExists = readSession(sessionId) !== null
+  // The condition for NOT LOSING the turn: text, tools or agent context — it is
+  // written if any one of the three is present. Previously only the first two
+  // were checked, and when the provider returned an empty reply (or an error was
+  // swallowed silently) the whole reply never reached the database at all: the
+  // user's message was left alone in the history and nobody could tell what had
+  // happened on the next turn.
+  const shouldWrite =
+    toStore.length > 0 || toolCards.length > 0 || (agentMessages?.length ?? 0) > 0
+  if (sessionExists && shouldWrite) {
+    writeMessage({
       id: messageId,
       sessionId,
       role: 'assistant',
-      text: saqlanadigan,
+      text: toStore,
       toolCards,
-      // Xato bo'lsa kontekst saqlanmaydi: yarim qurilgan tarix (masalan
-      // javobsiz tool chaqiruvi) keyingi so'rovni ham yiqitadi. U holda
-      // keyingi turn `text` dan tiklanadi — tafsilot yo'qoladi, lekin
-      // sessiya ishlashda davom etadi.
-      agentMessages: xato ? undefined : agentXabarlari,
-      contextTokens: xato ? undefined : kontekstTokenlari,
+      // On error the context is not stored: a half-built history (for example a
+      // tool call with no answer) would break the next request too. In that case
+      // the next turn is rebuilt from `text` — detail is lost, but the session
+      // keeps working.
+      agentMessages: error ? undefined : agentMessages,
+      contextTokens: error ? undefined : contextTokens,
     })
   }
 
-  if (xato && !toxtatildi) {
-    hub.broadcast({ type: 'chat.error', sessionId, messageId, error: xato })
-    auditYoz('chat', 'LLM response failed', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'rad etildi')
-  } else if (toxtatildi) {
-    // UI uchun bu oddiy tugash: oqim yopiladi, qizil ogohlantirish chiqmaydi.
+  if (error && !stopped) {
+    hub.broadcast({ type: 'chat.error', sessionId, messageId, error })
+    auditWrite('chat', 'LLM response failed', `${choice.provider}/${choice.model}`, 'read', 'denied')
+  } else if (stopped) {
+    // For the UI this is an ordinary completion: the stream closes and no red
+    // warning appears.
     hub.broadcast({
       type: 'chat.done',
       sessionId,
       messageId,
       usage: { input: 0, output: 0, cost: 0 },
     })
-    auditYoz('chat', 'LLM response stopped', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
+    auditWrite('chat', 'LLM response stopped', `${choice.provider}/${choice.model}`, 'read', 'OK')
   } else {
-    auditYoz('chat', 'LLM response', `${tanlov.provider}/${tanlov.model}`, "o'qish", 'OK')
+    auditWrite('chat', 'LLM response', `${choice.provider}/${choice.model}`, 'read', 'OK')
   }
 
-  // Yakuniy holat — to'xtatish (abort) ham shu yerdan o'tadi: bekor qilingan
-  // oqim ham shu nuqtaga yetib keladi, ya'ni sidebar indikatori har holatda
-  // yopiladi. Bizni yangi oqim almashtirgan bo'lsa tarqatmaymiz (yuqoriga q.).
-  if (ozimizniki) holatTarqat(sessionId, xato && !toxtatildi ? 'xato' : 'tugadi')
+  // The final status — an abort passes through here too: a cancelled stream
+  // also reaches this point, so the sidebar indicator closes in every case. If a
+  // new stream has replaced us we do not broadcast (see above).
+  if (stillOurs) broadcastStatus(sessionId, error && !stopped ? 'error' : 'done')
 
-  return { messageId, matn: toplangan, toolCards, xato }
+  return { messageId, text: collected, toolCards, error }
 }
 
 /**
- * Klassifikator qaysi model bilan ishlayotgani (UI'da ko'rsatiladi).
+ * Which model the classifier is running with (shown in the UI).
  *
- * Keshga tayanadi — chaqirilgunga qadar `modellarniAniqla()` bajarilgan
- * bo'lishi kerak. Sinxron, chunki `rejimHolati` ko'p joyda chaqiriladi.
+ * Relies on the cache — `detectModels()` must have run before this is called.
+ * Synchronous, because `modeState` is called in many places.
  */
-function klassifikatorNomi(sessionId?: string): string | undefined {
-  const sozlamalar = sessionId
-    ? config({ ishPapkasi: sessiyaPapkasi(sessionId) }).config
+function classifierName(sessionId?: string): string | undefined {
+  const settings = sessionId
+    ? config({ workDir: sessionDir(sessionId) }).config
     : config().config
-  const tanlov = klassifikatorModeliniTanla(
-    keshdagiNatija()?.models ?? [],
-    sozlamalar.ruxsat.klassifikatorModeli,
+  const choice = pickClassifierModel(
+    cachedResult()?.models ?? [],
+    settings.permission.classifierModel,
   )
-  return tanlov ? `${tanlov.provider}/${tanlov.model}` : undefined
+  return choice ? `${choice.provider}/${choice.model}` : undefined
 }
 
-/** Sessiyaning hozirgi ruxsat rejimi */
-export function rejimHolati(sessionId: string): RejimHolati {
-  const b = rejimBoshqaruvchisi(sessionId)
-  return { ...b.holat, klassifikatorModeli: klassifikatorNomi(sessionId) }
+/** The session's current permission mode */
+export function modeState(sessionId: string): ModeState {
+  const manager = modeManager(sessionId)
+  return { ...manager.state, classifierModel: classifierName(sessionId) }
 }
 
 /**
- * Rejimni o'zgartiradi (foydalanuvchi almashtirdi yoki auto ni qayta yoqdi).
- * Yangi holatni WS orqali tarqatadi.
+ * Changes the mode (the user switched it, or turned auto back on). Broadcasts
+ * the new state over WS.
  *
- * Async: auto so'ralganda providerlar hali aniqlanmagan bo'lishi mumkin
- * (server endi ko'tarilgan, hech kim `/api/models` so'ramagan). Shunday
- * holatda "model topilmadi" deb rad etish noto'g'ri bo'lardi — avval
- * aniqlaymiz.
+ * Async: when auto is requested the providers may not have been detected yet
+ * (the server has only just come up and nobody has asked for `/api/models`).
+ * Rejecting with "no model found" in that situation would be wrong — so we
+ * detect first.
  */
-export async function rejimOrnat(
+export async function setMode(
   sessionId: string,
-  rejim: RuxsatRejimi,
-): Promise<RejimHolati> {
-  const b = rejimBoshqaruvchisi(sessionId)
+  mode: PermissionMode,
+): Promise<ModeState> {
+  const manager = modeManager(sessionId)
 
-  if (rejim === 'auto') {
-    // Kesh bo'sh bo'lsa aniqlashni kutamiz — aks holda birinchi marta
-    // auto yoqishga urinish har doim muvaffaqiyatsiz bo'lardi
-    if (!keshdagiNatija()) {
+  if (mode === 'auto') {
+    // If the cache is empty we wait for detection — otherwise the first attempt
+    // to enable auto would always fail
+    if (!cachedResult()) {
       try {
-        await modellarniAniqla()
+        await detectModels()
       } catch {
-        // Aniqlash yiqilsa pastdagi tekshiruv sababni beradi
+        // If detection fails the check below reports the reason
       }
     }
-    if (!klassifikatorNomi(sessionId)) {
-      const holat: RejimHolati = {
-        rejim: 'tasdiq',
-        sabab: 'no suitable model found for the classifier — check that a provider is configured',
+    if (!classifierName(sessionId)) {
+      const state: ModeState = {
+        mode: 'confirm',
+        reason: 'no suitable model found for the classifier — check that a provider is configured',
       }
-      hub.broadcast({ type: 'chat.rejim', sessionId, holat })
-      return holat
+      hub.broadcast({ type: 'chat.mode', sessionId, state })
+      return state
     }
   }
 
-  b.ornat(rejim)
-  const holat = rejimHolati(sessionId)
-  hub.broadcast({ type: 'chat.rejim', sessionId, holat })
-  auditYoz('user', 'permission mode', rejim, "o'zgartirish", 'OK')
-  return holat
+  manager.set(mode)
+  const state = modeState(sessionId)
+  hub.broadcast({ type: 'chat.mode', sessionId, state })
+  auditWrite('user', 'permission mode', mode, 'write', 'OK')
+  return state
 }
 
 /**
- * Sessiyada hozir javob kutayotgan ruxsat so'rovlari.
+ * The permission requests currently awaiting an answer in a session.
  *
- * NEGA KERAK. `chat.permission` — bir marta yuboriladigan WS eventi. U
- * yetib bormasa (mijoz hali `sub` yubormagan, qayta ulanish oynasi, sahifa
- * oqim o'rtasida ochilgan) so'rov UI'da HECH QACHON ko'rinmaydi va agent
- * javob kutib turaveradi — foydalanuvchi uchun bu "chat qotib qoldi".
+ * WHY IT IS NEEDED. `chat.permission` is a WS event sent exactly once. If it
+ * does not arrive (the client has not sent `sub` yet, a reconnection window, the
+ * page was opened mid-stream) the request NEVER appears in the UI and the agent
+ * goes on waiting for an answer — which the user experiences as "the chat has
+ * frozen".
  *
- * Eventga qo'shimcha ravishda SO'RASH mumkin bo'lgan manba shu poyganing
- * butun sinfini zararsiz qiladi: UI sahifa ochilganda va har qayta
- * ulanishda holatni shu yerdan tiklaydi. `chat.status` dagi
- * `ruxsat-kutmoqda` bilan bir xil mantiq (`GET /api/chat/running`).
+ * Having a source that can be POLLED in addition to the event makes that whole
+ * class of race harmless: the UI restores the state from here when the page
+ * opens and on every reconnection. The same logic as `awaiting-permission` in
+ * `chat.status` (`GET /api/chat/running`).
  */
-export function kutayotganRuxsatlar(sessionId: string): RuxsatSorovi[] {
-  return ruxsatBoshqaruvchisi(sessionId).kutayotganSorovlar
+export function pendingPermissions(sessionId: string): PermissionRequest[] {
+  return permissionManager(sessionId).pendingRequests
 }
 
-/** Ruxsat so'roviga javob berish — WS yoki REST orqali keladi */
-export function ruxsatJavobi(sessionId: string, sorovId: string, javob: RuxsatJavobi): boolean {
-  const berildi = ruxsatBoshqaruvchisi(sessionId).javobBer(sorovId, javob)
-  if (berildi) {
-    auditYoz(
+/** Answering a permission request — arrives over WS or REST */
+export function answerPermission(
+  sessionId: string,
+  requestId: string,
+  answer: PermissionAnswer,
+): boolean {
+  const delivered = permissionManager(sessionId).answer(requestId, answer)
+  if (delivered) {
+    auditWrite(
       'user',
       'permission reply',
-      `${sorovId.slice(0, 8)} → ${javob}`,
-      'xavfli',
-      javob === 'rad' ? 'rad etildi' : 'tasdiqlandi',
+      `${requestId.slice(0, 8)} → ${answer}`,
+      'dangerous',
+      answer === 'deny' ? 'denied' : 'approved',
     )
   }
-  return berildi
+  return delivered
 }
 
 /**
- * Sessiyadagi oqimni bekor qiladi (foydalanuvchi to'xtatdi).
+ * Cancels the stream in a session (the user stopped it).
  *
- * Yakuniy `chat.status` bu yerda TARQATILMAYDI: `abort()` dan keyin oqim
- * o'zi tugaydi va `javobOqizi` oxiridagi umumiy tugallash yo'li 'tugadi'
- * yoki 'xato' ni yuboradi. Ikki joydan yuborilsa UI ikkita event olardi.
+ * The final `chat.status` IS NOT BROADCAST here: after `abort()` the stream
+ * finishes on its own and the shared completion path at the end of `streamReply`
+ * sends 'done' or 'error'. Sending from two places would give the UI two events.
  */
-export function oqimniToxtat(sessionId: string): boolean {
-  const oqim = ishlayotgan.get(sessionId)
-  if (!oqim) return false
-  oqim.boshqaruv.abort()
+export function stopStream(sessionId: string): boolean {
+  const stream = running.get(sessionId)
+  if (!stream) return false
+  stream.controller.abort()
   return true
 }
 
-/** Shu sessiyada javob oqayotganmi */
-export function oqimBormi(sessionId: string): boolean {
-  return ishlayotgan.has(sessionId)
+/** Whether a reply is streaming in this session */
+export function isStreaming(sessionId: string): boolean {
+  return running.has(sessionId)
 }
 
 /**
- * DB'dagi xabarlarni LLM kutadigan shaklga keltiradi.
+ * For tests: abort every running stream and empty the registry.
  *
- * `agentMessages` bor xabar (004-migratsiyadan keyin yozilganlar) xom holda
- * beriladi — u yerda tool NATIJALARI ham bor. Yo'q bo'lsa `text` dan oddiy
- * xabar quriladi.
+ * WHY THIS IS NEEDED. `running` is module level, so it is SHARED by every test
+ * file in the process. `POST /api/chat/send` starts the stream with `void`
+ * (`routes/chat.ts`) — it does not await it, which is correct in production but
+ * means the test that sent the request finishes while the stream is still
+ * registered. That leftover entry then shows up in another file's
+ * `runningSessions()` assertions, so the suite failed at random depending on
+ * the order Bun happened to run the files in.
  *
- * Nega bu muhim: ilgari faqat `{role, text}` uzatilardi, ya'ni agent
- * o'zining oldingi `read`/`bash` natijalarini keyingi turn'da ko'rmasdi va
- * har safar faylni qayta o'qishga majbur bo'lardi.
+ * `stopStream()` is not enough on its own: `abort()` only requests a stop and
+ * the entry is removed later, in the stream's own `finally`. The registry is
+ * therefore cleared here as well, so the state is clean SYNCHRONOUSLY.
  */
-function tarixniTayyorla(sessionId: string): SaqlanganXabar[] {
+export function clearRunningStreams(): void {
+  for (const stream of running.values()) stream.controller.abort()
+  running.clear()
+}
+
+/**
+ * Puts the messages from the database into the shape the LLM expects.
+ *
+ * A message that has `agentMessages` (those written after migration 004) is
+ * passed through raw — it holds the tool RESULTS as well. Without it a plain
+ * message is built from `text`.
+ *
+ * Why this matters: previously only `{role, text}` was passed on, so the agent
+ * could not see its own earlier `read`/`bash` results on the next turn and was
+ * forced to read the file again every time.
+ */
+function prepareHistory(sessionId: string): StoredMessage[] {
   return (
-    xabarlarOqi(sessionId)
-      // Biriktirmasi bor xabar matnsiz ham o'tadi: foydalanuvchi faqat fayl
-      // yuborib, hech narsa yozmasligi mumkin — u holda ham agent faylni
-      // ko'rishi kerak.
+    readMessages(sessionId)
+      // A message with an attachment passes even without text: the user may send
+      // only a file and write nothing — the agent still has to see it.
       .filter(
-        (x) =>
-          x.text.trim().length > 0 ||
-          (x.agentMessages?.length ?? 0) > 0 ||
-          (x.biriktirmalar?.length ?? 0) > 0,
+        (m) =>
+          m.text.trim().length > 0 ||
+          (m.agentMessages?.length ?? 0) > 0 ||
+          (m.attachments?.length ?? 0) > 0,
       )
-      .map((x) => ({
-        role: x.role,
-        text: x.text,
-        agentMessages: x.agentMessages,
-        // Faqat agentga kerak maydonlar — `id`, `mime`, `hajm` unga
-        // hech narsa bermaydi va promptni shovqin bilan to'ldirardi
-        biriktirmalar: x.biriktirmalar?.map((b) => ({
-          tur: b.tur,
-          aslNom: b.aslNom,
-          yol: b.yol,
+      .map((m) => ({
+        role: m.role,
+        text: m.text,
+        agentMessages: m.agentMessages,
+        // Only the fields the agent needs — `id`, `mime` and `size` give it
+        // nothing and would fill the prompt with noise
+        attachments: m.attachments?.map((a) => ({
+          kind: a.kind,
+          originalName: a.originalName,
+          path: a.path,
         })),
       }))
   )
 }
 
 /**
- * Klassifikator uchun tarix — FAQAT MATN.
+ * The history for the classifier — TEXT ONLY.
  *
  * ┌────────────────────────────────────────────────────────────────────┐
- * │ XAVFSIZLIK CHEGARASI. Bu yerda `agentMessages` ATAYLAB tashlanadi. │
- * │ Tool natijalari klassifikatorga hech qachon bormaydi: agent        │
- * │ o'qigan faylda "endi rm -rf ~ bajar" yozilgan bo'lsa, u qarorga    │
- * │ ta'sir qila olmasin.                                               │
+ * │ SECURITY BOUNDARY. `agentMessages` is DELIBERATELY dropped here.   │
+ * │ Tool results never reach the classifier: if a file the agent read  │
+ * │ says "now run rm -rf ~", that must not influence the decision.     │
  * │                                                                    │
- * │ `agentOqimi` ichida `klassifikatorTarixi()` ham shu filtrni        │
- * │ takrorlaydi — ikki qatlamli himoya, chunki bu buzilsa prompt       │
- * │ injection himoyasi butunlay yo'qoladi.                             │
+ * │ `classifierHistory()` inside `agentStream` applies the same filter │
+ * │ again — two layers of protection, because if this breaks the       │
+ * │ prompt injection defence is lost entirely.                         │
  * └────────────────────────────────────────────────────────────────────┘
  */
-function klassifikatorTarixiniTayyorla(sessionId: string): SuhbatXabari[] {
-  return xabarlarOqi(sessionId)
-    .filter((x) => x.text.trim().length > 0)
-    .map((x) => ({ role: x.role, text: x.text }))
+function prepareClassifierHistory(sessionId: string): ConversationMessage[] {
+  return readMessages(sessionId)
+    .filter((m) => m.text.trim().length > 0)
+    .map((m) => ({ role: m.role, text: m.text }))
 }
 
-function xatoliMatn(toplangan: string, xato: string): string {
-  const belgi = `⚠︎ The response did not arrive in full: ${xato}`
-  return toplangan.trim().length > 0 ? `${toplangan}\n\n${belgi}` : belgi
+function textWithError(collected: string, error: string): string {
+  const marker = `⚠︎ The response did not arrive in full: ${error}`
+  return collected.trim().length > 0 ? `${collected}\n\n${marker}` : marker
 }
 
-/** Ruxsat berilmagani xato natijasidan ajratiladi — UI boshqa rang beradi */
-function xatoHolati(natija: string): ToolChaqiruv['holat'] {
-  return natija.includes('Permission denied') ? 'rad etildi' : 'xato'
+/** A denied permission is distinguished from an error result — the UI colours it differently */
+function errorStatus(result: string): ToolCall['status'] {
+  return result.includes('Permission denied') ? 'denied' : 'error'
 }
 
-/** Audit uchun: tool nimaga tegdi */
-function toolNishoni(nom: string, args: unknown): string {
-  if (!args || typeof args !== 'object') return nom
+/** For the audit trail: what the tool touched */
+function toolTarget(name: string, args: unknown): string {
+  if (!args || typeof args !== 'object') return name
   const a = args as Record<string, unknown>
-  if (nom === 'bash' && typeof a.command === 'string') return a.command.slice(0, 120)
+  if (name === 'bash' && typeof a.command === 'string') return a.command.slice(0, 120)
   if (typeof a.path === 'string') return a.path
-  return nom
+  return name
 }
 
 /**
- * `read` o'qish, qolganlari o'zgartirish/xavfli.
+ * `read` is a read, the rest are writes or dangerous.
  *
- * MCP tool'lari 'xavfli' — `bash` bilan bir darajada. Sabab: ular tashqi
- * tizimga ta'sir qiladi (issue yaratish, xabar yuborish) va bu ta'sir
- * mahalliy fayl tizimida ko'rinmaydi, ya'ni orqaga qaytarish ham qiyin.
- * Ularning aynan nima qilishini platforma bilmaydi (server uchinchi tomon
- * kodi), shuning uchun eng ehtiyotkor daraja beriladi.
+ * MCP tools are 'dangerous' — on a par with `bash`. The reason: they affect an
+ * external system (creating an issue, sending a message) and that effect is not
+ * visible on the local file system, which also makes it hard to undo. The
+ * platform does not know exactly what they do (the server is third-party code),
+ * so the most cautious level is applied.
  */
-function toolDarajasi(nom: string): "o'qish" | "o'zgartirish" | 'xavfli' {
-  if (nom === 'read') return "o'qish"
-  if (nom === 'bash') return 'xavfli'
-  if (mcpTooliMi(nom)) return 'xavfli'
-  return "o'zgartirish"
+function toolLevel(name: string): 'read' | 'write' | 'dangerous' {
+  if (name === 'read') return 'read'
+  if (name === 'bash') return 'dangerous'
+  if (isMcpTool(name)) return 'dangerous'
+  return 'write'
 }

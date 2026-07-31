@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "Platform settings",
-  "description": "Settings for the platform AI agent, its tools and the permission system. This file is generated — do not edit it by hand, change platform-config/src/sxema.ts instead.",
+  "description": "Settings for the platform AI agent, its tools and the permission system. This file is generated — do not edit it by hand, change platform-config/src/schema.ts instead.",
   "properties": {
     "$schema": {
       "type": "string"
@@ -9,17 +9,17 @@
     "agent": {
       "type": "object",
       "properties": {
-        "tarix": {
+        "history": {
           "type": "object",
           "properties": {
-            "maksXabar": {
+            "maxMessages": {
               "description": "Maximum number of messages sent to the LLM. Older ones are dropped (compacted first if compaction is enabled).",
               "default": 200,
               "type": "number",
               "minimum": 10,
               "maximum": 5000
             },
-            "toolNatijasiChegarasi": {
+            "toolResultLimit": {
               "description": "Maximum length (characters) of a single tool result stored in history, so long `read`/`bash` output does not swamp the context.",
               "default": 4000,
               "type": "number",
@@ -29,29 +29,29 @@
           },
           "additionalProperties": false
         },
-        "siqish": {
+        "compaction": {
           "type": "object",
           "properties": {
-            "yoqilgan": {
+            "enabled": {
               "description": "Automatically compact history when the context fills up. If disabled, a long conversation stops fitting in the context window.",
               "default": true,
               "type": "boolean"
             },
-            "zaxiraTokenlar": {
+            "reserveTokens": {
               "description": "Part of the context window reserved for the summary prompt and the response. Compaction starts once the context exceeds (window - reserve).",
               "default": 16384,
               "type": "number",
               "minimum": 1000,
               "maximum": 200000
             },
-            "saqlanadiganTokenlar": {
+            "keptTokens": {
               "description": "How much of the most recent context is kept verbatim after compaction. A larger value keeps recent history more precise but makes compaction less effective.",
               "default": 20000,
               "type": "number",
               "minimum": 1000,
               "maximum": 200000
             },
-            "modeli": {
+            "model": {
               "description": "Model used for compaction, as `provider/model`. When `null` the main chat model is used (summary quality matters, hence the default).",
               "default": null,
               "type": [
@@ -62,10 +62,10 @@
           },
           "additionalProperties": false
         },
-        "toollar": {
+        "tools": {
           "type": "object",
           "properties": {
-            "yoqilgan": {
+            "enabled": {
               "description": "Tools given to the agent. A tool removed from the list is invisible — the agent does not know it exists.",
               "default": [
                 "read",
@@ -83,14 +83,14 @@
                 "type": "string"
               }
             },
-            "bashTimeoutSekund": {
+            "bashTimeoutSeconds": {
               "description": "Maximum run time for a single `bash` command. Waiting forever would freeze the web session.",
               "default": 120,
               "type": "number",
               "minimum": 1,
               "maximum": 3600
             },
-            "natijaChegarasi": {
+            "resultLimit": {
               "description": "Maximum length (characters) of a tool result sent to the UI. The limit for what is stored in history is configured separately.",
               "default": 2000,
               "type": "number",
@@ -103,26 +103,26 @@
       },
       "additionalProperties": false
     },
-    "ruxsat": {
+    "permission": {
       "type": "object",
       "properties": {
-        "rejim": {
-          "description": "Initial permission mode for a new session. `tasdiq` asks about every dangerous action; `auto` lets the classifier decide.",
-          "default": "tasdiq",
+        "mode": {
+          "description": "Initial permission mode for a new session. `confirm` asks about every dangerous action; `auto` lets the classifier decide.",
+          "default": "confirm",
           "type": "string",
           "enum": [
-            "tasdiq",
+            "confirm",
             "auto"
           ]
         },
-        "kutishSoniya": {
+        "waitSeconds": {
           "description": "How long to wait for an answer to a permission request. On timeout the request is DENIED, so the agent does not hang forever.",
           "default": 300,
           "type": "number",
           "minimum": 10,
           "maximum": 3600
         },
-        "klassifikatorModeli": {
+        "classifierModel": {
           "description": "Model for the auto-mode classifier, as `provider/model`. When `null` it is chosen automatically (fast, proven models first).",
           "default": null,
           "type": [
@@ -130,21 +130,21 @@
             "null"
           ]
         },
-        "ketmaKetBlokChegarasi": {
+        "consecutiveBlockLimit": {
           "description": "Auto mode turns off after the classifier blocks this many actions in a row — the agent may be going beyond what was asked.",
           "default": 3,
           "type": "number",
           "minimum": 1,
           "maximum": 100
         },
-        "jamiBlokChegarasi": {
+        "totalBlockLimit": {
           "description": "Auto mode turns off after this many blocks in total during a session.",
           "default": 20,
           "type": "number",
           "minimum": 1,
           "maximum": 1000
         },
-        "qoshimchaTaqiqlar": {
+        "extraDenyList": {
           "description": "Additional forbidden command names. They are ADDED to the built-in hard block list, never replace it — the security boundary cannot be lowered.",
           "default": [],
           "type": "array",
@@ -155,18 +155,18 @@
       },
       "additionalProperties": false
     },
-    "sessiya": {
+    "session": {
       "type": "object",
       "properties": {
-        "ishPapkasi": {
-          "description": "Root directory the agent tools work in. When `null`, `~/.platforma/ishlar/` is used.",
+        "workDir": {
+          "description": "Root directory the agent tools work in. When `null`, `~/.platforma/work/` is used.",
           "default": null,
           "type": [
             "string",
             "null"
           ]
         },
-        "faolsizlikDaqiqa": {
+        "idleMinutes": {
           "description": "In-memory resources of a session idle for this long (permission state, mode) are cleaned up. The conversation history stays in the database.",
           "default": 60,
           "type": "number",
@@ -179,14 +179,14 @@
     "mcp": {
       "type": "object",
       "properties": {
-        "ulanishTimeoutSekund": {
+        "connectTimeoutSeconds": {
           "description": "Maximum wait for the MCP server handshake. If the server does not respond the session continues — only that server is unavailable.",
           "default": 10,
           "type": "number",
           "minimum": 1,
           "maximum": 60
         },
-        "chaqiruvTimeoutSekund": {
+        "callTimeoutSeconds": {
           "description": "Maximum wait for a single MCP tool call.",
           "default": 30,
           "type": "number",
@@ -199,17 +199,17 @@
     "chat": {
       "type": "object",
       "properties": {
-        "biriktirma": {
+        "attachment": {
           "type": "object",
           "properties": {
-            "maksFaylMb": {
+            "maxFileMb": {
               "description": "Maximum size (MB) of a single file attached to a chat.",
               "default": 20,
               "type": "number",
               "minimum": 1,
               "maximum": 200
             },
-            "maksSoni": {
+            "maxCount": {
               "description": "Maximum number of files attached to a single message.",
               "default": 10,
               "type": "number",

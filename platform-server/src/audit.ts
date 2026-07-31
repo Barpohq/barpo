@@ -1,11 +1,12 @@
-// Audit log — platformadagi HAR bir amal shu yerdan o'tadi.
+// Audit log — EVERY action on the platform passes through here.
 //
-// Qoida: backendning istalgan qismi holat o'zgartirsa yoki maxfiy ma'lumot
-// o'qisa, `auditYoz(...)` chaqirilishi SHART. Boshqa yo'l bilan audit_log
-// jadvaliga yozmang — WS eventi yuborilmay qoladi va UI'dagi lenta jim turadi.
+// The rule: if any part of the backend changes state or reads secret data,
+// calling `auditWrite(...)` is MANDATORY. Do not write to the audit_log table
+// any other way — the WS event would not be sent and the feed in the UI would
+// stay silent.
 //
-// Ikki ish qiladi: (1) append-only jadvalga yozadi, (2) WS hub orqali
-// `audit.entry` eventini tarqatadi.
+// It does two things: (1) appends to an append-only table, (2) broadcasts an
+// `audit.entry` event through the WS hub.
 
 import type { Database } from 'bun:sqlite'
 import type { AuditEntry, AuditLevel } from '@platforma/shared'
@@ -14,35 +15,35 @@ import { hub } from './ws/hub.ts'
 
 export type AuditResult = AuditEntry['result']
 
-/** Vaqtni UI kutgan "HH:MM" ko'rinishida beradi */
-function soatDaqiqa(sana: Date): string {
-  const s = String(sana.getHours()).padStart(2, '0')
-  const d = String(sana.getMinutes()).padStart(2, '0')
-  return `${s}:${d}`
+/** Formats the time as the "HH:MM" the UI expects */
+function hourMinute(date: Date): string {
+  const h = String(date.getHours()).padStart(2, '0')
+  const m = String(date.getMinutes()).padStart(2, '0')
+  return `${h}:${m}`
 }
 
 /**
- * Audit yozuvini bazaga qo'shadi va WS orqali tarqatadi.
+ * Adds an audit entry to the database and broadcasts it over WS.
  *
- * @param actor  kim bajardi ('firdavs', 'ai-news-bot', 'skill:postgres-backup'...)
- * @param action nima qilindi (inson o'qiy oladigan gap)
- * @param target qayerda / nimaga ('helsinki-1', 'post #4'...)
- * @param level  ruxsat darajasi: o'qish | o'zgartirish | xavfli
- * @param result natija: OK | tasdiqlandi | rad etildi | kutmoqda
+ * @param actor  who did it ('firdavs', 'ai-news-bot', 'skill:postgres-backup'...)
+ * @param action what was done (a sentence a human can read)
+ * @param target where / on what ('helsinki-1', 'post #4'...)
+ * @param level  the permission level: read | write | dangerous
+ * @param result the outcome: OK | approved | denied | pending
  */
-export function auditYoz(
+export function auditWrite(
   actor: string,
   action: string,
   target: string,
   level: AuditLevel,
   result: AuditResult = 'OK',
-  baza?: Database,
+  database?: Database,
 ): AuditEntry {
-  const d = baza ?? globalDb()
-  const hozir = new Date()
+  const d = database ?? globalDb()
+  const now = new Date()
 
-  const yozuv: AuditEntry = {
-    time: soatDaqiqa(hozir),
+  const entry: AuditEntry = {
+    time: hourMinute(now),
     actor,
     action,
     target,
@@ -53,38 +54,38 @@ export function auditYoz(
   d.prepare(
     `INSERT INTO audit_log (time, actor, action, target, level, result, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(yozuv.time, actor, action, target, level, result, hozir.toISOString())
+  ).run(entry.time, actor, action, target, level, result, now.toISOString())
 
-  hub.broadcast({ type: 'audit.entry', entry: yozuv })
+  hub.broadcast({ type: 'audit.entry', entry })
 
-  return yozuv
+  return entry
 }
 
-export interface AuditFiltr {
+export interface AuditFilter {
   level?: string
   actor?: string
   limit?: number
   offset?: number
 }
 
-/** Audit yozuvlarini filtr bilan o'qiydi — eng yangisi birinchi */
-export function auditOqi(filtr: AuditFiltr = {}, baza?: Database): AuditEntry[] {
-  const d = baza ?? globalDb()
-  const shartlar: string[] = []
+/** Reads audit entries with a filter — newest first */
+export function auditRead(filter: AuditFilter = {}, database?: Database): AuditEntry[] {
+  const d = database ?? globalDb()
+  const conditions: string[] = []
   const args: (string | number)[] = []
 
-  if (filtr.level) {
-    shartlar.push('level = ?')
-    args.push(filtr.level)
+  if (filter.level) {
+    conditions.push('level = ?')
+    args.push(filter.level)
   }
-  if (filtr.actor) {
-    shartlar.push('actor = ?')
-    args.push(filtr.actor)
+  if (filter.actor) {
+    conditions.push('actor = ?')
+    args.push(filter.actor)
   }
 
-  const where = shartlar.length ? `WHERE ${shartlar.join(' AND ')}` : ''
-  const limit = Math.min(Math.max(filtr.limit ?? 100, 1), 1000)
-  const offset = Math.max(filtr.offset ?? 0, 0)
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  const limit = Math.min(Math.max(filter.limit ?? 100, 1), 1000)
+  const offset = Math.max(filter.offset ?? 0, 0)
 
   return d
     .query<AuditEntry, (string | number)[]>(
@@ -97,24 +98,24 @@ export function auditOqi(filtr: AuditFiltr = {}, baza?: Database): AuditEntry[] 
     .all(...args, limit, offset)
 }
 
-/** Filtrga mos yozuvlarning umumiy soni (paginatsiya uchun) */
-export function auditSoni(filtr: AuditFiltr = {}, baza?: Database): number {
-  const d = baza ?? globalDb()
-  const shartlar: string[] = []
+/** The total number of entries matching the filter (for pagination) */
+export function auditCount(filter: AuditFilter = {}, database?: Database): number {
+  const d = database ?? globalDb()
+  const conditions: string[] = []
   const args: string[] = []
 
-  if (filtr.level) {
-    shartlar.push('level = ?')
-    args.push(filtr.level)
+  if (filter.level) {
+    conditions.push('level = ?')
+    args.push(filter.level)
   }
-  if (filtr.actor) {
-    shartlar.push('actor = ?')
-    args.push(filtr.actor)
+  if (filter.actor) {
+    conditions.push('actor = ?')
+    args.push(filter.actor)
   }
 
-  const where = shartlar.length ? `WHERE ${shartlar.join(' AND ')}` : ''
-  const qator = d
-    .query<{ soni: number }, string[]>(`SELECT COUNT(*) AS soni FROM audit_log ${where}`)
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  const row = d
+    .query<{ count: number }, string[]>(`SELECT COUNT(*) AS count FROM audit_log ${where}`)
     .get(...args)
-  return qator?.soni ?? 0
+  return row?.count ?? 0
 }

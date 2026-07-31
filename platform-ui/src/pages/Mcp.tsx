@@ -1,61 +1,61 @@
-// MCP serverlar sahifasi — qo'shish, sozlash, o'rnatish.
+// MCP servers page — adding, configuring, installing.
 //
-// `Skills.tsx` bilan bir xil uch qatlam (manba → katalog → qamrov), lekin
-// IKKI QO'SHIMCHA narsa bor:
+// The same three layers as `Skills.tsx` (source → catalog → scope), but with
+// TWO EXTRA things:
 //
-//   1) TO'RT XIL MANBA. Registry qidiruvi, GitHub repo, qo'lda kiritish va
-//      platforma standart to'plami. Har biri o'z modalida.
+//   1) FOUR KINDS OF SOURCE. A registry search, a GitHub repo, manual entry
+//      and the platform's builtin set. Each has its own modal.
 //
-//   2) SOZLAMA QIYMATLARI. Skill o'rnatishda faqat qamrov tanlanadi; MCP
-//      serverga esa ko'pincha token kerak. Maxfiy maydonlar `type="password"`
-//      bilan ko'rsatiladi va HECH QACHON qaytarib ko'rsatilmaydi — bo'sh
-//      input "o'zgartirmadim" degani (`Servers.tsx` parol naqshi).
+//   2) SETTING VALUES. Installing a skill only asks for the scope; an MCP
+//      server usually needs a token as well. Secret fields are shown with
+//      `type="password"` and are NEVER displayed back — an empty input means
+//      "I did not change it" (the password pattern from `Servers.tsx`).
 
 import { useEffect, useMemo, useState } from 'react'
 import type {
-  McpManba,
   McpServer,
-  McpSozlamaMaydoni,
-  McpTransportTuri,
+  McpSettingField,
+  McpSource,
+  McpTransportKind,
   Project,
 } from '@platforma/shared'
 import {
-  ApiXatosi,
-  loyihalarOl,
-  mcpGithubUlash,
-  mcpManbaOchir,
-  mcpManbaSinxronla,
-  mcpOrnat,
-  mcpOrnatishniBekor,
-  mcpQoldaQosh,
-  mcpRegistryQidir,
-  mcpRegistryQosh,
-  mcpServerlarniOl,
-  type McpRegistryNatija,
+  ApiError,
+  fetchProjects,
+  addMcpFromGithub,
+  deleteMcpSource,
+  syncMcpSource,
+  installMcpServer,
+  uninstallMcpServer,
+  addMcpManually,
+  mcpRegistrySearch,
+  addMcpFromRegistry,
+  fetchMcpServers,
+  type McpRegistryResult,
 } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { Card, PageHead } from '../ui'
 
-/** Transport belgisi — kartada va modalda bir xil ko'rinsin */
-const transportBelgisi: Record<McpTransportTuri, string> = {
+/** Transport label — it must read the same on the card and in the modal */
+const transportLabel: Record<McpTransportKind, string> = {
   stdio: 'local',
   http: 'remote',
 }
 
 // ---------------------------------------------------------------------------
-// Modal asosi
+// Modal shell
 // ---------------------------------------------------------------------------
 
 function Modal({
-  sarlavha,
+  title,
   onClose,
   children,
-  kenglik = 'max-w-md',
+  width = 'max-w-md',
 }: {
-  sarlavha: string
+  title: string
   onClose: () => void
   children: React.ReactNode
-  kenglik?: string
+  width?: string
 }) {
   return (
     <div
@@ -63,9 +63,9 @@ function Modal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={sarlavha}
+      aria-label={title}
     >
-      <Card className={`rise-in w-full ${kenglik} p-6`}>
+      <Card className={`rise-in w-full ${width} p-6`}>
         <div onClick={(e) => e.stopPropagation()}>{children}</div>
       </Card>
     </div>
@@ -73,61 +73,61 @@ function Modal({
 }
 
 // ---------------------------------------------------------------------------
-// Registry qidiruv modali
+// Registry search modal
 // ---------------------------------------------------------------------------
 
 /**
- * Rasmiy registry'da qidirish.
+ * Searching the official registry.
  *
- * IKKI BOSQICHLI: qidiruv natijasi HECH NARSA SAQLAMAYDI, foydalanuvchi
- * bittasini tanlagach u katalogga tushadi. Skilllardagi GitHub oqimidan
- * farqi shu — u yerda bir repo = bir necha skill va hammasi katalogga
- * tushardi.
+ * TWO-STEP: the search results STORE NOTHING; only once the user picks one
+ * does it land in the catalog. That is the difference from the GitHub flow for
+ * skills — there one repo = several skills and all of them entered the
+ * catalog.
  */
 function RegistryModal({
   onClose,
-  onQoshildi,
+  onAdded,
 }: {
   onClose: () => void
-  onQoshildi: () => Promise<unknown>
+  onAdded: () => Promise<unknown>
 }) {
-  const [soz, setSoz] = useState('')
-  const [natijalar, setNatijalar] = useState<McpRegistryNatija[] | null>(null)
-  const [qidirilmoqda, setQidirilmoqda] = useState(false)
-  const [bandNom, setBandNom] = useState<string | null>(null)
-  const [xato, setXato] = useState<string | null>(null)
+  const [term, setTerm] = useState('')
+  const [results, setResults] = useState<McpRegistryResult[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [busyName, setBusyName] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const toast = useToast()
 
-  const qidir = async () => {
-    setQidirilmoqda(true)
-    setXato(null)
+  const search = async () => {
+    setSearching(true)
+    setError(null)
     try {
-      setNatijalar(await mcpRegistryQidir(soz))
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not search')
-      setNatijalar(null)
+      setResults(await mcpRegistrySearch(term))
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not search')
+      setResults(null)
     } finally {
-      setQidirilmoqda(false)
+      setSearching(false)
     }
   }
 
-  const qosh = async (nom: string) => {
-    setBandNom(nom)
-    setXato(null)
+  const add = async (name: string) => {
+    setBusyName(name)
+    setError(null)
     try {
-      await mcpRegistryQosh(nom)
-      await onQoshildi()
-      toast(`${nom} added to the catalog`)
+      await addMcpFromRegistry(name)
+      await onAdded()
+      toast(`${name} added to the catalog`)
       onClose()
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not add')
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not add')
     } finally {
-      setBandNom(null)
+      setBusyName(null)
     }
   }
 
   return (
-    <Modal sarlavha="Official registry" onClose={onClose} kenglik="max-w-2xl">
+    <Modal title="Official registry" onClose={onClose} width="max-w-2xl">
       <h2 className="font-display text-lg font-semibold">Official registry</h2>
       <p className="mt-1.5 text-sm text-muted">
         registry.modelcontextprotocol.io — open MCP servers from the ecosystem
@@ -135,62 +135,62 @@ function RegistryModal({
 
       <div className="mt-4 flex gap-2">
         <input
-          value={soz}
-          onChange={(e) => setSoz(e.target.value)}
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') void qidir()
+            if (e.key === 'Enter') void search()
           }}
           placeholder="github, postgres, slack…"
           aria-label="Search the registry"
           className="flex-1 rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
         />
         <button
-          onClick={qidir}
-          disabled={qidirilmoqda}
+          onClick={search}
+          disabled={searching}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {qidirilmoqda ? 'Searching…' : 'Search'}
+          {searching ? 'Searching…' : 'Search'}
         </button>
       </div>
 
-      {xato && <p className="mt-3 text-sm text-coral">{xato}</p>}
+      {error && <p className="mt-3 text-sm text-coral">{error}</p>}
 
-      {natijalar !== null && (
+      {results !== null && (
         <div className="mt-4 max-h-96 space-y-2 overflow-y-auto">
-          {natijalar.length === 0 ? (
+          {results.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted">Nothing found.</p>
           ) : (
-            natijalar.map((n) => (
+            results.map((n) => (
               <div
-                key={n.nom}
+                key={n.name}
                 className="flex items-start justify-between gap-3 rounded-lg border border-line bg-bg p-3"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-mono text-[13px] text-ink">{n.nom}</span>
+                    <span className="truncate font-mono text-[13px] text-ink">{n.name}</span>
                     <span className="shrink-0 rounded-md bg-panel2 px-1.5 py-0.5 text-[10px] text-faint">
-                      {transportBelgisi[n.transport]}
+                      {transportLabel[n.transport]}
                     </span>
-                    {n.versiya && (
-                      <span className="shrink-0 text-[11px] text-faint">v{n.versiya}</span>
+                    {n.version && (
+                      <span className="shrink-0 text-[11px] text-faint">v{n.version}</span>
                     )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
-                    {n.tavsif || '(no description)'}
+                    {n.description || '(no description)'}
                   </p>
-                  {n.sozlamalar.length > 0 && (
+                  {n.settings.length > 0 && (
                     <p className="mt-1 text-[11px] text-faint">
-                      {n.sozlamalar.length} settings required
-                      {n.sozlamalar.some((s) => s.maxfiy) && ' (including a key)'}
+                      {n.settings.length} settings required
+                      {n.settings.some((s) => s.secret) && ' (including a key)'}
                     </p>
                   )}
                 </div>
                 <button
-                  onClick={() => void qosh(n.nom)}
-                  disabled={bandNom !== null}
+                  onClick={() => void add(n.name)}
+                  disabled={busyName !== null}
                   className="shrink-0 rounded-lg border border-lazur-dim px-3 py-1.5 text-xs text-lazur transition hover:bg-lazur-dim hover:text-bg disabled:opacity-50"
                 >
-                  {bandNom === n.nom ? '…' : 'Add'}
+                  {busyName === n.name ? '…' : 'Add'}
                 </button>
               </div>
             ))
@@ -211,40 +211,40 @@ function RegistryModal({
 }
 
 // ---------------------------------------------------------------------------
-// GitHub ulash modali
+// GitHub connect modal
 // ---------------------------------------------------------------------------
 
 function GithubModal({
   onClose,
-  onQoshildi,
+  onAdded,
 }: {
   onClose: () => void
-  onQoshildi: () => Promise<unknown>
+  onAdded: () => Promise<unknown>
 }) {
   const [url, setUrl] = useState('')
-  const [ishlayapti, setIshlayapti] = useState(false)
-  const [xato, setXato] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const toast = useToast()
 
-  const ula = async () => {
-    setIshlayapti(true)
-    setXato(null)
+  const connect = async () => {
+    setBusy(true)
+    setError(null)
     try {
-      const natija = await mcpGithubUlash(url)
-      await onQoshildi()
-      const ogoh = natija.ogohlantirishlar?.length ?? 0
+      const result = await addMcpFromGithub(url)
+      await onAdded()
+      const warnCount = result.warnings?.length ?? 0
       toast(
-        `${natija.qoshildi} servers added${ogoh > 0 ? ` · ${ogoh} warnings` : ''}`,
+        `${result.added} servers added${warnCount > 0 ? ` · ${warnCount} warnings` : ''}`,
       )
       onClose()
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? (x.detail ?? x.message) : 'Could not connect')
-      setIshlayapti(false)
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.detail ?? e.message) : 'Could not connect')
+      setBusy(false)
     }
   }
 
   return (
-    <Modal sarlavha="GitHub repo" onClose={onClose}>
+    <Modal title="GitHub repo" onClose={onClose}>
       <h2 className="font-display text-lg font-semibold">GitHub repo</h2>
       <p className="mt-1.5 text-sm text-muted">
         The repo is scanned for <code className="font-mono text-xs text-ink">server.json</code> files —
@@ -255,14 +255,14 @@ function GithubModal({
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && url.trim()) void ula()
+          if (e.key === 'Enter' && url.trim()) void connect()
         }}
         placeholder="github/github-mcp-server"
         aria-label="Repo address"
         className="mt-4 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
       />
 
-      {xato && <p className="mt-3 text-sm text-coral">{xato}</p>}
+      {error && <p className="mt-3 text-sm text-coral">{error}</p>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button
@@ -272,11 +272,11 @@ function GithubModal({
           Cancel
         </button>
         <button
-          onClick={ula}
-          disabled={ishlayapti || !url.trim()}
+          onClick={connect}
+          disabled={busy || !url.trim()}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {ishlayapti ? 'Connecting…' : 'Connect'}
+          {busy ? 'Connecting…' : 'Connect'}
         </button>
       </div>
     </Modal>
@@ -284,75 +284,75 @@ function GithubModal({
 }
 
 // ---------------------------------------------------------------------------
-// Qo'lda qo'shish modali
+// Manual add modal
 // ---------------------------------------------------------------------------
 
-/** Foydalanuvchi qo'lda qo'shadigan sozlama qatori */
-interface SozlamaQatori {
-  nom: string
-  maxfiy: boolean
-  majburiy: boolean
+/** A setting row the user adds by hand */
+interface SettingRow {
+  name: string
+  secret: boolean
+  required: boolean
 }
 
-function QoldaModal({
+function ManualModal({
   onClose,
-  onQoshildi,
+  onAdded,
 }: {
   onClose: () => void
-  onQoshildi: () => Promise<unknown>
+  onAdded: () => Promise<unknown>
 }) {
-  const [nom, setNom] = useState('')
-  const [tavsif, setTavsif] = useState('')
-  const [transport, setTransport] = useState<McpTransportTuri>('stdio')
-  const [buyruq, setBuyruq] = useState('npx')
-  const [argumentlar, setArgumentlar] = useState('')
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [transport, setTransport] = useState<McpTransportKind>('stdio')
+  const [command, setCommand] = useState('npx')
+  const [args, setArgs] = useState('')
   const [url, setUrl] = useState('')
-  const [sozlamalar, setSozlamalar] = useState<SozlamaQatori[]>([])
-  const [ishlayapti, setIshlayapti] = useState(false)
-  const [xato, setXato] = useState<string | null>(null)
+  const [settings, setSettings] = useState<SettingRow[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const toast = useToast()
 
-  const tayyor =
-    nom.trim() !== '' && (transport === 'stdio' ? buyruq.trim() !== '' : url.trim() !== '')
+  const ready =
+    name.trim() !== '' && (transport === 'stdio' ? command.trim() !== '' : url.trim() !== '')
 
-  const qosh = async () => {
-    setIshlayapti(true)
-    setXato(null)
+  const add = async () => {
+    setBusy(true)
+    setError(null)
     try {
-      await mcpQoldaQosh({
-        nom: nom.trim(),
-        tavsif: tavsif.trim() || undefined,
+      await addMcpManually({
+        name: name.trim(),
+        description: description.trim() || undefined,
         transport,
         ...(transport === 'stdio'
           ? {
-              buyruq: buyruq.trim(),
-              // Argumentlar BO'SHLIQ bo'yicha ajratiladi. Bu oddiy qoida:
-              // MCP argumentlarida bo'shliq bo'lgan qiymat kam uchraydi
-              // (ular odatda paket nomi va bayroqlar).
-              argumentlar: argumentlar.trim() ? argumentlar.trim().split(/\s+/) : [],
+              command: command.trim(),
+              // Arguments are split on WHITESPACE. A simple rule: values
+              // containing spaces are rare in MCP arguments (they are usually
+              // a package name and flags).
+              args: args.trim() ? args.trim().split(/\s+/) : [],
             }
           : { url: url.trim() }),
-        sozlamalar: sozlamalar
-          .filter((s) => s.nom.trim())
-          .map((s) => ({ nom: s.nom.trim(), majburiy: s.majburiy, maxfiy: s.maxfiy })),
+        settings: settings
+          .filter((s) => s.name.trim())
+          .map((s) => ({ name: s.name.trim(), required: s.required, secret: s.secret })),
       })
-      await onQoshildi()
-      toast(`${nom.trim()} added`)
+      await onAdded()
+      toast(`${name.trim()} added`)
       onClose()
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not add')
-      setIshlayapti(false)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not add')
+      setBusy(false)
     }
   }
 
-  const qatorYangila = (indeks: number, ozgarish: Partial<SozlamaQatori>) => {
-    setSozlamalar((eski) =>
-      eski.map((s, i) => (i === indeks ? { ...s, ...ozgarish } : s)),
+  const updateRow = (index: number, change: Partial<SettingRow>) => {
+    setSettings((old) =>
+      old.map((s, i) => (i === index ? { ...s, ...change } : s)),
     )
   }
 
   return (
-    <Modal sarlavha="Add manually" onClose={onClose} kenglik="max-w-lg">
+    <Modal title="Add manually" onClose={onClose} width="max-w-lg">
       <h2 className="font-display text-lg font-semibold">Add manually</h2>
       <p className="mt-1.5 text-sm text-muted">
         You enter the start command or the remote address yourself.
@@ -362,8 +362,8 @@ function QoldaModal({
         <label className="block">
           <span className="text-xs font-medium uppercase tracking-wider text-faint">Name</span>
           <input
-            value={nom}
-            onChange={(e) => setNom(e.target.value)}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             placeholder="github"
             className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
           />
@@ -374,8 +374,8 @@ function QoldaModal({
             Description (optional)
           </span>
           <input
-            value={tavsif}
-            onChange={(e) => setTavsif(e.target.value)}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
             placeholder="What it does — the agent reads this text"
             className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
           />
@@ -407,8 +407,8 @@ function QoldaModal({
                 Command
               </span>
               <input
-                value={buyruq}
-                onChange={(e) => setBuyruq(e.target.value)}
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
                 placeholder="npx"
                 className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
               />
@@ -418,8 +418,8 @@ function QoldaModal({
                 Arguments
               </span>
               <input
-                value={argumentlar}
-                onChange={(e) => setArgumentlar(e.target.value)}
+                value={args}
+                onChange={(e) => setArgs(e.target.value)}
                 placeholder="-y @modelcontextprotocol/server-everything"
                 className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
               />
@@ -440,7 +440,7 @@ function QoldaModal({
           </label>
         )}
 
-        {/* Sozlama maydonlari — server so'raydigan env/sarlavhalar */}
+        {/* Setting fields — the env vars / headers the server asks for */}
         <div className="rounded-lg border border-line bg-bg p-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium uppercase tracking-wider text-faint">
@@ -448,7 +448,7 @@ function QoldaModal({
             </span>
             <button
               onClick={() =>
-                setSozlamalar((e) => [...e, { nom: '', maxfiy: true, majburiy: true }])
+                setSettings((e) => [...e, { name: '', secret: true, required: true }])
               }
               className="text-xs text-lazur transition hover:brightness-125"
             >
@@ -456,39 +456,39 @@ function QoldaModal({
             </button>
           </div>
 
-          {sozlamalar.length === 0 ? (
+          {settings.length === 0 ? (
             <p className="mt-2 text-[11px] text-faint">
               If the server asks for a token or an address, add it here.
             </p>
           ) : (
             <div className="mt-2 space-y-2">
-              {sozlamalar.map((s, i) => (
-                // eslint-disable-next-line react/no-array-index-key -- qatorlar tartibi barqaror
+              {settings.map((s, i) => (
+                // eslint-disable-next-line react/no-array-index-key -- the row order is stable
                 <div key={i} className="flex items-center gap-2">
                   <input
-                    value={s.nom}
-                    onChange={(e) => qatorYangila(i, { nom: e.target.value })}
+                    value={s.name}
+                    onChange={(e) => updateRow(i, { name: e.target.value })}
                     placeholder={transport === 'stdio' ? 'GITHUB_TOKEN' : 'Authorization'}
                     className="min-w-0 flex-1 rounded-lg border border-line bg-panel px-2 py-1.5 font-mono text-xs outline-none placeholder:text-faint focus:border-lazur-dim"
                   />
                   <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-muted">
                     <input
                       type="checkbox"
-                      checked={s.maxfiy}
-                      onChange={(e) => qatorYangila(i, { maxfiy: e.target.checked })}
+                      checked={s.secret}
+                      onChange={(e) => updateRow(i, { secret: e.target.checked })}
                     />
                     secret
                   </label>
                   <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-muted">
                     <input
                       type="checkbox"
-                      checked={s.majburiy}
-                      onChange={(e) => qatorYangila(i, { majburiy: e.target.checked })}
+                      checked={s.required}
+                      onChange={(e) => updateRow(i, { required: e.target.checked })}
                     />
                     required
                   </label>
                   <button
-                    onClick={() => setSozlamalar((e) => e.filter((_, j) => j !== i))}
+                    onClick={() => setSettings((e) => e.filter((_, j) => j !== i))}
                     aria-label="Delete row"
                     className="shrink-0 text-sm text-faint transition hover:text-coral"
                   >
@@ -501,7 +501,7 @@ function QoldaModal({
         </div>
       </div>
 
-      {xato && <p className="mt-3 text-sm text-coral">{xato}</p>}
+      {error && <p className="mt-3 text-sm text-coral">{error}</p>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button
@@ -511,11 +511,11 @@ function QoldaModal({
           Cancel
         </button>
         <button
-          onClick={qosh}
-          disabled={ishlayapti || !tayyor}
+          onClick={add}
+          disabled={busy || !ready}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {ishlayapti ? 'Adding…' : 'Add'}
+          {busy ? 'Adding…' : 'Add'}
         </button>
       </div>
     </Modal>
@@ -523,109 +523,109 @@ function QoldaModal({
 }
 
 // ---------------------------------------------------------------------------
-// O'rnatish modali
+// Install modal
 // ---------------------------------------------------------------------------
 
 /**
- * Qamrov + sozlama qiymatlari.
+ * Scope + setting values.
  *
- * MAXFIY QIYMATLAR HECH QACHON KO'RSATILMAYDI. Server ularni javobda
- * qaytarmaydi, ya'ni bu yerda faqat bo'sh input bo'ladi. Bo'sh qoldirilsa
- * saqlangan qiymat o'z joyida qoladi — buni foydalanuvchiga ochiq aytamiz,
- * aks holda u "tokenim o'chib ketdimi?" degan savolga qolardi.
+ * SECRET VALUES ARE NEVER SHOWN. The server does not return them in the
+ * response, so all there is here is an empty input. Leaving it empty keeps the
+ * stored value in place — we say that plainly to the user, otherwise they
+ * would be left wondering "did my token get wiped?".
  */
-function OrnatishModal({
+function InstallModal({
   server,
-  loyihalar,
+  projects,
   onClose,
-  onSaqla,
+  onSave,
 }: {
   server: McpServer
-  loyihalar: Project[]
+  projects: Project[]
   onClose: () => void
-  onSaqla: (
+  onSave: (
     global: boolean,
     projectIds: string[],
-    qiymatlar: Record<string, string>,
+    values: Record<string, string>,
   ) => Promise<void>
 }) {
-  const [global, setGlobal] = useState(server.ornatilgan.some((o) => o.qamrov === 'global'))
-  const [tanlangan, setTanlangan] = useState<Set<string>>(
+  const [global, setGlobal] = useState(server.installs.some((o) => o.scope === 'global'))
+  const [selected, setSelected] = useState<Set<string>>(
     new Set(
-      server.ornatilgan
-        .filter((o) => o.qamrov === 'loyiha' && o.projectId)
+      server.installs
+        .filter((o) => o.scope === 'project' && o.projectId)
         .map((o) => o.projectId!),
     ),
   )
-  // Ochiq qiymatlar mavjud o'rnatishdan olinadi; maxfiylar HAR DOIM bo'sh
-  const [qiymatlar, setQiymatlar] = useState<Record<string, string>>(() => {
-    const boshlangich: Record<string, string> = {}
-    const ornatish = server.ornatilgan[0]
-    for (const maydon of server.sozlamalar) {
-      if (maydon.maxfiy) continue
-      boshlangich[maydon.nom] =
-        ornatish?.sozlamaQiymatlari[maydon.nom] ?? maydon.standart ?? ''
+  // Plain values come from the existing install; secrets are ALWAYS empty
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {}
+    const install = server.installs[0]
+    for (const field of server.settings) {
+      if (field.secret) continue
+      initial[field.name] =
+        install?.settingValues[field.name] ?? field.default ?? ''
     }
-    return boshlangich
+    return initial
   })
-  const [ishlayapti, setIshlayapti] = useState(false)
-  const [xato, setXato] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const hechnima = !global && tanlangan.size === 0
-  const ornatilganmi = server.ornatilgan.length > 0
+  const nothing = !global && selected.size === 0
+  const isInstalled = server.installs.length > 0
 
-  const saqla = async () => {
-    setIshlayapti(true)
-    setXato(null)
+  const save = async () => {
+    setBusy(true)
+    setError(null)
     try {
-      await onSaqla(global, [...tanlangan], qiymatlar)
+      await onSave(global, [...selected], values)
       onClose()
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not save')
-      setIshlayapti(false)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not save')
+      setBusy(false)
     }
   }
 
   return (
-    <Modal sarlavha={`${server.nom} settings`} onClose={onClose} kenglik="max-w-lg">
+    <Modal title={`${server.name} settings`} onClose={onClose} width="max-w-lg">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="font-display text-lg font-semibold">{server.nom}</h2>
+        <h2 className="font-display text-lg font-semibold">{server.name}</h2>
         <span className="shrink-0 rounded-md bg-panel2 px-2 py-0.5 text-[10px] text-faint">
-          {transportBelgisi[server.transport]}
+          {transportLabel[server.transport]}
         </span>
       </div>
-      {server.tavsif && <p className="mt-1.5 text-sm text-muted">{server.tavsif}</p>}
+      {server.description && <p className="mt-1.5 text-sm text-muted">{server.description}</p>}
 
-      {/* Ishga tushirish tafsiloti — foydalanuvchi NIMA ishga tushishini bilsin */}
+      {/* Startup detail — so the user knows WHAT is going to run */}
       <div className="mt-4 rounded-lg border border-line bg-bg p-3">
         <div className="text-xs font-medium uppercase tracking-wider text-faint">
           {server.transport === 'stdio' ? 'Runs' : 'Connects to'}
         </div>
         <code className="mt-1.5 block break-all font-mono text-[11px] leading-relaxed text-ink">
           {server.transport === 'stdio'
-            ? [server.buyruq, ...(server.argumentlar ?? [])].join(' ')
+            ? [server.command, ...(server.args ?? [])].join(' ')
             : server.url}
         </code>
       </div>
 
-      {/* Sozlama qiymatlari */}
-      {server.sozlamalar.length > 0 && (
+      {/* Setting values */}
+      {server.settings.length > 0 && (
         <div className="mt-3 rounded-lg border border-line bg-bg p-4">
           <div className="text-xs font-medium uppercase tracking-wider text-faint">
             Settings
           </div>
           <div className="mt-3 space-y-3">
-            {server.sozlamalar.map((maydon) => (
-              <SozlamaKirishi
-                key={maydon.nom}
-                maydon={maydon}
-                qiymat={qiymatlar[maydon.nom] ?? ''}
-                ornatilganmi={ornatilganmi}
-                onChange={(q) => setQiymatlar((eski) => ({ ...eski, [maydon.nom]: q }))}
+            {server.settings.map((field) => (
+              <SettingInput
+                key={field.name}
+                field={field}
+                value={values[field.name] ?? ''}
+                isInstalled={isInstalled}
+                onChange={(q) => setValues((old) => ({ ...old, [field.name]: q }))}
               />
             ))}
           </div>
-          {server.sozlamalar.some((s) => s.maxfiy) && (
+          {server.settings.some((s) => s.secret) && (
             <p className="mt-3 text-[11px] leading-relaxed text-faint">
               Secret values are not written to the database — they are kept in a separate
               file and never shown back. Leave a field empty to keep the stored value.
@@ -634,7 +634,7 @@ function OrnatishModal({
         </div>
       )}
 
-      {/* Qamrov */}
+      {/* Scope */}
       <div className="mt-3 rounded-lg border border-line bg-bg p-4">
         <div className="text-xs font-medium uppercase tracking-wider text-faint">
           Where it should work
@@ -655,22 +655,22 @@ function OrnatishModal({
           </span>
         </label>
 
-        {loyihalar.length > 0 && (
+        {projects.length > 0 && (
           <>
             <div className="mt-4 text-xs font-medium uppercase tracking-wider text-faint">
               Or in selected projects
             </div>
             <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
-              {loyihalar.map((l) => (
+              {projects.map((l) => (
                 <label key={l.id} className="flex cursor-pointer items-center gap-2.5 text-sm">
                   <input
                     type="checkbox"
-                    checked={tanlangan.has(l.id)}
+                    checked={selected.has(l.id)}
                     onChange={(e) => {
-                      const yangi = new Set(tanlangan)
-                      if (e.target.checked) yangi.add(l.id)
-                      else yangi.delete(l.id)
-                      setTanlangan(yangi)
+                      const next = new Set(selected)
+                      if (e.target.checked) next.add(l.id)
+                      else next.delete(l.id)
+                      setSelected(next)
                     }}
                   />
                   <span className="text-muted">{l.name}</span>
@@ -686,7 +686,7 @@ function OrnatishModal({
         Every call asks for permission — just like running a command.
       </p>
 
-      {xato && <p className="mt-3 text-sm text-coral">{xato}</p>}
+      {error && <p className="mt-3 text-sm text-coral">{error}</p>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button
@@ -696,50 +696,50 @@ function OrnatishModal({
           Cancel
         </button>
         <button
-          onClick={saqla}
-          disabled={ishlayapti}
+          onClick={save}
+          disabled={busy}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {ishlayapti ? 'Saving…' : hechnima ? 'Uninstall' : 'Save'}
+          {busy ? 'Saving…' : nothing ? 'Uninstall' : 'Save'}
         </button>
       </div>
     </Modal>
   )
 }
 
-/** Bitta sozlama maydoni — maxfiy bo'lsa parol inputi */
-function SozlamaKirishi({
-  maydon,
-  qiymat,
-  ornatilganmi,
+/** A single setting field — a password input when it is secret */
+function SettingInput({
+  field,
+  value,
+  isInstalled,
   onChange,
 }: {
-  maydon: McpSozlamaMaydoni
-  qiymat: string
-  ornatilganmi: boolean
+  field: McpSettingField
+  value: string
+  isInstalled: boolean
   onChange: (q: string) => void
 }) {
   return (
     <label className="block">
       <span className="flex items-center gap-1.5">
-        <span className="font-mono text-xs text-ink">{maydon.nom}</span>
-        {maydon.majburiy && <span className="text-[10px] text-coral">required</span>}
-        {maydon.maxfiy && <span className="text-[10px] text-gold">secret</span>}
+        <span className="font-mono text-xs text-ink">{field.name}</span>
+        {field.required && <span className="text-[10px] text-coral">required</span>}
+        {field.secret && <span className="text-[10px] text-gold">secret</span>}
       </span>
-      {maydon.izoh && (
-        <span className="mt-0.5 block text-[11px] leading-relaxed text-faint">{maydon.izoh}</span>
+      {field.hint && (
+        <span className="mt-0.5 block text-[11px] leading-relaxed text-faint">{field.hint}</span>
       )}
       <input
-        // Maxfiy qiymatlar brauzer parol menejeriga tushmasligi kerak —
-        // ular platformaning o'z ombori bilan boshqariladi
-        type={maydon.maxfiy ? 'password' : 'text'}
+        // Secret values must not end up in the browser's password manager —
+        // they are managed by the platform's own store
+        type={field.secret ? 'password' : 'text'}
         autoComplete="off"
-        value={qiymat}
+        value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={
-          maydon.maxfiy && ornatilganmi
+          field.secret && isInstalled
             ? '(stored — type to change it)'
-            : (maydon.standart ?? '')
+            : (field.default ?? '')
         }
         className="mt-1 w-full rounded-lg border border-line bg-panel px-2.5 py-1.5 font-mono text-xs outline-none placeholder:text-faint focus:border-lazur-dim"
       />
@@ -748,60 +748,60 @@ function SozlamaKirishi({
 }
 
 // ---------------------------------------------------------------------------
-// Manbalar bo'limi
+// Sources section
 // ---------------------------------------------------------------------------
 
-function Manbalar({
-  manbalar,
-  onYangilandi,
+function Sources({
+  sources,
+  onRefreshed,
 }: {
-  manbalar: McpManba[]
-  onYangilandi: () => Promise<unknown>
+  sources: McpSource[]
+  onRefreshed: () => Promise<unknown>
 }) {
-  const [bandId, setBandId] = useState<string | null>(null)
-  const [xato, setXato] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const toast = useToast()
 
-  const sinxronla = async (id: string) => {
-    setBandId(id)
-    setXato(null)
+  const sync = async (id: string) => {
+    setBusyId(id)
+    setError(null)
     try {
-      const natija = await mcpManbaSinxronla(id)
-      await onYangilandi()
-      toast(`+${natija.qoshildi} / -${natija.ochirildi}`)
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not sync')
+      const result = await syncMcpSource(id)
+      await onRefreshed()
+      toast(`+${result.added} / -${result.deleted}`)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not sync')
     } finally {
-      setBandId(null)
+      setBusyId(null)
     }
   }
 
-  const ochir = async (m: McpManba) => {
-    if (!confirm(`Delete ${m.manbaNomi}? Its servers and keys go with it.`)) return
-    setBandId(m.id)
-    setXato(null)
+  const remove = async (m: McpSource) => {
+    if (!confirm(`Delete ${m.sourceName}? Its servers and keys go with it.`)) return
+    setBusyId(m.id)
+    setError(null)
     try {
-      await mcpManbaOchir(m.id)
-      await onYangilandi()
+      await deleteMcpSource(m.id)
+      await onRefreshed()
       toast('Source deleted')
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not delete')
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not delete')
     } finally {
-      setBandId(null)
+      setBusyId(null)
     }
   }
 
-  if (manbalar.length === 0) return null
+  if (sources.length === 0) return null
 
   return (
     <Card className="mb-6 p-5">
       <div className="text-xs font-medium uppercase tracking-wider text-faint">Sources</div>
-      {xato && <p className="mt-2 text-sm text-coral">{xato}</p>}
+      {error && <p className="mt-2 text-sm text-coral">{error}</p>}
       <div className="mt-3 space-y-2">
-        {manbalar.map((m) => {
-          // `qolda` va `standart` manbalarni sinxronlab bo'lmaydi —
-          // ular tashqi manbadan kelmaydi
-          const sinxronBormi = m.tur === 'github' || m.tur === 'registry'
+        {sources.map((m) => {
+          // `manual` and `builtin` sources cannot be synced — they do not
+          // come from an external source
+          const canSync = m.kind === 'github' || m.kind === 'registry'
           return (
             <div
               key={m.id}
@@ -809,31 +809,31 @@ function Manbalar({
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="truncate font-mono text-[13px] text-ink">{m.manbaNomi}</span>
+                  <span className="truncate font-mono text-[13px] text-ink">{m.sourceName}</span>
                   <span className="shrink-0 rounded-md bg-panel2 px-1.5 py-0.5 text-[10px] text-faint">
-                    {m.tur}
+                    {m.kind}
                   </span>
                 </div>
-                {m.oxirgiSinxron && (
+                {m.lastSync && (
                   <span className="text-[11px] text-faint">
-                    {new Date(m.oxirgiSinxron).toLocaleDateString()}
+                    {new Date(m.lastSync).toLocaleDateString()}
                   </span>
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {sinxronBormi && (
+                {canSync && (
                   <button
-                    onClick={() => void sinxronla(m.id)}
-                    disabled={bandId !== null}
+                    onClick={() => void sync(m.id)}
+                    disabled={busyId !== null}
                     className="rounded-lg border border-line px-2.5 py-1 text-xs text-muted transition hover:text-ink disabled:opacity-50"
                   >
-                    {bandId === m.id ? '…' : 'Sync'}
+                    {busyId === m.id ? '…' : 'Sync'}
                   </button>
                 )}
-                {m.tur !== 'standart' && (
+                {m.kind !== 'builtin' && (
                   <button
-                    onClick={() => void ochir(m)}
-                    disabled={bandId !== null}
+                    onClick={() => void remove(m)}
+                    disabled={busyId !== null}
                     className="rounded-lg border border-line px-2.5 py-1 text-xs text-muted transition hover:border-coral/40 hover:text-coral disabled:opacity-50"
                   >
                     Delete
@@ -849,92 +849,92 @@ function Manbalar({
 }
 
 // ---------------------------------------------------------------------------
-// Asosiy sahifa
+// Main page
 // ---------------------------------------------------------------------------
 
 export default function Mcp() {
-  const [serverlar, setServerlar] = useState<McpServer[]>([])
-  const [manbalar, setManbalar] = useState<McpManba[]>([])
-  const [loyihalar, setLoyihalar] = useState<Project[]>([])
-  const [yuklanmoqda, setYuklanmoqda] = useState(true)
-  const [xato, setXato] = useState<string | null>(null)
+  const [servers, setServers] = useState<McpServer[]>([])
+  const [sources, setSources] = useState<McpSource[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<McpServer | null>(null)
-  const [qoshishModali, setQoshishModali] = useState<'registry' | 'github' | 'qolda' | null>(null)
-  const [qidiruv, setQidiruv] = useState('')
+  const [addModal, setAddModal] = useState<'registry' | 'github' | 'manual' | null>(null)
+  const [search, setSearch] = useState('')
 
-  /** Yangi ro'yxatni QAYTARADI — ochiq modal eskirmasin (`Skills.tsx` naqshi) */
-  const yukla = async (): Promise<McpServer[] | null> => {
+  /** RETURNS the new list — so an open modal does not go stale (`Skills.tsx` pattern) */
+  const load = async (): Promise<McpServer[] | null> => {
     try {
-      const [katalog, loyiha] = await Promise.all([mcpServerlarniOl(), loyihalarOl()])
-      setServerlar(katalog.serverlar)
-      setManbalar(katalog.manbalar)
-      setLoyihalar(loyiha)
-      setXato(null)
-      return katalog.serverlar
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not load the data')
+      const [catalog, projectList] = await Promise.all([fetchMcpServers(), fetchProjects()])
+      setServers(catalog.servers)
+      setSources(catalog.sources)
+      setProjects(projectList)
+      setError(null)
+      return catalog.servers
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not load the data')
       return null
     } finally {
-      setYuklanmoqda(false)
+      setLoading(false)
     }
   }
 
   useEffect(() => {
-    void yukla()
+    void load()
   }, [])
 
   /**
-   * Qamrov va sozlamalarni saqlaydi.
+   * Saves the scope and settings.
    *
-   * `Skills.tsx` dagi `qamrovniSaqla` bilan bir xil diff mantig'i, lekin
-   * qo'shimcha: sozlama qiymatlari HAR o'rnatishga yuboriladi (ular
-   * o'rnatish qatoriga bog'langan).
+   * The same diff logic as `saveScope` in `Skills.tsx`, plus one thing: the
+   * setting values are sent to EVERY install (they are tied to the install
+   * row).
    */
-  const saqla = async (
+  const save = async (
     server: McpServer,
     global: boolean,
     projectIds: string[],
-    qiymatlar: Record<string, string>,
+    values: Record<string, string>,
   ) => {
-    const eskiGlobal = server.ornatilgan.some((o) => o.qamrov === 'global')
-    const eskiLoyihalar = new Set(
-      server.ornatilgan
-        .filter((o) => o.qamrov === 'loyiha' && o.projectId)
+    const wasGlobal = server.installs.some((o) => o.scope === 'global')
+    const oldProjects = new Set(
+      server.installs
+        .filter((o) => o.scope === 'project' && o.projectId)
         .map((o) => o.projectId!),
     )
-    const yangiLoyihalar = new Set(projectIds)
-    const ochiriladigan = [...eskiLoyihalar].filter((id) => !yangiLoyihalar.has(id))
+    const newProjects = new Set(projectIds)
+    const toRemove = [...oldProjects].filter((id) => !newProjects.has(id))
 
-    // O'rnatish idempotent va sozlamani yangilaydi, shuning uchun mavjud
-    // qamrovlar uchun ham qayta chaqiramiz — qiymatlar o'zgargan bo'lishi
-    // mumkin (`mcpServerOrnat` UPDATE qiladi).
-    if (global) await mcpOrnat(server.id, 'global', qiymatlar)
-    if (projectIds.length > 0) await mcpOrnat(server.id, 'loyiha', qiymatlar, projectIds)
-    if (!global && eskiGlobal) await mcpOrnatishniBekor(server.id, 'global')
-    if (ochiriladigan.length > 0) {
-      await mcpOrnatishniBekor(server.id, 'loyiha', ochiriladigan)
+    // Installing is idempotent and refreshes the settings, so we call it
+    // again for existing scopes too — the values may have changed
+    // (`installMcpServer` performs an UPDATE).
+    if (global) await installMcpServer(server.id, 'global', values)
+    if (projectIds.length > 0) await installMcpServer(server.id, 'project', values, projectIds)
+    if (!global && wasGlobal) await uninstallMcpServer(server.id, 'global')
+    if (toRemove.length > 0) {
+      await uninstallMcpServer(server.id, 'project', toRemove)
     }
 
-    await yukla()
+    await load()
   }
 
-  const qamrovMatni = (server: McpServer): string => {
-    const global = server.ornatilgan.some((o) => o.qamrov === 'global')
-    const loyihaSoni = server.ornatilgan.filter((o) => o.qamrov === 'loyiha').length
-    if (global && loyihaSoni > 0) return `Global + ${loyihaSoni} projects`
+  const scopeText = (server: McpServer): string => {
+    const global = server.installs.some((o) => o.scope === 'global')
+    const projectCount = server.installs.filter((o) => o.scope === 'project').length
+    if (global && projectCount > 0) return `Global + ${projectCount} projects`
     if (global) return 'Global'
-    if (loyihaSoni > 0) return `${loyihaSoni} projects`
+    if (projectCount > 0) return `${projectCount} projects`
     return ''
   }
 
-  const korinadigan = useMemo(() => {
-    const sozlar = qidiruv.toLowerCase().split(/\s+/).filter(Boolean)
-    if (sozlar.length === 0) return serverlar
-    return serverlar.filter((s) => {
-      const matn = `${s.nom} ${s.tavsif}`.toLowerCase()
-      return sozlar.every((soz) => matn.includes(soz))
+  const visible = useMemo(() => {
+    const words = search.toLowerCase().split(/\s+/).filter(Boolean)
+    if (words.length === 0) return servers
+    return servers.filter((s) => {
+      const text = `${s.name} ${s.description}`.toLowerCase()
+      return words.every((term) => text.includes(term))
     })
-  }, [serverlar, qidiruv])
+  }, [servers, search])
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -950,19 +950,19 @@ export default function Mcp() {
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
-            onClick={() => setQoshishModali('registry')}
+            onClick={() => setAddModal('registry')}
             className="rounded-lg border border-lazur-dim px-3 py-2 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg"
           >
             Official registry
           </button>
           <button
-            onClick={() => setQoshishModali('github')}
+            onClick={() => setAddModal('github')}
             className="rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:text-ink"
           >
             GitHub repo
           </button>
           <button
-            onClick={() => setQoshishModali('qolda')}
+            onClick={() => setAddModal('manual')}
             className="rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:text-ink"
           >
             Manually
@@ -970,19 +970,19 @@ export default function Mcp() {
         </div>
       </Card>
 
-      <Manbalar manbalar={manbalar} onYangilandi={yukla} />
+      <Sources sources={sources} onRefreshed={load} />
 
-      {xato && (
+      {error && (
         <Card className="mb-6 border-coral/40 p-4">
-          <p className="text-sm text-coral">{xato}</p>
+          <p className="text-sm text-coral">{error}</p>
         </Card>
       )}
 
-      {!yuklanmoqda && serverlar.length > 3 && (
+      {!loading && servers.length > 3 && (
         <div className="mb-5">
           <input
-            value={qidiruv}
-            onChange={(e) => setQidiruv(e.target.value)}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             placeholder="Search…"
             aria-label="Search MCP servers"
             className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
@@ -990,9 +990,9 @@ export default function Mcp() {
         </div>
       )}
 
-      {yuklanmoqda ? (
+      {loading ? (
         <p className="text-sm text-muted">Loading…</p>
-      ) : serverlar.length === 0 ? (
+      ) : servers.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-sm text-muted">
             The catalog is empty. Add a server using one of the buttons above.
@@ -1002,39 +1002,39 @@ export default function Mcp() {
             installed, its tools show up in the chat.
           </p>
         </Card>
-      ) : korinadigan.length === 0 ? (
+      ) : visible.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-sm text-muted">Nothing found.</p>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {korinadigan.map((s) => {
-            const qamrov = qamrovMatni(s)
-            const kalitKerak = s.sozlamalar.some((x) => x.majburiy && x.maxfiy)
+          {visible.map((s) => {
+            const scope = scopeText(s)
+            const needsKey = s.settings.some((x) => x.required && x.secret)
             return (
               <Card key={s.id} className="flex flex-col p-5">
                 <div className="flex items-start justify-between gap-2">
-                  <h2 className="min-w-0 truncate font-display text-[15px] font-semibold" title={s.nom}>
-                    {s.nom}
+                  <h2 className="min-w-0 truncate font-display text-[15px] font-semibold" title={s.name}>
+                    {s.name}
                   </h2>
                   <span className="shrink-0 rounded-md bg-panel2 px-2 py-0.5 text-[10px] text-faint">
-                    {transportBelgisi[s.transport]}
+                    {transportLabel[s.transport]}
                   </span>
                 </div>
 
                 <div className="mt-2 flex-1">
                   <p className="line-clamp-3 text-sm leading-relaxed text-muted">
-                    {s.tavsif || '(no description)'}
+                    {s.description || '(no description)'}
                   </p>
-                  {kalitKerak && (
+                  {needsKey && (
                     <p className="mt-1.5 text-[11px] text-gold">requires a key</p>
                   )}
                 </div>
 
                 <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3">
-                  {qamrov ? (
-                    <span className="truncate text-sm text-mint" title={qamrov}>
-                      ✓ {qamrov}
+                  {scope ? (
+                    <span className="truncate text-sm text-mint" title={scope}>
+                      ✓ {scope}
                     </span>
                   ) : (
                     <span className="text-xs text-faint">not installed</span>
@@ -1042,12 +1042,12 @@ export default function Mcp() {
                   <button
                     onClick={() => setModal(s)}
                     className={
-                      qamrov
+                      scope
                         ? 'shrink-0 rounded-lg border border-line px-3 py-1.5 text-sm text-muted transition hover:text-ink'
                         : 'shrink-0 rounded-lg border border-lazur-dim px-3 py-1.5 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg'
                     }
                   >
-                    {qamrov ? 'Configure' : 'Install'}
+                    {scope ? 'Configure' : 'Install'}
                   </button>
                 </div>
               </Card>
@@ -1056,22 +1056,22 @@ export default function Mcp() {
         </div>
       )}
 
-      {qoshishModali === 'registry' && (
-        <RegistryModal onClose={() => setQoshishModali(null)} onQoshildi={yukla} />
+      {addModal === 'registry' && (
+        <RegistryModal onClose={() => setAddModal(null)} onAdded={load} />
       )}
-      {qoshishModali === 'github' && (
-        <GithubModal onClose={() => setQoshishModali(null)} onQoshildi={yukla} />
+      {addModal === 'github' && (
+        <GithubModal onClose={() => setAddModal(null)} onAdded={load} />
       )}
-      {qoshishModali === 'qolda' && (
-        <QoldaModal onClose={() => setQoshishModali(null)} onQoshildi={yukla} />
+      {addModal === 'manual' && (
+        <ManualModal onClose={() => setAddModal(null)} onAdded={load} />
       )}
 
       {modal && (
-        <OrnatishModal
+        <InstallModal
           server={modal}
-          loyihalar={loyihalar}
+          projects={projects}
           onClose={() => setModal(null)}
-          onSaqla={(global, ids, qiymatlar) => saqla(modal, global, ids, qiymatlar)}
+          onSave={(global, ids, values) => save(modal, global, ids, values)}
         />
       )}
     </div>

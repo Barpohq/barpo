@@ -2,9 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// Dev serverda backend (platform-server, default :8787) proxy orqali ulanadi —
-// shu sabab UI kodida absolut manzil yozilmaydi, `/api/...` va `/ws` yetadi.
-// Prodda ikkalasi bitta jarayondan chiqadi, ya'ni yo'llar o'zgarmaydi.
+// In the dev server the backend (platform-server, :8787 by default) is reached
+// through a proxy — which is why the UI code never writes an absolute address;
+// `/api/...` and `/ws` are enough. In production both come out of the same
+// process, so the paths do not change.
 const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8787'
 
 export default defineConfig({

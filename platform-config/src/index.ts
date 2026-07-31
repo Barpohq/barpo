@@ -1,45 +1,45 @@
-// @platforma/config — platformaning sozlamalar qatlami.
+// @platforma/config — the platform's settings layer.
 //
-// Ishlatish:
+// Usage:
 //
 //   import { config } from '@platforma/config'
-//   const { config: sozlama, ogohlantirishlar } = config({ ishPapkasi })
-//   sozlama.agent.siqish.zaxiraTokenlar   // → 16384
+//   const { config: settings, warnings } = config({ workDir })
+//   settings.agent.compaction.reserveTokens   // → 16384
 //
-// Config o'qish HECH QACHON xato tashlamaydi: fayl yo'q, buzuq yoki noto'g'ri
-// qiymatli bo'lsa standart qiymatlar ishlaydi va sabab `ogohlantirishlar` ga
-// tushadi. Platforma har doim ishga tushadi.
+// Reading the config NEVER throws: if the file is missing, malformed or has
+// bad values, the defaults are used and the reason lands in `warnings`.
+// The platform always starts.
 
 export {
-  MAYDONLAR,
+  FIELDS,
   type Config,
-  type MaydonTarifi,
-  type MaydonTuri,
-  type QismanConfig,
-} from './sxema.ts'
+  type FieldSpec,
+  type FieldKind,
+  type PartialConfig,
+} from './schema.ts'
 
 export {
-  configlarniBirlashtir,
-  configniTekshir,
-  maydonniTekshir,
-  standartConfig,
-  yoldanOqi,
-  yolgaYoz,
-  type ConfigOgohlantirish,
-  type TekshiruvNatijasi,
-} from './tekshir.ts'
+  mergeConfigs,
+  validateConfig,
+  validateField,
+  defaultConfig,
+  readByPath,
+  writeByPath,
+  type ConfigWarning,
+  type ValidationResult,
+} from './validate.ts'
 
 export {
-  CONFIG_FAYLI,
-  LOYIHA_PAPKASI,
+  CONFIG_FILE,
+  PROJECT_DIR,
   config,
-  configniOqi,
-  configniYangila,
-  faylniOqi,
-  globalConfigPapkasi,
-  loyihaChekloviniQoll,
-  type ConfigNatijasi,
-  type OqishSozlamalari,
-} from './oqish.ts'
+  readConfig,
+  refreshConfig,
+  readConfigFile,
+  globalConfigDir,
+  applyProjectRestriction,
+  type ConfigResult,
+  type ReadOptions,
+} from './read.ts'
 
-export { schemaYasa } from './schema-yasa.ts'
+export { buildSchema } from './schema-build.ts'

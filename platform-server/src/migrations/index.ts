@@ -1,42 +1,45 @@
-// Migratsiyalar ro'yxati — tartib MUHIM, raqam bo'yicha ketma-ket qo'llanadi.
+// The list of migrations — ORDER MATTERS, they are applied sequentially by
+// number.
 //
-// Yangi migratsiya qo'shish:
-//   1) shu papkada `002-nima-qilgani.ts` fayl yarating,
-//   2) `export const migratsiya: Migratsiya = { raqam: 2, nom: '...', sql: `...` }`,
-//   3) uni pastdagi `migratsiyalar` massiviga qo'shing.
-// Qo'llangan migratsiyani HECH QACHON tahrirlamang — yangisini yozing,
-// aks holda eski bazalar bilan holat farq qiladi.
+// Adding a new migration:
+//   1) create a `002-what-it-does.ts` file in this folder,
+//   2) `export const migration: Migration = { number: 2, name: '...', sql: `...` }`,
+//   3) add it to the `migrations` array below.
+// NEVER edit a migration that has already been applied — write a new one,
+// otherwise existing databases end up in a different state.
 
-export interface Migratsiya {
-  raqam: number
-  nom: string
-  /** Bitta tranzaksiyada bajariladigan SQL (bir nechta statement bo'lishi mumkin) */
+export interface Migration {
+  number: number
+  name: string
+  /** SQL executed in a single transaction (may contain several statements) */
   sql: string
   /**
-   * SQL o'z `BEGIN`/`COMMIT` ini olib yuradi va tranzaksiyaga
-   * O'RALMAYDI.
+   * The SQL carries its own `BEGIN`/`COMMIT` and is NOT wrapped in a
+   * transaction.
    *
-   * Faqat jadval qayta quradigan migratsiyalar uchun: ular
-   * `PRAGMA foreign_keys = OFF` talab qiladi, PRAGMA esa tranzaksiya
-   * ichida jimgina e'tiborsiz qoldiriladi (`db.ts` ga q.).
+   * Only for migrations that rebuild a table: those require
+   * `PRAGMA foreign_keys = OFF`, and a PRAGMA is silently ignored inside a
+   * transaction (see `db.ts`).
    */
-  pragmaTashqarida?: boolean
+  outsideTransaction?: boolean
 }
 
-import { migratsiya as m001 } from './001-boshlangich.ts'
-import { migratsiya as m002 } from './002-chat-model.ts'
-import { migratsiya as m003 } from './003-tool-cards.ts'
-import { migratsiya as m004 } from './004-agent-xabarlari.ts'
-import { migratsiya as m005 } from './005-loyihalar.ts'
-import { migratsiya as m006 } from './006-skilllar.ts'
-import { migratsiya as m007 } from './007-serverlar-haqiqiy.ts'
-// 8-raqam ATAYLAB tashlab ketilgan — sababi `009-tool-chaqiruvlar.ts` da.
-import { migratsiya as m009 } from './009-tool-chaqiruvlar.ts'
-import { migratsiya as m010 } from './010-standart-manba.ts'
-import { migratsiya as m011 } from './011-mcp-serverlar.ts'
-import { migratsiya as m012 } from './012-biriktirmalar.ts'
+import { migration as m001 } from './001-initial.ts'
+import { migration as m002 } from './002-chat-model.ts'
+import { migration as m003 } from './003-tool-cards.ts'
+import { migration as m004 } from './004-agent-messages.ts'
+import { migration as m005 } from './005-projects.ts'
+import { migration as m006 } from './006-skills.ts'
+import { migration as m007 } from './007-servers-real.ts'
+// Number 8 is skipped ON PURPOSE — the reason is in `009-tool-calls.ts`.
+import { migration as m009 } from './009-tool-calls.ts'
+import { migration as m010 } from './010-builtin-source.ts'
+import { migration as m011 } from './011-mcp-servers.ts'
+import { migration as m012 } from './012-attachments.ts'
+import { migration as m013 } from './013-english-rename.ts'
+import { migration as m014 } from './014-builtin-source-rename.ts'
 
-export const migratsiyalar: Migratsiya[] = [
+export const migrations: Migration[] = [
   m001,
   m002,
   m003,
@@ -48,4 +51,6 @@ export const migratsiyalar: Migratsiya[] = [
   m010,
   m011,
   m012,
+  m013,
+  m014,
 ]

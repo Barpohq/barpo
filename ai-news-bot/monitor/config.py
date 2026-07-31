@@ -1,9 +1,9 @@
-"""Monitor konfiguratsiyasi — `servers.yaml` ni o'qish va tekshirish.
+"""Monitor configuration — reading and validating `servers.yaml`.
 
-Muhim tamoyil: bu yerda BUYRUQ yo'q. Konfiguratsiya faqat "qaysi
-server, qaysi check, qaysi chegara" deb aytadi — buyruq matnlari
-`monitor/checks.py` da qat'iy belgilangan. Aks holda konfiguratsiya
-fayli masofaviy kod bajarish kanaliga aylanardi.
+Key principle: there are NO COMMANDS here. The configuration only says
+"which server, which check, which threshold" — the command strings are
+hardcoded in `monitor/checks.py`. Otherwise the config file would become
+a remote code execution channel.
 """
 
 from __future__ import annotations
@@ -15,16 +15,17 @@ from typing import Any
 
 from core.config import ConfigError, read_yaml
 
-# systemd birlik nomi. Buyruq shell'siz uzatilsa ham nomni tekshiramiz —
-# konfiguratsiyadagi xato qiymat masofada kutilmagan narsa qilmasin.
+# systemd unit name. We validate the name even though the command is passed
+# without a shell — a bad config value must not do something unexpected
+# on the remote host.
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]{1,64}$")
-# Mount yo'li: absolyut, faqat xavfsiz belgilar
+# Mount path: absolute, safe characters only
 MOUNT_PATH_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
-# Server nomi — hisobotlarda va baza kalitida ishlatiladi
+# Server name — used in reports and as a database key
 SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
-# Doimiy rejimda tekshiruv oralig'i (daqiqa). Bu yerda — CLI yordam
-# matni uchun `monitor.scheduler` (apscheduler) ni tortmaslik kerak.
+# Check interval in continuous mode (minutes). It lives here so the CLI help
+# text does not have to pull in `monitor.scheduler` (and apscheduler with it).
 DEFAULT_INTERVAL_MINUTES = 10
 
 DEFAULT_THRESHOLDS: dict[str, dict[str, Any]] = {
@@ -37,17 +38,17 @@ DEFAULT_THRESHOLDS: dict[str, dict[str, Any]] = {
 
 @dataclass(frozen=True, slots=True)
 class Thresholds:
-    """Bitta check uchun chegaralar."""
+    """Thresholds for a single check."""
 
     warn: float | None = None
     fail: float | None = None
-    # Faqat disk uchun: qaysi mount'lar tekshiriladi
+    # Disk only: which mounts to check
     mounts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class Server:
-    """Kuzatiladigan server (`servers.yaml` dagi element)."""
+    """A monitored server (one entry in `servers.yaml`)."""
 
     name: str
     host: str
@@ -56,9 +57,9 @@ class Server:
     key_file: str = ""
     timeout: int = 20
     enabled: bool = True
-    # systemctl is-active bilan tekshiriladigan xizmatlar
+    # Services checked with systemctl is-active
     services: tuple[str, ...] = ()
-    # Diagnostika uchun jurnaldan log olinadigan birliklar
+    # Units whose journal logs are pulled for diagnosis
     journal_units: tuple[str, ...] = ()
     checks: dict[str, Thresholds] = field(default_factory=dict)
 
@@ -67,18 +68,18 @@ class Server:
 
 
 def _parse_thresholds(check: str, raw: Any, base: dict[str, Any]) -> Thresholds:
-    """Chegaralarni birlashtirish: defaults ustidan server qiymatlari."""
+    """Merge thresholds: server values layered over the defaults."""
     merged = dict(base)
     if raw:
         if not isinstance(raw, dict):
-            raise ConfigError(f"servers.yaml: '{check}' chegaralari obyekt bo'lishi kerak")
+            raise ConfigError(f"servers.yaml: '{check}' thresholds must be an object")
         merged.update(raw)
 
     mounts: list[str] = []
     for path in merged.get("mounts") or ():
         path = str(path)
         if not MOUNT_PATH_RE.match(path):
-            raise ConfigError(f"servers.yaml: yaroqsiz mount yo'li: {path!r}")
+            raise ConfigError(f"servers.yaml: invalid mount path: {path!r}")
         mounts.append(path)
 
     return Thresholds(
@@ -92,18 +93,18 @@ def _parse_checks(raw: Any, defaults: dict[str, Any]) -> dict[str, Thresholds]:
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
-        raise ConfigError("servers.yaml: 'checks' obyekt bo'lishi kerak")
+        raise ConfigError("servers.yaml: 'checks' must be an object")
 
     unknown = set(raw) - set(DEFAULT_THRESHOLDS)
     if unknown:
         raise ConfigError(
-            f"servers.yaml: noma'lum check: {sorted(unknown)}. "
-            f"Mavjud: {sorted(DEFAULT_THRESHOLDS)}"
+            f"servers.yaml: unknown check: {sorted(unknown)}. "
+            f"Available: {sorted(DEFAULT_THRESHOLDS)}"
         )
 
     result: dict[str, Thresholds] = {}
     for check, base in DEFAULT_THRESHOLDS.items():
-        # defaults.checks -> DEFAULT_THRESHOLDS ustidan, keyin server qiymatlari
+        # defaults.checks layers over DEFAULT_THRESHOLDS, then server values
         combined = {**base, **(defaults.get(check) or {})}
         result[check] = _parse_thresholds(check, raw.get(check), combined)
     return result
@@ -116,20 +117,20 @@ def parse_servers(raw: dict[str, Any]) -> list[Server]:
 
     for entry in raw.get("servers") or []:
         if not isinstance(entry, dict):
-            raise ConfigError(f"servers.yaml: server obyekt bo'lishi kerak, keldi: {entry!r}")
+            raise ConfigError(f"servers.yaml: server must be an object, got: {entry!r}")
         for required in ("name", "host"):
             if required not in entry:
-                raise ConfigError(f"servers.yaml: serverda '{required}' maydoni yo'q: {entry!r}")
+                raise ConfigError(f"servers.yaml: server is missing the '{required}' field: {entry!r}")
 
         name = str(entry["name"])
         if not SERVER_NAME_RE.match(name):
-            raise ConfigError(f"servers.yaml: yaroqsiz server nomi: {name!r}")
+            raise ConfigError(f"servers.yaml: invalid server name: {name!r}")
 
         services = tuple(str(s) for s in (entry.get("services") or ()))
         journal_units = tuple(str(s) for s in (entry.get("journal_units") or ()))
         for unit in (*services, *journal_units):
             if not SERVICE_NAME_RE.match(unit):
-                raise ConfigError(f"servers.yaml: yaroqsiz xizmat nomi: {unit!r}")
+                raise ConfigError(f"servers.yaml: invalid service name: {unit!r}")
 
         servers.append(
             Server(
@@ -149,14 +150,14 @@ def parse_servers(raw: dict[str, Any]) -> list[Server]:
     names = [s.name for s in servers]
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
-        raise ConfigError(f"servers.yaml: server nomlari takrorlangan: {duplicates}")
+        raise ConfigError(f"servers.yaml: duplicate server names: {duplicates}")
 
     return servers
 
 
 @lru_cache(maxsize=1)
 def load_servers() -> list[Server]:
-    """`servers.yaml` (jarayon davomida bir marta o'qiladi)."""
+    """`servers.yaml` (read once per process)."""
     return parse_servers(read_yaml("servers.yaml"))
 
 
@@ -169,6 +170,6 @@ def find_server(name: str) -> Server:
         if server.name == name:
             return server
     raise ConfigError(
-        f"servers.yaml: '{name}' serveri topilmadi. "
-        f"Mavjud: {sorted(s.name for s in load_servers())}"
+        f"servers.yaml: server '{name}' not found. "
+        f"Available: {sorted(s.name for s in load_servers())}"
     )

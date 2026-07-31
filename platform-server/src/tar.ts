@@ -1,126 +1,126 @@
-// Minimal tar o'quvchi — GitHub tarball'idan skill papkasini chiqarish uchun.
+// Minimal tar reader — used to extract a skill directory from a GitHub tarball.
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ NEGA TASHQI `tar` EMAS: zip-slip. Arxiv ichidagi yo'l                │
-// │ `../../../.ssh/authorized_keys` bo'lsa, `tar -x` uni nishon papkadan │
-// │ TASHQARIGA yozadi. Arxiv begona GitHub repo'sidan keladi, ya'ni bu   │
-// │ nazariy xavf emas.                                                   │
+// │ WHY NOT THE EXTERNAL `tar`: zip-slip. If a path inside the archive   │
+// │ is `../../../.ssh/authorized_keys`, `tar -x` writes it OUTSIDE the   │
+// │ target directory. The archive comes from a stranger's GitHub repo,   │
+// │ so this is not a theoretical risk.                                   │
 // │                                                                      │
-// │ GNU tar da `--strip-components` bor, lekin himoya bayroqlari         │
-// │ platformaga qarab farq qiladi (bsdtar va GNU tar bir xil emas), va   │
-// │ subprocess chiqishini tahlil qilish ishonchsiz. Formatning o'zi      │
-// │ juda sodda — 512 baytli blok sarlavha + ma'lumot — shuning uchun     │
-// │ o'qishni o'zimiz qilamiz va HAR yo'lni o'zimiz tekshiramiz.          │
+// │ GNU tar has `--strip-components`, but the protective flags differ    │
+// │ from platform to platform (bsdtar and GNU tar are not the same), and │
+// │ parsing subprocess output is unreliable. The format itself is very   │
+// │ simple — a 512-byte header block plus data — so we do the reading    │
+// │ ourselves and check EVERY path ourselves.                            │
 // └──────────────────────────────────────────────────────────────────────┘
 //
-// Qo'llab-quvvatlanadi: oddiy fayl (`0`), papka (`5`), GNU uzun nom
-// (`L`), PAX kengaytmasi (`x`/`g` — o'tkazib yuboriladi). Symlink (`1`,`2`)
-// ATAYLAB TASHLANADI: skill papkasidagi symlink chegaradan chiqib ketish
-// yo'li bo'lardi (`muhit.ts` canonicalPath bilan ushlaydi, lekin bu yerga
-// umuman yozmaslik tuzukroq).
+// Supported: regular files (`0`), directories (`5`), GNU long names (`L`),
+// PAX extensions (`x`/`g` — skipped). Symlinks (`1`, `2`) are DELIBERATELY
+// DROPPED: a symlink inside a skill directory would be a way out of the
+// sandbox boundary (`environment.ts` catches it with canonicalPath, but not
+// writing it here at all is better still).
 
-const BLOK = 512
+const BLOCK = 512
 
-export interface TarFayl {
-  /** Arxiv ichidagi tozalangan yo'l — `..` va absolut yo'lsiz */
-  yol: string
-  mazmun: Uint8Array
+export interface TarFile {
+  /** The sanitised path inside the archive — no `..` and no absolute paths */
+  path: string
+  contents: Uint8Array
 }
 
-/** Sakkizlik sonli maydon (oxirida NUL yoki bo'shliq bo'lishi mumkin) */
-function sakkizlik(bayt: Uint8Array): number {
-  let matn = ''
-  for (const b of bayt) {
+/** An octal numeric field (it may end with a NUL or a space) */
+function octal(bytes: Uint8Array): number {
+  let text = ''
+  for (const b of bytes) {
     if (b === 0 || b === 0x20) break
-    matn += String.fromCharCode(b)
+    text += String.fromCharCode(b)
   }
-  const son = parseInt(matn, 8)
-  return Number.isFinite(son) ? son : 0
+  const n = parseInt(text, 8)
+  return Number.isFinite(n) ? n : 0
 }
 
-function matnMaydon(bayt: Uint8Array): string {
-  let oxir = bayt.indexOf(0)
-  if (oxir === -1) oxir = bayt.length
-  return new TextDecoder().decode(bayt.subarray(0, oxir))
+function textField(bytes: Uint8Array): string {
+  let end = bytes.indexOf(0)
+  if (end === -1) end = bytes.length
+  return new TextDecoder().decode(bytes.subarray(0, end))
 }
 
 /**
- * Yo'lni xavfsiz shaklga keltiradi.
+ * Brings a path into a safe form.
  *
- * `null` qaytsa — yo'l XAVFLI va fayl butunlay tashlanishi kerak:
- * absolut yo'l, `..` bo'lagi, yoki Windows disk prefiksi.
+ * A `null` return means the path is DANGEROUS and the file must be dropped
+ * entirely: an absolute path, a `..` segment, or a Windows drive prefix.
  */
-export function yolniTozala(xom: string): string | null {
-  // Teskari chiziq ham ajratuvchi deb qaraladi: `..\..\x` ni o'tkazib
-  // yubormaslik uchun
-  const normal = xom.replace(/\\/g, '/')
+export function sanitisePath(raw: string): string | null {
+  // A backslash also counts as a separator, so that `..\..\x` is not let
+  // through
+  const normalised = raw.replace(/\\/g, '/')
 
-  if (normal.startsWith('/') || /^[a-zA-Z]:/.test(normal)) return null
+  if (normalised.startsWith('/') || /^[a-zA-Z]:/.test(normalised)) return null
 
-  const bolaklar: string[] = []
-  for (const b of normal.split('/')) {
-    if (b === '' || b === '.') continue
-    if (b === '..') return null
-    // NUL va boshqaruv belgilari fayl nomida bo'lmasligi kerak
-    if (/[\0]/.test(b)) return null
-    bolaklar.push(b)
+  const parts: string[] = []
+  for (const p of normalised.split('/')) {
+    if (p === '' || p === '.') continue
+    if (p === '..') return null
+    // NUL and control characters have no business in a file name
+    if (/[\0]/.test(p)) return null
+    parts.push(p)
   }
 
-  return bolaklar.length > 0 ? bolaklar.join('/') : null
+  return parts.length > 0 ? parts.join('/') : null
 }
 
 /**
- * Tar arxivini o'qiydi. Xavfli yo'lli yozuvlar JIM TASHLANADI (xato emas):
- * bitta buzuq yozuv uchun butun skill'ni yo'qotmaymiz.
+ * Reads a tar archive. Entries with a dangerous path are DROPPED SILENTLY
+ * (not treated as an error): we do not lose a whole skill over one bad entry.
  *
- * `maksJamiBayt` — chiqarilgan ma'lumot chegarasi (zip bomb himoyasi).
- * Oshsa xato tashlanadi — bu allaqachon normal arxiv emas.
+ * `maxTotalBytes` — the limit on extracted data (zip-bomb protection). Going
+ * over it throws — at that point the archive is not a normal one anyway.
  */
-export function tarOqi(xom: Uint8Array, maksJamiBayt: number): TarFayl[] {
-  const natija: TarFayl[] = []
-  let jami = 0
-  let ofset = 0
-  // GNU `L` yozuvi keyingi fayl uchun uzun nom beradi
-  let kutilayotganNom: string | null = null
+export function readTar(raw: Uint8Array, maxTotalBytes: number): TarFile[] {
+  const result: TarFile[] = []
+  let total = 0
+  let offset = 0
+  // A GNU `L` entry supplies the long name for the next file
+  let pendingName: string | null = null
 
-  while (ofset + BLOK <= xom.length) {
-    const sarlavha = xom.subarray(ofset, ofset + BLOK)
+  while (offset + BLOCK <= raw.length) {
+    const header = raw.subarray(offset, offset + BLOCK)
 
-    // Ikkita ketma-ket bo'sh blok — arxiv oxiri
-    if (sarlavha.every((b) => b === 0)) break
+    // Two consecutive empty blocks — the end of the archive
+    if (header.every((b) => b === 0)) break
 
-    const nom = matnMaydon(sarlavha.subarray(0, 100))
-    const hajm = sakkizlik(sarlavha.subarray(124, 136))
-    const tur = String.fromCharCode(sarlavha[156] ?? 0)
-    // `prefix` maydoni (USTAR): uzun yo'llar shu yerda bo'linadi
-    const prefiks = matnMaydon(sarlavha.subarray(345, 500))
+    const name = textField(header.subarray(0, 100))
+    const size = octal(header.subarray(124, 136))
+    const kind = String.fromCharCode(header[156] ?? 0)
+    // The `prefix` field (USTAR): long paths are split here
+    const prefix = textField(header.subarray(345, 500))
 
-    ofset += BLOK
-    const malumot = xom.subarray(ofset, ofset + hajm)
-    // Ma'lumot 512 ga to'ldiriladi
-    ofset += Math.ceil(hajm / BLOK) * BLOK
+    offset += BLOCK
+    const data = raw.subarray(offset, offset + size)
+    // The data is padded out to 512
+    offset += Math.ceil(size / BLOCK) * BLOCK
 
-    if (tur === 'L') {
-      // GNU uzun nom — keyingi yozuvga tegishli
-      kutilayotganNom = matnMaydon(malumot)
+    if (kind === 'L') {
+      // GNU long name — it belongs to the next entry
+      pendingName = textField(data)
       continue
     }
-    if (tur === 'x' || tur === 'g') continue // PAX metadata
-    if (tur !== '0' && tur !== '\0') continue // faqat oddiy fayl
+    if (kind === 'x' || kind === 'g') continue // PAX metadata
+    if (kind !== '0' && kind !== '\0') continue // regular files only
 
-    const toliqNom = kutilayotganNom ?? (prefiks ? `${prefiks}/${nom}` : nom)
-    kutilayotganNom = null
+    const fullName = pendingName ?? (prefix ? `${prefix}/${name}` : name)
+    pendingName = null
 
-    const tozaYol = yolniTozala(toliqNom)
-    if (!tozaYol) continue
+    const safePath = sanitisePath(fullName)
+    if (!safePath) continue
 
-    jami += hajm
-    if (jami > maksJamiBayt) {
-      throw new Error(`Archive too large: exceeded the ${maksJamiBayt} byte limit`)
+    total += size
+    if (total > maxTotalBytes) {
+      throw new Error(`Archive too large: exceeded the ${maxTotalBytes} byte limit`)
     }
 
-    natija.push({ yol: tozaYol, mazmun: new Uint8Array(malumot) })
+    result.push({ path: safePath, contents: new Uint8Array(data) })
   }
 
-  return natija
+  return result
 }

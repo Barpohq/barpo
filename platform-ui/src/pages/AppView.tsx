@@ -1,49 +1,48 @@
 import type { AppManifest, Widget } from '../data/mock'
-import AiKorinish from '../components/AiKorinish'
-import AmalTugmalari from '../components/AmalTugmalari'
-import SozlamaFormasi from '../components/SozlamaFormasi'
-import { useIlovaStatelari } from '../lib/ilova-statelari'
+import AiView from '../components/AiView'
+import ActionButtons from '../components/ActionButtons'
+import SettingsForm from '../components/SettingsForm'
+import { useAppStates } from '../lib/app-states'
 import { Card, StatTile, StatusDot } from '../ui'
 
 /**
- * Vidjet matnidagi `{{state.yol}}` shablonlarini jonli qiymat bilan
- * almashtiradi.
+ * Replaces `{{state.path}}` templates in widget text with the live value.
  *
  * ┌────────────────────────────────────────────────────────────────────┐
- * │ NEGA KERAK. Vidjetlar manifestda MATN sifatida saqlanadi, ya'ni     │
- * │ ular qotib qolgan. Jonli statelar esa alohida keladi. Shablonsiz    │
- * │ AI faqat `view` (JSX) orqali jonli ma'lumot ko'rsata olardi —       │
- * │ oddiy stat kartasi uchun bu ortiqcha murakkablik.                   │
+ * │ WHY IT IS NEEDED. Widgets are stored in the manifest as TEXT, i.e. │
+ * │ they are frozen. The live states arrive separately. Without        │
+ * │ templates the AI could only show live data through `view` (JSX) —  │
+ * │ needless complexity for a simple stat card.                        │
  * │                                                                    │
- * │ Endi: `value: "{{cpu.foiz}}%"` → `"3.2%"`.                          │
+ * │ Now: `value: "{{cpu.percent}}%"` → `"3.2%"`.                       │
  * └────────────────────────────────────────────────────────────────────┘
  *
- * Qiymat topilmasa shablon O'Z HOLICHA qoladi — bu ataylab: bo'sh satr
- * ko'rsatish "ma'lumot yo'q" ni yashirardi, foydalanuvchi esa nima
- * kutilayotganini ko'rmasdi.
+ * When the value is not found the template is LEFT AS IS — deliberately:
+ * showing an empty string would hide the "no data" case and the user would
+ * not see what was expected.
  */
-function shablonniQoy(matn: string, data: Record<string, unknown>): string {
-  if (!matn.includes('{{')) return matn
-  return matn.replace(/\{\{\s*([a-zA-Z0-9_.[\]]+)\s*\}\}/g, (toliq, yol: string) => {
-    const qiymat = yolBoyichaOl(data, yol)
-    if (qiymat === undefined || qiymat === null) return toliq
-    return typeof qiymat === 'object' ? JSON.stringify(qiymat) : String(qiymat)
+function applyTemplate(text: string, data: Record<string, unknown>): string {
+  if (!text.includes('{{')) return text
+  return text.replace(/\{\{\s*([a-zA-Z0-9_.[\]]+)\s*\}\}/g, (full, path: string) => {
+    const value = readByPath(data, path)
+    if (value === undefined || value === null) return full
+    return typeof value === 'object' ? JSON.stringify(value) : String(value)
   })
 }
 
-/** `a.b[0].c` shaklidagi yo'l bo'yicha qiymat oladi */
-function yolBoyichaOl(manba: unknown, yol: string): unknown {
-  let joriy: unknown = manba
-  for (const bolak of yol.split(/[.[\]]/).filter(Boolean)) {
-    if (joriy === null || typeof joriy !== 'object') return undefined
-    joriy = (joriy as Record<string, unknown>)[bolak]
+/** Reads a value by an `a.b[0].c` style path */
+function readByPath(source: unknown, path: string): unknown {
+  let current: unknown = source
+  for (const part of path.split(/[.[\]]/).filter(Boolean)) {
+    if (current === null || typeof current !== 'object') return undefined
+    current = (current as Record<string, unknown>)[part]
   }
-  return joriy
+  return current
 }
 
-/** Vidjetdagi hamma matnga shablonni qo'llaydi */
-function vidjetgaShablon(w: Widget, data: Record<string, unknown>): Widget {
-  const s = (m: string) => shablonniQoy(m, data)
+/** Applies the template to every piece of text in a widget */
+function applyWidgetTemplate(w: Widget, data: Record<string, unknown>): Widget {
+  const s = (m: string) => applyTemplate(m, data)
 
   switch (w.type) {
     case 'stats':
@@ -59,11 +58,11 @@ function vidjetgaShablon(w: Widget, data: Record<string, unknown>): Widget {
       return {
         ...w,
         items: w.items.map((i) => {
-          // `value` raqam bo'lishi shart (chiziq kengligi shundan
-          // hisoblanadi), shuning uchun shablon natijasi qayta raqamga
-          // aylantiriladi. Aylanmasa eski qiymat qoladi.
-          const xom = typeof i.value === 'number' ? i.value : Number(s(String(i.value)))
-          return { ...i, value: Number.isFinite(xom) ? xom : 0, label: s(i.label) }
+          // `value` must be a number (the bar width is computed from it), so
+          // the template result is converted back to a number. If it does not
+          // convert, the old value is kept.
+          const raw = typeof i.value === 'number' ? i.value : Number(s(String(i.value)))
+          return { ...i, value: Number.isFinite(raw) ? raw : 0, label: s(i.label) }
         }),
       }
     case 'table':
@@ -79,8 +78,8 @@ function vidjetgaShablon(w: Widget, data: Record<string, unknown>): Widget {
   }
 }
 
-// Manifest'dagi vidjet sxemasini UI'ga aylantiradi — ilovalar o'z dashboardini
-// data sifatida olib keladi, host esa render qiladi (server-driven UI).
+// Turns the widget schema from the manifest into UI — apps bring their own
+// dashboard as data and the host renders it (server-driven UI).
 function WidgetView({ w }: { w: Widget }) {
   switch (w.type) {
     case 'stats':
@@ -174,10 +173,10 @@ function WidgetView({ w }: { w: Widget }) {
             <div className="space-y-1.5 text-right">
               <span
                 className={`inline-block rounded-md px-2 py-1 font-mono text-[11px] ${
-                  w.kind === 'domen' ? 'bg-lazur-dim/15 text-lazur' : 'bg-gold/15 text-gold'
+                  w.kind === 'domain' ? 'bg-lazur-dim/15 text-lazur' : 'bg-gold/15 text-gold'
                 }`}
               >
-                {w.kind === 'domen' ? '🌐 domain connected' : '🔌 port preview'}
+                {w.kind === 'domain' ? '🌐 domain connected' : '🔌 port preview'}
               </span>
               <div className="font-mono text-[11px] text-faint">server: {w.server}</div>
               {w.ssl && <div className="font-mono text-[11px] text-faint">SSL: {w.ssl}</div>}
@@ -215,22 +214,21 @@ function WidgetView({ w }: { w: Widget }) {
 }
 
 export default function AppView({ app }: { app: AppManifest }) {
-  // AI ko'rinishi endi HOST daraxtida ishlaydi — alohida React runtime
-  // yuklash kerak emas (avval iframe uchun ~190 KB yuklanardi).
+  // The AI view now runs in the HOST tree — no separate React runtime has to
+  // be loaded (the iframe used to pull in ~190 KB).
 
-  // Jonli statelar — har biri o'z intervali bilan polling qilinadi.
-  const { qiymatlar, holatlar, yangila, natijalarniQoy } = useIlovaStatelari(app.id, app.states)
+  // Live states — each polled on its own interval.
+  const { values, entries, refresh, applyResults } = useAppStates(app.id, app.states)
 
-  // Manifestdagi `data` — BOSHLANG'ICH qiymat, jonli statelar uning
-  // ustiga yoziladi. Shu tartib muhim: birinchi renderda sahifa bo'sh
-  // turmaydi, keyin qiymatlar jonli ma'lumot bilan almashadi.
-  const data = { ...(app.data ?? {}), ...qiymatlar }
+  // `data` from the manifest is the INITIAL value; the live states are written
+  // on top of it. That order matters: the page is not empty on the first
+  // render, and the values are then replaced with live data.
+  const data = { ...(app.data ?? {}), ...values }
 
-  // Hech qachon muvaffaqiyat bermagan statelar — ular uchun ogohlantirish
-  // ko'rsatamiz. Bir marta ishlagan, keyin yiqilgani ko'rsatilmaydi:
-  // ekranda eskirgan bo'lsa ham haqiqiy qiymat turibdi.
-  const yiqilganlar = Object.entries(holatlar).filter(
-    ([, h]) => h.xato && h.qiymat === undefined,
+  // States that never succeeded — we show a warning for those. One that worked
+  // once and then failed is not shown: a real (if stale) value is on screen.
+  const failed = Object.entries(entries).filter(
+    ([, e]) => e.error && e.value === undefined,
   )
 
   return (
@@ -256,66 +254,66 @@ export default function AppView({ app }: { app: AppManifest }) {
 
       <div className="space-y-4">
         {/*
-          AI yozgan maxsus ko'rinish — VIDJETLARDAN OLDIN.
-          U izolyatsiyada (sandbox iframe) ishlaydi: yiqilsa faqat o'zi
-          o'chadi, quyidagi vidjetlar va butun platforma butun qoladi.
+          The AI-written custom view — BEFORE THE WIDGETS.
+          It runs in isolation: if it throws, only it goes dark, while the
+          widgets below and the whole platform stay intact.
         */}
         {app.view && (
-          <AiKorinish
-            kod={app.view.kod}
+          <AiView
+            code={app.view.code}
             data={data}
-            // `appId` berilishi `ui.saqla`/`ui.amal` ni ochadi. Boshqaruvsiz
-            // ilovada ular BERILMAYDI — ko'rinish faqat chizadi.
-            {...(app.sozlamalar || app.amallar?.length ? { appId: app.id } : {})}
-            onAmal={(javob) => {
-              if (javob.statelar) natijalarniQoy(javob.statelar)
+            // Passing `appId` unlocks `ui.save`/`ui.action`. In an app without
+            // controls they are NOT PROVIDED — the view only draws.
+            {...(app.settings || app.actions?.length ? { appId: app.id } : {})}
+            onAction={(response) => {
+              if (response.states) applyResults(response.states)
             }}
-            onSaqlandi={yangila}
+            onSaved={refresh}
           />
         )}
 
         {/*
-          BOSHQARUV VIDJETLARDAN OLDIN. Sabab: foydalanuvchi bu sahifaga
-          odatda BIR NARSA QILISH uchun kiradi (tokenni yangilash, botni
-          restart qilish) — o'qish uchun sidebar'dagi holat ham yetadi.
-          Amallarni jadval va loglar ostiga ko'chirish ularni izlashga
-          majbur qilardi.
+          CONTROLS BEFORE THE WIDGETS. The reason: the user usually comes to
+          this page TO DO SOMETHING (refresh a token, restart a bot) — for
+          reading, the status in the sidebar is enough already. Pushing the
+          actions below the tables and logs would force people to hunt for
+          them.
         */}
-        {app.amallar && app.amallar.length > 0 && (
-          <AmalTugmalari
+        {app.actions && app.actions.length > 0 && (
+          <ActionButtons
             appId={app.id}
-            amallar={app.amallar}
-            onBajarildi={(javob) => {
-              // Server `yangila` dagi statelarni allaqachon qayta hisoblab
-              // qaytardi — qayta so'rov kerak emas.
-              if (javob.statelar) natijalarniQoy(javob.statelar)
+            actions={app.actions}
+            onCompleted={(response) => {
+              // The server already recomputed the states listed in `refresh`
+              // and returned them — no second request is needed.
+              if (response.states) applyResults(response.states)
             }}
           />
         )}
 
-        {app.sozlamalar && (
-          <SozlamaFormasi
+        {app.settings && (
+          <SettingsForm
             appId={app.id}
-            // Saqlangandan keyin ilova restart bo'lgan bo'lishi mumkin —
-            // hamma state majburan yangilanadi.
-            onSaqlandi={yangila}
+            // The app may have restarted after saving — every state is
+            // force-refreshed.
+            onSaved={refresh}
           />
         )}
 
         {/*
-          Ishlamayotgan statelar. Faqat HECH QACHON qiymat bermaganlari
-          ko'rsatiladi — bir marta ishlagani uchun ekranda haqiqiy (garchi
-          eskirgan) qiymat turibdi va ogohlantirish chalg'itardi.
+          States that are not working. Only the ones that NEVER produced a
+          value are listed — for the others a real (if stale) value is on
+          screen and a warning would only mislead.
         */}
-        {yiqilganlar.length > 0 && (
+        {failed.length > 0 && (
           <Card className="p-4">
             <div className="text-xs font-medium uppercase tracking-wider text-gold">
               Data unavailable
             </div>
             <ul className="mt-2 space-y-1">
-              {yiqilganlar.map(([nom, h]) => (
-                <li key={nom} className="font-mono text-[11px] text-faint">
-                  {nom}: {h.xato}
+              {failed.map(([name, e]) => (
+                <li key={name} className="font-mono text-[11px] text-faint">
+                  {name}: {e.error}
                 </li>
               ))}
             </ul>
@@ -323,7 +321,7 @@ export default function AppView({ app }: { app: AppManifest }) {
         )}
 
         {app.widgets.map((w, i) => (
-          <WidgetView key={i} w={vidjetgaShablon(w, data)} />
+          <WidgetView key={i} w={applyWidgetTemplate(w, data)} />
         ))}
       </div>
 

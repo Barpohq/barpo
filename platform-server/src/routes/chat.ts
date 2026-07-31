@@ -1,541 +1,550 @@
-// Chat sessiyalari va xabarlari.
+// Chat sessions and messages.
 //
-// POST /api/chat/send foydalanuvchi xabarini saqlaydi, sessiya modelini
-// qulflaydi va javob oqimini FONDA boshlaydi — javob WS orqali keladi
-// (chat.delta → chat.done yoki chat.error). Shuning uchun 202 qaytadi:
-// so'rov qabul qilindi, natija keyinroq.
+// POST /api/chat/send stores the user's message, locks the session model and
+// starts the response stream IN THE BACKGROUND — the response arrives over WS
+// (chat.delta → chat.done or chat.error). That is why it returns 202: the
+// request was accepted, the result comes later.
 
 import { config } from '@platforma/config'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { rasmKengaytmasi, rasmTuri, SIGNATURA_BAYTLARI } from '../biriktirma.ts'
-import { xabarniQabulQil } from '../chat-yuborish.ts'
+import { imageExtension, imageKind, SIGNATURE_BYTES } from '../attachment.ts'
+import { acceptMessage } from '../chat-send.ts'
 import {
-  bandsizNom,
-  SESSIYA_PAPKASI,
-  sessiyaFayllarPapkasi,
-  sessiyaIshPapkasi,
-  yuklamaNomi,
-} from '../ish-papkasi.ts'
+  freeName,
+  SESSION_DIR,
+  sessionFilesDir,
+  sessionWorkDir,
+  uploadName,
+} from '../work-dir.ts'
 import {
-  ishlayotganSessiyalar,
-  javobOqizi,
-  kutayotganRuxsatlar,
-  oqimBormi,
-  oqimniToxtat,
-  rejimHolati,
-  rejimOrnat,
-  ruxsatJavobi,
+  runningSessions,
+  streamReply,
+  pendingPermissions,
+  isStreaming,
+  stopStream,
+  modeState,
+  setMode,
+  answerPermission,
 } from '../orchestrator.ts'
 import {
-  biriktirmaBoglanganmi,
-  biriktirmaOchir,
-  biriktirmaOqi,
-  biriktirmaYoz,
-  loyihaOqi,
-  sessiyaBiriktirmalari,
-  sessiyaLoyihaPapkasi,
-  sessiyaOchir,
-  sessiyaOqi,
-  sessiyaSarlavhaOzgart,
-  sessiyaYarat,
-  sessiyalarOqi,
-  xabarlarOqi,
+  isAttachmentLinked,
+  deleteAttachment,
+  readAttachment,
+  writeAttachment,
+  readProject,
+  sessionAttachments,
+  sessionProjectDir,
+  deleteSession,
+  readSession,
+  renameSession,
+  createSession,
+  readSessions,
+  readMessages,
 } from '../repo.ts'
 
 export const chatRoutes = new Hono()
 
 chatRoutes.get('/chat/sessions', (c) => {
-  return c.json({ sessions: sessiyalarOqi() })
+  return c.json({ sessions: readSessions() })
 })
 
 /**
- * Yangi sessiya. `projectId` ixtiyoriy — berilsa sessiya loyihaga ulanadi
- * va agent tool'lari loyiha papkasida ishlaydi.
+ * A new session. `projectId` is optional — when given, the session is bound to
+ * the project and the agent's tools run in the project folder.
  */
 chatRoutes.post('/chat/sessions', async (c) => {
   let title: string | undefined
   let projectId: string | undefined
   try {
-    const tana = (await c.req.json()) as { title?: unknown; projectId?: unknown }
-    if (typeof tana?.title === 'string') title = tana.title
-    if (typeof tana?.projectId === 'string' && tana.projectId.length > 0) {
-      projectId = tana.projectId
+    const body = (await c.req.json()) as { title?: unknown; projectId?: unknown }
+    if (typeof body?.title === 'string') title = body.title
+    if (typeof body?.projectId === 'string' && body.projectId.length > 0) {
+      projectId = body.projectId
     }
   } catch {
-    // tana bo'sh bo'lishi mumkin — sarlavha avtomatik qo'yiladi
+    // the body may be empty — the title is then set automatically
   }
 
-  // Yo'q loyiha id'si bilan sessiya yaratilsa foreign key xatosi 500 bo'lib
-  // chiqardi — bu yerda tushunarli 404 beramiz.
-  if (projectId && !loyihaOqi(projectId)) {
+  // Creating a session with a project id that does not exist used to surface as
+  // a foreign key error turned into a 500 — here we give a comprehensible 404.
+  if (projectId && !readProject(projectId)) {
     return c.json({ error: 'Project not found', detail: projectId }, 404)
   }
 
-  return c.json({ session: sessiyaYarat(title, undefined, projectId) }, 201)
+  return c.json({ session: createSession(title, undefined, projectId) }, 201)
 })
 
 /**
- * Hozir agent oqimi ketayotgan sessiyalar — "fon agentlari" ko'rinishi uchun.
+ * The sessions whose agent stream is running right now — for the "background
+ * agents" view.
  *
- * UI (sidebar badge'lari va Agentlar sahifasi) sahifa ochilganda boshlang'ich
- * holatni shu yerdan oladi, keyin `chat.status` WS eventlari bilan yangilaydi.
- * Faqat WS'ga tayanib bo'lmaydi: sahifa oqim o'rtasida ochilsa, boshlanish
- * eventi allaqachon o'tib ketgan bo'ladi.
+ * The UI (the sidebar badges and the Agents page) takes its initial state from
+ * here when the page opens and then keeps it up to date with `chat.status` WS
+ * events. Relying on WS alone is not enough: if the page opens mid-stream, the
+ * event that announced the start has long since gone by.
  *
- * `title` sessiya jadvalidan qo'shiladi — UI id o'rniga o'qiladigan nom
- * ko'rsatsin. Sessiya o'chirilgan bo'lsa (kutilmagan holat) `title`siz keladi.
+ * `title` is joined in from the session table so the UI can show a readable
+ * name instead of an id. If the session has been deleted (an unexpected state)
+ * it arrives without a `title`.
  */
 chatRoutes.get('/chat/running', (c) => {
-  const running = ishlayotganSessiyalar().map((s) => ({
+  const running = runningSessions().map((s) => ({
     ...s,
-    title: sessiyaOqi(s.sessionId)?.title,
+    title: readSession(s.sessionId)?.title,
   }))
   return c.json({ running })
 })
 
 /**
- * Bitta sessiya — URL'dan tiklash uchun.
+ * A single session — for restoring from the URL.
  *
- * Sahifa `#chat/<uuid>` bilan ochilganda UI shu yerdan sessiyaning modelini
- * va loyihasini oladi (xabarlar alohida so'rovda). Sessiya o'chirilgan yoki
- * URL noto'g'ri bo'lsa 404 — UI uni bo'sh chatga tushish signali deb biladi.
+ * When the page is opened with `#chat/<uuid>` the UI takes the session's model
+ * and project from here (the messages come in a separate request). If the
+ * session has been deleted or the URL is wrong the answer is a 404 — the UI
+ * reads that as the signal to fall back to an empty chat.
  */
 chatRoutes.get('/chat/sessions/:id', (c) => {
-  const sessiya = sessiyaOqi(c.req.param('id'))
-  if (!sessiya) return c.json({ error: 'Session not found' }, 404)
-  return c.json({ session: sessiya })
+  const session = readSession(c.req.param('id'))
+  if (!session) return c.json({ error: 'Session not found' }, 404)
+  return c.json({ session })
 })
 
 chatRoutes.get('/chat/sessions/:id/messages', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
-  return c.json({ messages: xabarlarOqi(id) })
+  if (!readSession(id)) return c.json({ error: 'Session not found' }, 404)
+  return c.json({ messages: readMessages(id) })
 })
 
-/** Sarlavha uzunligi chegarasi — sidebar va ro'yxatda bir qatorga sig'sin */
-const SARLAVHA_MAX = 200
+/** Title length limit — it has to fit on one line in the sidebar and the list */
+const TITLE_MAX = 200
 
 /**
- * Sarlavhani qayta nomlash. Hozircha faqat `title` o'zgartiriladi: model
- * va loyiha suhbat boshlangach qulflanadi (`/chat/send` ga q.), ularni bu
- * yerdan almashtirish kontekstni buzardi.
+ * Renaming. Only `title` can be changed for now: the model and the project are
+ * locked once the conversation has started (see `/chat/send`), and swapping
+ * them from here would corrupt the context.
  */
 chatRoutes.patch('/chat/sessions/:id', async (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
+  if (!readSession(id)) return c.json({ error: 'Session not found' }, 404)
 
-  let tana: { title?: unknown }
+  let body: { title?: unknown }
   try {
-    tana = (await c.req.json()) as { title?: unknown }
+    body = (await c.req.json()) as { title?: unknown }
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
-  if (typeof tana.title !== 'string') {
+  if (typeof body.title !== 'string') {
     return c.json({ error: 'title is required' }, 400)
   }
-  const title = tana.title.trim()
+  const title = body.title.trim()
   if (title.length === 0) {
     return c.json({ error: 'Title must not be empty' }, 400)
   }
-  if (title.length > SARLAVHA_MAX) {
+  if (title.length > TITLE_MAX) {
     return c.json(
-      { error: 'Title too long', detail: `At most ${SARLAVHA_MAX} characters` },
+      { error: 'Title too long', detail: `At most ${TITLE_MAX} characters` },
       400,
     )
   }
 
-  sessiyaSarlavhaOzgart(id, title)
-  return c.json({ session: sessiyaOqi(id) })
+  renameSession(id, title)
+  return c.json({ session: readSession(id) })
 })
 
 /**
- * Suhbatni o'chirish. Xabarlar bazada CASCADE bilan ketadi.
+ * Deleting a conversation. The messages go with it via CASCADE in the database.
  *
- * Oqim ketayotgan bo'lsa avval to'xtatiladi: aks holda agent o'chirilgan
- * sessiyaga javob yozishga urinardi (`xabarYoz` foreign key xatosi berardi)
- * va WS'ga mavjud bo'lmagan suhbat eventlari kelaverardi.
+ * If a stream is running it is stopped first: otherwise the agent would try to
+ * write a response into a deleted session (`writeMessage` would raise a
+ * foreign key error) and events for a conversation that no longer exists would
+ * keep arriving over WS.
  */
 chatRoutes.delete('/chat/sessions/:id', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
+  if (!readSession(id)) return c.json({ error: 'Session not found' }, 404)
 
-  const oqimToxtatildi = oqimBormi(id) ? oqimniToxtat(id) : false
+  const streamStopped = isStreaming(id) ? stopStream(id) : false
 
-  // Biriktirilgan fayllar diskdan ham ketadi. Yozuvlarni CASCADE oladi,
-  // fayllarni esa hech kim olmaydi — ular sessiyaning O'Z papkasida
-  // (`.platforma/sessiyalar/<id>/`), ya'ni loyihali suhbatda ham begona
-  // narsaga tegilmaydi.
+  // The attached files leave the disk as well. The records are taken by
+  // CASCADE, but nothing takes the files — and they sit in the session's OWN
+  // folder (`.platforma/sessions/<id>/`), so even in a project-bound
+  // conversation nothing belonging to anyone else is touched.
   //
-  // `sessiyaOchir` dan OLDIN: keyin bo'lsa loyiha papkasini bilish uchun
-  // sessiya yozuvi kerak bo'lardi, u esa allaqachon o'chirilgan bo'lardi.
+  // BEFORE `deleteSession`: afterwards the session row would be needed to work
+  // out the project folder, and it would already be gone.
   //
-  // Xato yutiladi: papka tozalanmagani sessiyani o'chirmaslik uchun asos
-  // emas (`xotiraniTayyorla` dagi bilan bir xil qoida).
+  // The error is swallowed: a folder that was not cleaned up is not a reason to
+  // refuse to delete the session (the same rule as in `prepareMemory`).
   try {
-    const papka = sessiyaIshPapkasi(id, sessiyaLoyihaPapkasi(id))
-    const xavfsizId = id.replace(/[^a-zA-Z0-9_-]/g, '')
-    if (xavfsizId) {
-      rmSync(join(papka, SESSIYA_PAPKASI, xavfsizId), { recursive: true, force: true })
+    const dir = sessionWorkDir(id, sessionProjectDir(id))
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '')
+    if (safeId) {
+      rmSync(join(dir, SESSION_DIR, safeId), { recursive: true, force: true })
     }
   } catch {
-    // jim o'tamiz — sabab yuqoridagi izohda
+    // passed over silently — the reason is in the note above
   }
 
-  sessiyaOchir(id)
-  return c.json({ ochirildi: true, oqimToxtatildi })
+  deleteSession(id)
+  return c.json({ deleted: true, streamStopped })
 })
 
-interface YuborishTanasi {
+interface SendBody {
   sessionId?: unknown
   text?: unknown
   model?: { provider?: unknown; model?: unknown }
-  biriktirmalar?: unknown
+  attachments?: unknown
 }
 
 /**
- * Xabar yuborish. Tekshiruv va yozish mantiqi `chat-yuborish.ts` da —
- * WS yo'li ham AYNAN shu funksiyani chaqiradi, ya'ni ikki yo'l bir xil
- * qoidalar bo'yicha ishlaydi.
+ * Sending a message. The validation and write logic live in `chat-send.ts` —
+ * the WS path calls EXACTLY the same function, so both paths work by the same
+ * rules.
  *
- * 202 qaytadi: so'rov qabul qilindi, javob esa WS orqali oqadi.
+ * It returns 202: the request has been accepted, the response streams over WS.
  */
 chatRoutes.post('/chat/send', async (c) => {
-  let tana: YuborishTanasi
+  let body: SendBody
   try {
-    tana = (await c.req.json()) as YuborishTanasi
+    body = (await c.req.json()) as SendBody
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
-  if (typeof tana.sessionId !== 'string' || tana.sessionId.length === 0) {
+  if (typeof body.sessionId !== 'string' || body.sessionId.length === 0) {
     return c.json({ error: 'sessionId is required' }, 400)
   }
-  if (typeof tana.text !== 'string') {
+  if (typeof body.text !== 'string') {
     return c.json({ error: 'text is required' }, 400)
   }
-  if (tana.biriktirmalar !== undefined && !idRoyxatimi(tana.biriktirmalar)) {
-    return c.json({ error: 'biriktirmalar must be an array of id strings' }, 400)
+  if (body.attachments !== undefined && !isIdList(body.attachments)) {
+    return c.json({ error: 'attachments must be an array of id strings' }, 400)
   }
 
-  const natija = xabarniQabulQil({
-    sessionId: tana.sessionId,
-    matn: tana.text,
-    tanlangan:
-      matnMi(tana.model?.provider) && matnMi(tana.model?.model)
-        ? { provider: tana.model!.provider as string, model: tana.model!.model as string }
+  const result = acceptMessage({
+    sessionId: body.sessionId,
+    text: body.text,
+    model:
+      isText(body.model?.provider) && isText(body.model?.model)
+        ? { provider: body.model!.provider as string, model: body.model!.model as string }
         : undefined,
-    biriktirmalar: tana.biriktirmalar,
+    attachments: body.attachments,
   })
 
-  if (!natija.ok) {
-    return c.json({ error: natija.xato, detail: natija.tafsilot }, natija.status)
+  if (!result.ok) {
+    return c.json({ error: result.error, detail: result.detail }, result.status)
   }
 
-  // Fonda oqizamiz — javobni kutmaymiz, u WS orqali boradi
-  void javobOqizi(tana.sessionId, natija.messageId, natija.tanlov)
+  // Streamed in the background — we do not wait for the response, it goes over WS
+  void streamReply(body.sessionId, result.messageId, result.model)
 
-  return c.json({ messageId: natija.messageId, model: natija.tanlov }, 202)
+  return c.json({ messageId: result.messageId, model: result.model }, 202)
 })
 
 /**
- * Ruxsat so'roviga javob. WS `chat.permission.reply` bilan bir xil ish
- * qiladi — mijoz qaysi biri qulay bo'lsa shuni ishlatadi.
+ * Answering a permission request. Does exactly the same as the WS
+ * `chat.permission.reply` — the client uses whichever is more convenient.
  */
 chatRoutes.post('/chat/permission', async (c) => {
-  let tana: { sessionId?: unknown; sorovId?: unknown; javob?: unknown }
+  let body: { sessionId?: unknown; requestId?: unknown; answer?: unknown }
   try {
-    tana = (await c.req.json()) as typeof tana
+    body = (await c.req.json()) as typeof body
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
-  const sessionId = matnMi(tana.sessionId)
-  const sorovId = matnMi(tana.sorovId)
-  const javob = tana.javob
-  if (!sessionId || !sorovId) {
-    return c.json({ error: 'sessionId and sorovId are required' }, 400)
+  const sessionId = isText(body.sessionId)
+  const requestId = isText(body.requestId)
+  const answer = body.answer
+  if (!sessionId || !requestId) {
+    return c.json({ error: 'sessionId and requestId are required' }, 400)
   }
-  if (javob !== 'ruxsat' && javob !== 'rad' && javob !== 'hardoim') {
-    return c.json({ error: "javob must be 'ruxsat', 'rad' or 'hardoim'" }, 400)
+  if (answer !== 'allow' && answer !== 'deny' && answer !== 'always') {
+    return c.json({ error: "answer must be 'allow', 'deny' or 'always'" }, 400)
   }
 
-  const berildi = ruxsatJavobi(sessionId, sorovId, javob)
-  if (!berildi) {
+  const accepted = answerPermission(sessionId, requestId, answer)
+  if (!accepted) {
     return c.json(
       { error: 'Request not found', detail: 'It has expired or was already answered' },
       404,
     )
   }
-  return c.json({ qabulQilindi: true })
+  return c.json({ accepted: true })
 })
 
 /**
- * Sessiyada javob kutayotgan ruxsat so'rovlari.
+ * The permission requests in the session that are waiting for an answer.
  *
- * UI buni sahifa ochilganda va WS qayta ulanganda so'raydi: `chat.permission`
- * bir marta yuboriladi va yetib bormasligi mumkin (`kutayotganRuxsatlar`
- * izohiga q.). Shusiz agent javob kutib turadi, foydalanuvchi esa nima
- * kutilayotganini ko'rmaydi.
+ * The UI asks for these when the page opens and when the WS reconnects:
+ * `chat.permission` is sent once and may not arrive (see the note on
+ * `pendingPermissions`). Without this the agent waits for an answer while the
+ * user cannot see what is being asked.
  */
-chatRoutes.get('/chat/sessions/:id/ruxsatlar', (c) => {
+chatRoutes.get('/chat/sessions/:id/permissions', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
-  return c.json({ sorovlar: kutayotganRuxsatlar(id) })
+  if (!readSession(id)) return c.json({ error: 'Session not found' }, 404)
+  return c.json({ requests: pendingPermissions(id) })
 })
 
-/** Sessiyaning hozirgi ruxsat rejimi */
-chatRoutes.get('/chat/sessions/:id/rejim', (c) => {
+/** The session's current permission mode */
+chatRoutes.get('/chat/sessions/:id/mode', (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
-  return c.json({ holat: rejimHolati(id) })
+  if (!readSession(id)) return c.json({ error: 'Session not found' }, 404)
+  return c.json({ state: modeState(id) })
 })
 
 /**
- * Ruxsat rejimini o'zgartirish. Auto o'z-o'zidan o'chgan bo'lsa
- * ("Qayta yoqish") ham shu marshrut ishlatiladi.
+ * Changing the permission mode. The same route is used when auto has switched
+ * itself off and the user presses "Re-enable".
  */
-chatRoutes.post('/chat/sessions/:id/rejim', async (c) => {
+chatRoutes.post('/chat/sessions/:id/mode', async (c) => {
   const id = c.req.param('id')
-  if (!sessiyaOqi(id)) return c.json({ error: 'Session not found' }, 404)
+  if (!readSession(id)) return c.json({ error: 'Session not found' }, 404)
 
-  let rejim: unknown
+  let mode: unknown
   try {
-    const tana = (await c.req.json()) as { rejim?: unknown }
-    rejim = tana?.rejim
+    const body = (await c.req.json()) as { mode?: unknown }
+    mode = body?.mode
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
-  if (rejim !== 'tasdiq' && rejim !== 'auto') {
-    return c.json({ error: "rejim must be 'tasdiq' or 'auto'" }, 400)
+  if (mode !== 'confirm' && mode !== 'auto') {
+    return c.json({ error: "mode must be 'confirm' or 'auto'" }, 400)
   }
-  return c.json({ holat: await rejimOrnat(id, rejim) })
+  return c.json({ state: await setMode(id, mode) })
 })
 
 // ---------------------------------------------------------------------------
-// Biriktirmalar — chatga yuklangan fayl va rasmlar
+// Attachments — files and images uploaded to the chat
 // ---------------------------------------------------------------------------
 //
-// NEGA `/chat/send` DAN AJRATILGAN. Fayl yuklash sekin (megabaytlar), xabar
-// yuborish tez. Bir so'rovda bo'lsa foydalanuvchi fayl yuklanguncha matn
-// yozib ham o'tira olmasdi va progress ko'rsatib bo'lmasdi. Endi: fayl
-// tanlanadi → yuklanadi → chip ko'rinadi → matn yoziladi → `send` faqat
-// id'larni yuboradi (kichik JSON).
+// WHY THIS IS SEPARATE FROM `/chat/send`. Uploading a file is slow
+// (megabytes), sending a message is fast. In one request the user could not
+// type while the file uploaded, and no progress could be shown. Now: the file
+// is picked → uploaded → the chip appears → the text is written → `send` only
+// carries the ids (a small JSON body).
 //
-// Yon foyda: WS `chat.send` ham id'lar bilan ishlaydi, ya'ni ikki yo'l
-// (REST va WS) bir xil qoladi — binary WS'da umuman yo'q.
+// A side benefit: the WS `chat.send` works with ids too, so the two paths
+// (REST and WS) stay identical — there is no binary over WS at all.
 
 /**
- * Tananing qattiq yuqori shifti — DoS'ga qarshi.
+ * The hard upper ceiling on the body — against DoS.
  *
- * Config'dagi haqiqiy chegara (`chat.biriktirma.maksFaylMb`) handler ICHIDA
- * qo'llanadi. Nega ikki qatlam: middleware modul yuklanganda quriladi, config
- * esa sessiyaning ish papkasiga bog'liq (`config({ ishPapkasi })`) va u
- * so'rov paytida ma'lum bo'ladi. Ya'ni bu yerdagi son "hech qanday holatda
- * bundan oshmaydi", handler'dagi son esa "foydalanuvchi sozlagani".
+ * The real limit from the config (`chat.attachment.maxFileMb`) is applied
+ * INSIDE the handler. Why two layers: the middleware is built when the module
+ * loads, whereas the config depends on the session's work directory
+ * (`config({ workDir })`), which is only known at request time. So the number
+ * here means "under no circumstances more than this", and the one in the
+ * handler means "what the user configured".
  */
-const TANA_YUQORI_SHIFT = 256 * 1024 * 1024
+const BODY_CEILING = 256 * 1024 * 1024
 
-/** Rasm nomi bo'sh kelganda ishlatiladigan asos (Windows paste'da shunday bo'ladi) */
-const RASM_ZAXIRA_NOMI = 'image'
+/** The base used when an image arrives without a name (that is what a Windows paste does) */
+const IMAGE_FALLBACK_NAME = 'image'
 
 /**
- * Fayl yoki rasm biriktirish (multipart).
+ * Attaching a file or an image (multipart).
  *
- * `sessionId` MAJBURIY: fayl darhol sessiyaning papkasiga tushadi. UI
- * sessiyani fayl tanlangan payt yaratadi — bo'sh sessiya qolishi platformada
- * normal holat (`ChatSession.xabarlarSoni` izohiga q.).
+ * `sessionId` is REQUIRED: the file goes straight into the session's folder.
+ * The UI creates the session the moment a file is picked — an empty session is
+ * a normal state on this platform (see the note on `ChatSession.messageCount`).
  *
- * TARTIB: avval diskka, keyin bazaga (`routes/projects.ts` dagi papka→yozuv
- * tartibi bilan bir xil sabab). Baza yozuvi yiqilsa fayl yetim qoladi —
- * agent uni ko'radi, zarari yo'q; teskarisi (bazada bor, diskda yo'q) esa
- * o'qishda xato berardi.
+ * ORDER: disk first, database second (the same reason as the folder→row order
+ * in `routes/projects.ts`). If the database write fails the file is orphaned —
+ * the agent sees it and no harm is done; the other way round (in the database
+ * but not on disk) would raise an error on read.
  */
 chatRoutes.post(
-  '/chat/biriktirma',
+  '/chat/attachment',
   bodyLimit({
-    maxSize: TANA_YUQORI_SHIFT,
+    maxSize: BODY_CEILING,
     onError: (c) => c.json({ error: 'Request body too large' }, 413),
   }),
   async (c) => {
-    let forma: FormData
+    let form: FormData
     try {
-      forma = await c.req.formData()
+      form = await c.req.formData()
     } catch {
       return c.json({ error: 'Request must be multipart/form-data' }, 400)
     }
 
-    const sessionId = matnMi(forma.get('sessionId'))
+    const sessionId = isText(form.get('sessionId'))
     if (!sessionId) return c.json({ error: 'sessionId is required' }, 400)
 
-    const sessiya = sessiyaOqi(sessionId)
-    if (!sessiya) return c.json({ error: 'Session not found' }, 404)
+    const session = readSession(sessionId)
+    if (!session) return c.json({ error: 'Session not found' }, 404)
 
-    // `File` dan boshqasi (matn maydoni) tashlanadi — mijoz xato yuborgan
-    const fayllar = forma.getAll('fayl').filter((f): f is File => f instanceof File)
-    if (fayllar.length === 0) {
-      return c.json({ error: 'No file was sent', detail: '`fayl` field is empty' }, 400)
+    // Anything that is not a `File` (a text field) is dropped — the client sent
+    // it wrongly
+    const files = form.getAll('file').filter((f): f is File => f instanceof File)
+    if (files.length === 0) {
+      return c.json({ error: 'No file was sent', detail: '`file` field is empty' }, 400)
     }
 
-    const papka = sessiyaIshPapkasi(sessionId, sessiyaLoyihaPapkasi(sessionId))
-    const { config: sozlamalar } = config({ ishPapkasi: papka })
-    const maksBayt = sozlamalar.chat.biriktirma.maksFaylMb * 1024 * 1024
-    const maksSoni = sozlamalar.chat.biriktirma.maksSoni
+    const dir = sessionWorkDir(sessionId, sessionProjectDir(sessionId))
+    const { config: settings } = config({ workDir: dir })
+    const maxBytes = settings.chat.attachment.maxFileMb * 1024 * 1024
+    const maxCount = settings.chat.attachment.maxCount
 
-    // Mavjudlar bilan birga chegaradan oshmasin. Bog'lanmaganlar ham
-    // sanaladi: foydalanuvchi ularni hali yuborishi mumkin.
-    const mavjudSoni = sessiyaBiriktirmalari(sessionId).length
-    if (mavjudSoni + fayllar.length > maksSoni) {
+    // Together with the existing ones this must not exceed the limit. The
+    // unlinked ones count too: the user may still send them.
+    const existingCount = sessionAttachments(sessionId).length
+    if (existingCount + files.length > maxCount) {
       return c.json(
         {
           error: 'Attachment limit reached',
-          detail: `At most ${maksSoni} (currently ${mavjudSoni})`,
+          detail: `At most ${maxCount} (currently ${existingCount})`,
         },
         400,
       )
     }
 
-    for (const fayl of fayllar) {
-      if (fayl.size === 0) {
-        return c.json({ error: 'Empty files cannot be attached', detail: fayl.name }, 400)
+    for (const file of files) {
+      if (file.size === 0) {
+        return c.json({ error: 'Empty files cannot be attached', detail: file.name }, 400)
       }
-      if (fayl.size > maksBayt) {
+      if (file.size > maxBytes) {
         return c.json(
           {
             error: 'File too large',
-            detail: `${fayl.name} — ${(fayl.size / 1024 / 1024).toFixed(1)} MB, limit ${sozlamalar.chat.biriktirma.maksFaylMb} MB`,
+            detail: `${file.name} — ${(file.size / 1024 / 1024).toFixed(1)} MB, limit ${settings.chat.attachment.maxFileMb} MB`,
           },
           413,
         )
       }
     }
 
-    const { toliq, nisbiy } = sessiyaFayllarPapkasi(papka, sessionId)
-    const natija = []
+    const { full, relative } = sessionFilesDir(dir, sessionId)
+    const saved = []
 
-    for (const fayl of fayllar) {
-      const bayt = new Uint8Array(await fayl.arrayBuffer())
+    for (const file of files) {
+      const bytes = new Uint8Array(await file.arrayBuffer())
 
-      // TUR MAZMUNDAN aniqlanadi, `fayl.type` dan emas: mijoz uni
-      // soxtalashtira oladi va u `GET` javobining `content-type` iga
-      // aylanardi (`biriktirma.ts` izohiga q.).
-      const rasm = rasmTuri(bayt.subarray(0, SIGNATURA_BAYTLARI))
+      // THE KIND COMES FROM THE CONTENT, not from `file.type`: the client can
+      // forge that, and it would become the `content-type` of the `GET`
+      // response (see the note in `attachment.ts`).
+      const image = imageKind(bytes.subarray(0, SIGNATURE_BYTES))
 
-      // Nom bo'sh yoki butunlay tashlanadigan belgilardan iborat bo'lsa
-      // zaxira nom. Rasm paste'ida `File.name` ko'pincha bo'sh keladi.
-      const tozaNom =
-        yuklamaNomi(fayl.name) ??
-        (rasm ? `${RASM_ZAXIRA_NOMI}.${rasmKengaytmasi(rasm)}` : 'file')
-      const nom = bandsizNom(toliq, tozaNom)
+      // If the name is empty or consists entirely of characters that get
+      // stripped, a fallback name is used. On an image paste `File.name` is
+      // often empty.
+      const cleanName =
+        uploadName(file.name) ??
+        (image ? `${IMAGE_FALLBACK_NAME}.${imageExtension(image)}` : 'file')
+      const name = freeName(full, cleanName)
 
-      // `wx` — fayl allaqachon bo'lsa xato beradi. `bandsizNom` va yozish
-      // orasida poyga bor (ikki so'rov bir vaqtda), shu bayroq uni ushlaydi.
+      // `wx` — fails if the file already exists. There is a race between
+      // `freeName` and the write (two requests at once); this flag catches it.
       try {
-        writeFileSync(join(toliq, nom), bayt, { flag: 'wx' })
+        writeFileSync(join(full, name), bytes, { flag: 'wx' })
       } catch {
-        // Poyga: nomni qayta so'rab bir marta urinamiz. Yana bo'lsa xato —
-        // uchinchi urinish ehtimoli shunchalik kichik va cheksiz halqa
-        // qilishdan ko'ra tushunarli xato yaxshi.
-        const ikkinchi = bandsizNom(toliq, tozaNom)
+        // A race: we ask for a name again and try once more. If it happens
+        // again we return an error — the chance of a third collision is so
+        // small that a comprehensible error beats an endless loop.
+        const second = freeName(full, cleanName)
         try {
-          writeFileSync(join(toliq, ikkinchi), bayt, { flag: 'wx' })
-          natija.push(
-            biriktirmaYoz({
+          writeFileSync(join(full, second), bytes, { flag: 'wx' })
+          saved.push(
+            writeAttachment({
               sessionId,
-              tur: rasm ? 'rasm' : 'fayl',
-              nom: ikkinchi,
-              aslNom: fayl.name || tozaNom,
-              yol: join(nisbiy, ikkinchi),
-              mime: rasm ?? 'application/octet-stream',
-              hajm: bayt.byteLength,
+              kind: image ? 'image' : 'file',
+              name: second,
+              originalName: file.name || cleanName,
+              path: join(relative, second),
+              mime: image ?? 'application/octet-stream',
+              size: bytes.byteLength,
             }),
           )
           continue
         } catch {
-          return c.json({ error: 'Could not save the file', detail: fayl.name }, 500)
+          return c.json({ error: 'Could not save the file', detail: file.name }, 500)
         }
       }
 
-      // MIME faqat rasm uchun haqiqiy. Fayl uchun `application/octet-stream`
-      // ATAYLAB: `fayl.type` mijozdan keladi va `text/html` deb yozilsa
-      // `GET` javobida saqlangan XSS bo'lardi.
-      natija.push(
-        biriktirmaYoz({
+      // The MIME type is only trustworthy for an image. For a file
+      // `application/octet-stream` is DELIBERATE: `file.type` comes from the
+      // client, and if `text/html` were written there the `GET` response would
+      // be stored XSS.
+      saved.push(
+        writeAttachment({
           sessionId,
-          tur: rasm ? 'rasm' : 'fayl',
-          nom,
-          aslNom: fayl.name || tozaNom,
-          yol: join(nisbiy, nom),
-          mime: rasm ?? 'application/octet-stream',
-          hajm: bayt.byteLength,
+          kind: image ? 'image' : 'file',
+          name,
+          originalName: file.name || cleanName,
+          path: join(relative, name),
+          mime: image ?? 'application/octet-stream',
+          size: bytes.byteLength,
         }),
       )
     }
 
-    return c.json({ biriktirmalar: natija }, 201)
+    return c.json({ attachments: saved }, 201)
   },
 )
 
 /**
- * Biriktirilgan faylni berish — UI rasm ko'rsatishi va yuklab olish uchun.
+ * Serving an attached file — so the UI can show an image and offer a download.
  *
- * Loyihada BIRINCHI binary qaytaradigan marshrut.
+ * The FIRST route in the project that returns binary.
  *
- * XAVFSIZLIK. Ikki qat'iy qoida:
- *   1) Yo'l SERVERDA quriladi (`sessiyaIshPapkasi` + bazadagi nisbiy yo'l).
- *      Mijoz faqat `id` beradi. Shundan keyin ham chegara QAYTA tekshiriladi
- *      — bazaga qandaydir yo'l bilan buzuq yozuv tushsa ham papkadan
- *      chiqib ketmaslik kerak.
- *   2) `content-type` FAQAT rasm uchun haqiqiy va `inline`. Qolgan hamma
- *      narsa `application/octet-stream` + `attachment`, ya'ni brauzer uni
- *      hech qachon sahifa sifatida ochmaydi (saqlangan XSS yo'li yopiladi).
+ * SECURITY. Two firm rules:
+ *   1) The path is built ON THE SERVER (`sessionWorkDir` + the relative path
+ *      from the database). The client only supplies an `id`. Even then the
+ *      boundary is checked AGAIN — if a corrupt row somehow made it into the
+ *      database, we still must not escape the folder.
+ *   2) The `content-type` is only trustworthy for an image, and only then is
+ *      it `inline`. Everything else is `application/octet-stream` +
+ *      `attachment`, i.e. the browser never opens it as a page (which closes
+ *      the stored-XSS route).
  */
-chatRoutes.get('/chat/biriktirma/:id', (c) => {
-  const biriktirma = biriktirmaOqi(c.req.param('id'))
-  if (!biriktirma) return c.json({ error: 'Attachment not found' }, 404)
+chatRoutes.get('/chat/attachment/:id', (c) => {
+  const attachment = readAttachment(c.req.param('id'))
+  if (!attachment) return c.json({ error: 'Attachment not found' }, 404)
 
-  const papka = sessiyaIshPapkasi(biriktirma.sessionId, sessiyaLoyihaPapkasi(biriktirma.sessionId))
-  const toliq = join(papka, biriktirma.yol)
-  if (!toliq.startsWith(`${papka}/`)) {
+  const dir = sessionWorkDir(attachment.sessionId, sessionProjectDir(attachment.sessionId))
+  const full = join(dir, attachment.path)
+  if (!full.startsWith(`${dir}/`)) {
     return c.json({ error: 'Invalid path' }, 400)
   }
 
-  const fayl = Bun.file(toliq)
-  const rasmmi = biriktirma.tur === 'rasm'
-  // Nom sarlavhaga tushadi — ASCII bo'lmagan belgi va qo'shtirnoq sarlavhani
-  // buzadi, shuning uchun kodlanadi
-  const nom = encodeURIComponent(biriktirma.aslNom)
+  const file = Bun.file(full)
+  const isImage = attachment.kind === 'image'
+  // The name goes into a header — non-ASCII characters and quotes would break
+  // it, so it is encoded
+  const name = encodeURIComponent(attachment.originalName)
 
-  return new Response(fayl, {
+  return new Response(file, {
     headers: {
-      'content-type': rasmmi ? biriktirma.mime : 'application/octet-stream',
-      'content-disposition': `${rasmmi ? 'inline' : 'attachment'}; filename*=UTF-8''${nom}`,
-      // Brauzer mime turini o'zi "taxmin qilib" HTML deb ochmasin
+      'content-type': isImage ? attachment.mime : 'application/octet-stream',
+      'content-disposition': `${isImage ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
+      // Stop the browser "guessing" the mime type and opening it as HTML
       'x-content-type-options': 'nosniff',
-      // Mazmun o'zgarmaydi (id noyob), lekin `private` — javob umumiy
-      // keshga tushmasligi kerak
+      // The content never changes (the id is unique), but `private` — the
+      // response must not land in a shared cache
       'cache-control': 'private, max-age=31536000, immutable',
     },
   })
 })
 
 /**
- * Biriktirmani olib tashlash — foydalanuvchi chipdagi `×` ni bosdi.
+ * Removing an attachment — the user pressed the `×` on the chip.
  *
- * Xabarga BOG'LANGAN biriktirma o'chirilmaydi: u allaqachon suhbat tarixining
- * bir qismi va agent uni ko'rgan. Tarixni orqaga o'zgartirish yolg'on
- * kontekst yaratardi — o'chirish faqat yuborishdan OLDIN mumkin.
+ * An attachment already LINKED to a message is not removed: it is part of the
+ * conversation history and the agent has seen it. Rewriting history backwards
+ * would create a false context — removal is only possible BEFORE sending.
  */
-chatRoutes.delete('/chat/biriktirma/:id', (c) => {
+chatRoutes.delete('/chat/attachment/:id', (c) => {
   const id = c.req.param('id')
-  const biriktirma = biriktirmaOqi(id)
-  if (!biriktirma) return c.json({ error: 'Attachment not found' }, 404)
+  const attachment = readAttachment(id)
+  if (!attachment) return c.json({ error: 'Attachment not found' }, 404)
 
-  if (biriktirmaBoglanganmi(id)) {
+  if (isAttachmentLinked(id)) {
     return c.json(
       {
         error: 'A sent attachment cannot be removed',
@@ -545,37 +554,37 @@ chatRoutes.delete('/chat/biriktirma/:id', (c) => {
     )
   }
 
-  const papka = sessiyaIshPapkasi(biriktirma.sessionId, sessiyaLoyihaPapkasi(biriktirma.sessionId))
-  // Fayl AVVAL o'chiriladi, keyin yozuv: teskari tartibda fayl yetim
-  // qolardi (yozuvsiz fayl uni topish yo'lini ham yo'qotadi)
+  const dir = sessionWorkDir(attachment.sessionId, sessionProjectDir(attachment.sessionId))
+  // The file goes FIRST, the record second: the other way round would leave an
+  // orphaned file (and without the record there is no way left to find it)
   try {
-    unlinkSync(join(papka, biriktirma.yol))
+    unlinkSync(join(dir, attachment.path))
   } catch {
-    // Fayl allaqachon yo'q bo'lishi mumkin — yozuvni baribir tozalaymiz
+    // The file may already be gone — we clean up the record regardless
   }
-  biriktirmaOchir(id)
+  deleteAttachment(id)
 
-  return c.json({ ochirildi: true })
+  return c.json({ deleted: true })
 })
 
-/** Javob oqimini to'xtatish */
+/** Stopping the response stream */
 chatRoutes.post('/chat/stop', async (c) => {
   let sessionId: string | undefined
   try {
-    const tana = (await c.req.json()) as { sessionId?: unknown }
-    sessionId = matnMi(tana?.sessionId)
+    const body = (await c.req.json()) as { sessionId?: unknown }
+    sessionId = isText(body?.sessionId)
   } catch {
-    // pastda tekshiriladi
+    // checked below
   }
   if (!sessionId) return c.json({ error: 'sessionId is required' }, 400)
-  return c.json({ toxtatildi: oqimniToxtat(sessionId) })
+  return c.json({ stopped: stopStream(sessionId) })
 })
 
-function matnMi(qiymat: unknown): string | undefined {
-  return typeof qiymat === 'string' && qiymat.length > 0 ? qiymat : undefined
+function isText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-/** Biriktirma id'lari massivimi — bo'sh massiv ham to'g'ri */
-function idRoyxatimi(qiymat: unknown): qiymat is string[] {
-  return Array.isArray(qiymat) && qiymat.every((q) => typeof q === 'string' && q.length > 0)
+/** Is it an array of attachment ids — an empty array is valid too */
+function isIdList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string' && v.length > 0)
 }

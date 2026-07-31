@@ -1,7 +1,7 @@
-// @platforma/shared — UI va server o'rtasida bo'lishiladigan tiplar va protokol.
-// Build bosqichi yo'q: bun ham, vite ham TypeScript manbasini to'g'ridan-to'g'ri
-// o'qiydi, shuning uchun bu paket faqat manba fayllardan iborat.
+// @platforma/shared — the types and protocol shared between the UI and the
+// server. There is no build step: both bun and vite read the TypeScript source
+// directly, so this package consists of source files only.
 
 export * from './types.ts'
 export * from './protocol.ts'
-export * from './manifest-tekshir.ts'
+export * from './manifest-validate.ts'

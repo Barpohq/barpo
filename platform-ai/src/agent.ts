@@ -1,215 +1,221 @@
-// Tool ishlatadigan agent oqimi.
+// The tool-using agent stream.
 //
-// `suhbat.ts` dan farqi: bu yerda LLM qo'l bilan ish qila oladi — fayl
-// o'qish/yozish/tahrirlash va buyruq bajarish. Ular pi-agent-core ning
-// tayyor tool'lari (`read`, `write`, `edit`, `bash`) — truncation, streaming,
-// abort, timeout allaqachon hal qilingan.
+// How it differs from `conversation.ts`: here the LLM can do hands-on work —
+// reading/writing/editing files and running commands. Those are pi-agent-core's
+// ready-made tools (`read`, `write`, `edit`, `bash`) — truncation, streaming,
+// abort and timeout are already solved there.
 //
-// Xavfsizlik zanjiri:
-//   tool → ChegaralanganMuhit → (ish papkasi ichida?) → bajariladi
-//                             → (tashqarida/xavfli?) → RuxsatBoshqaruvchi
-//                                                    → foydalanuvchi javobi
+// The safety chain:
+//   tool → RestrictedEnv → (inside the working directory?) → runs
+//                             → (outside/dangerous?) → PermissionManager
+//                                                    → the user's answer
 //
-// `beforeToolCall` faqat kuzatuv uchun: bloklash muhit qatlamida bo'ladi,
-// chunki u yo'lni ham, buyruq mazmunini ham ko'radi. Bu yerda audit uchun
-// callback chaqiriladi.
+// `beforeToolCall` is for observation only: blocking happens in the environment
+// layer, because that layer sees both the path and the command's content. Here
+// we only invoke the callback for auditing.
 //
-// Tool'lar KETMA-KET bajariladi (`toolExecution: 'sequential'`). Sinovda
-// parallel rejimda `write` va `read` bir vaqtda ketib, `read` fayl
-// yozilishidan oldin ishga tushib ENOENT olgan edi.
+// Tools run SEQUENTIALLY (`toolExecution: 'sequential'`). In testing, parallel
+// mode had `write` and `read` going at the same time, and `read` started before
+// the file was written and got an ENOENT.
 
 import { Agent, createBashTool, createEditTool, createReadTool, createWriteTool } from '@earendil-works/pi-agent-core'
-import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
+import type { AgentEvent as PiAgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { Api, ImageContent, Model, Models } from '@earendil-works/pi-ai'
 import type { Config } from '@platforma/config'
-import { standartConfig } from '@platforma/config'
-import type { ModelTanlovi, RuxsatQarori, RuxsatRejimi, RuxsatSorovi } from '@platforma/shared'
-import { modelsKolleksiyasi } from './aniqlash.ts'
+import { defaultConfig } from '@platforma/config'
+import type { ModelChoice, PermissionDecision, PermissionMode, PermissionRequest } from '@platforma/shared'
+import { modelsCollection } from './detect.ts'
 import {
-  keyinZanjiri,
-  maxfiyniYashirHooki,
-  oldinZanjiri,
-  qoshimchaTaqiqHooki,
-  uzunlikHooki,
-  type ToolHooki,
-} from './hooklar.ts'
-import type { KlassifikatorXabari } from './klassifikator.ts'
+  afterChain,
+  redactSecretsHook,
+  beforeChain,
+  extraDenyHook,
+  lengthHook,
+  type ToolHook,
+} from './hooks.ts'
+import type { ClassifierMessage } from './classifier.ts'
 import {
-  eskilarniTashla,
-  kontekstniQur,
-  kontekstTokenlari,
-  siq,
-  siqishKerakmi,
-  toolNatijalariniQisqart,
-  type SaqlanganXabar,
-  type XabarBiriktirmasi,
-} from './kontekst.ts'
-import { kontekstniPromptga, loyihaKontekstiniOqi } from './loyiha-konteksti.ts'
-import { skilllarniOqi, skilllarniPromptga } from './skill-yuklash.ts'
-import { indeksniOqi, xotiralarniOqi, xotiralarniPromptga } from './xotira.ts'
-import { ChegaralanganMuhit } from './muhit.ts'
-import type { RejimBoshqaruvchi } from './rejim.ts'
-import { qidiruvToollariXom } from './qidiruv-toollari.ts'
-import { SERVER_PROMPT_QISMI, serverToollariXom, type ServerManbasi } from './server-toollari.ts'
+  dropOldest,
+  buildContext,
+  contextTokens,
+  compact,
+  needsCompaction,
+  truncateToolResults,
+  type StoredMessage,
+  type MessageAttachment,
+} from './context.ts'
+import { contextToPrompt, readProjectContext } from './project-context.ts'
+import { readSkills, skillsToPrompt } from './skill-load.ts'
+import { readMemoryIndex, readMemories, memoriesToPrompt } from './memory.ts'
+import { RestrictedEnv } from './environment.ts'
+import type { ModeManager } from './mode.ts'
+import { searchToolsRaw } from './search-tools.ts'
+import { SERVER_PROMPT_SECTION, serverToolsRaw, type ServerProvider } from './server-tools.ts'
 import {
-  DASHBOARD_PROMPT_QISMI,
-  dashboardToollariXom,
-  type DashboardManbasi,
-} from './dashboard-toollari.ts'
-import { McpBoshqaruvchi, type McpUlanadiganServer } from './mcp-boshqaruvchi.ts'
-import { MCP_PROMPT_QISMI, mcpTooliMi, mcpToollariXom } from './mcp-toollari.ts'
-import type { RuxsatBoshqaruvchi } from './ruxsat.ts'
-import type { Sarflov, SuhbatXabari } from './suhbat.ts'
+  DASHBOARD_PROMPT_SECTION,
+  dashboardToolsRaw,
+  type DashboardSink,
+} from './dashboard-tools.ts'
+import { McpManager, type McpConnectableServer } from './mcp-manager.ts'
+import { MCP_PROMPT_SECTION, isMcpTool, mcpToolsRaw } from './mcp-tools.ts'
+import type { PermissionManager } from './permission.ts'
+import type { Usage, ConversationMessage } from './conversation.ts'
 
-export type AgentHodisasi =
-  | { tur: 'delta'; matn: string }
-  | { tur: 'tool_boshlandi'; id: string; nom: string; args: string }
-  | { tur: 'tool_yangilandi'; id: string; matn: string }
+export type AgentEvent =
+  | { kind: 'delta'; text: string }
+  | { kind: 'tool_start'; id: string; name: string; args: string }
+  | { kind: 'tool_update'; id: string; text: string }
   | {
-      tur: 'tool_tugadi'
+      kind: 'tool_end'
       id: string
-      natija: string
-      xatomi: boolean
-      tafsilot?: { diff?: string; qisqartirilgan?: boolean }
+      result: string
+      isError: boolean
+      detail?: { diff?: string; truncated?: boolean }
     }
-  | { tur: 'ruxsat_kerak'; sorov: RuxsatSorovi }
+  | { kind: 'permission_required'; request: PermissionRequest }
   /**
-   * Ruxsat masalasi hal bo'ldi — qaror qayerdan kelgani bilan.
-   * Chaqiruvchi buni AYNAN O'SHA PAYT ishlayotgan tool chaqiruviga
-   * biriktiradi (tool'lar ketma-ket bajariladi, ya'ni bittasi aniq).
+   * The permission question is settled — including where the decision came
+   * from. The caller attaches this to the tool call running AT THAT EXACT
+   * MOMENT (tools run sequentially, so there is exactly one).
    */
-  | { tur: 'ruxsat_qarori'; qaror: RuxsatQarori }
-  | { tur: 'klassifikator'; qaror: 'ruxsat' | 'blok'; izoh: string }
-  | { tur: 'rejim'; rejim: RuxsatRejimi; sabab?: string }
-  /** Kontekst siqildi — UI foydalanuvchiga bildiradi */
-  | { tur: 'siqildi'; oldingiTokenlar: number; yangiTokenlar: number }
+  | { kind: 'permission_decision'; decision: PermissionDecision }
+  | { kind: 'classifier'; verdict: 'allow' | 'block'; note: string }
+  | { kind: 'mode'; mode: PermissionMode; reason?: string }
+  /** The context was compacted — the UI tells the user */
+  | { kind: 'compacted'; previousTokens: number; newTokens: number }
   | {
-      tur: 'tugadi'
-      matn: string
-      sarflov: Sarflov
+      kind: 'done'
+      text: string
+      usage: Usage
       /**
-       * Agent qurgan to'liq kontekst — TOOL NATIJALARI BILAN.
-       * Chaqiruvchi shuni saqlaydi va keyingi turn'da qaytaradi; usiz
-       * agent har turn o'z tool natijalarini unutadi.
+       * The full context the agent built — WITH TOOL RESULTS.
+       * The caller stores this and passes it back on the next turn; without
+       * it the agent forgets its own tool results every turn.
        */
-      xabarlar: AgentMessage[]
-      /** Provider aytgan kontekst hajmi — keyingi siqish qarori uchun */
-      kontekstTokenlari: number
+      messages: AgentMessage[]
+      /** The context size the provider reported — for the next compaction decision */
+      contextTokens: number
     }
-  | { tur: 'xato'; xabar: string }
+  | { kind: 'error'; message: string }
 
 /**
- * Sessiya uchun ulanadigan MCP serverlar ro'yxati.
+ * The list of MCP servers to connect for a session.
  *
- * HAR OQIM BOSHIDA yangi o'qiladi, keshlanmaydi: foydalanuvchi suhbat
- * davomida server o'rnatishi yoki olib tashlashi mumkin (`ServerManbasi`
- * bilan bir xil sabab).
+ * Read fresh AT THE START OF EVERY STREAM, never cached: the user may install
+ * or remove a server mid-conversation (the same reason as `ServerProvider`).
  */
-export type McpManbasi = () => McpUlanadiganServer[] | Promise<McpUlanadiganServer[]>
+export type McpProvider = () => McpConnectableServer[] | Promise<McpConnectableServer[]>
 
-export interface AgentSozlamalari {
+export interface AgentOptions {
   sessionId: string
-  /** Tool'lar ishlaydigan papka */
-  ishPapkasi: string
-  ruxsat: RuxsatBoshqaruvchi
-  /** Ruxsat rejimi — `auto` bo'lsa klassifikator ishlaydi */
-  rejim?: RejimBoshqaruvchi
+  /** The directory the tools work in */
+  workDir: string
+  permission: PermissionManager
+  /** Permission mode — on `auto` the classifier runs */
+  mode?: ModeManager
   signal?: AbortSignal
-  /** Platforma sozlamalari. Berilmasa standart qiymatlar. */
-  sozlamalar?: Config
+  /** Platform settings. Defaults are used if not given. */
+  config?: Config
   /**
-   * Klassifikatorga beriladigan MATNLI tarix.
+   * The TEXT-ONLY history handed to the classifier.
    *
-   * Berilmasa `xabarlar` dan qurilib, tool natijalari filtrlanadi. Chaqiruvchi
-   * o'zi bergani afzal: u bazadagi toza matnni biladi va shu bilan bir emas,
-   * ikki qatlamli himoya hosil bo'ladi.
+   * If not given it is built from `messages` and tool results are filtered
+   * out. It is better for the caller to supply it: the caller knows the clean
+   * text in the database, and that gives two layers of protection instead of
+   * one.
    */
-  klassifikatorTarixi?: SuhbatXabari[]
+  classifierHistory?: ConversationMessage[]
   /**
-   * Platformaga ulangan serverlar ro'yxatini beradigan manba.
+   * The source that supplies the list of servers connected to the platform.
    *
-   * Berilmasa `serverList` tool'i UMUMAN e'lon qilinmaydi va prompt ham
-   * uni tilga olmaydi (`server-toollari.ts` ga q.). Inversiya: serverlar
-   * bazasi `platform-server` da, bu paket unga bog'liq emas.
+   * If not given, the `serverList` tool is NOT DECLARED AT ALL and the prompt
+   * does not mention it either (see `server-tools.ts`). An inversion: the
+   * server database lives in `platform-server`, and this package does not
+   * depend on it.
    */
-  serverManbasi?: ServerManbasi
+  serverProvider?: ServerProvider
   /**
-   * Ilova manifestini saqlaydigan manba (dinamik dashboard).
+   * The sink that stores the app manifest (the dynamic dashboard).
    *
-   * Berilmasa `appPublish` tool'i UMUMAN e'lon qilinmaydi va prompt ham
-   * uni tilga olmaydi (`dashboard-toollari.ts` ga q.). `serverManbasi`
-   * bilan bir xil inversiya sababi: manifestlar bazasi `platform-server`
-   * da, bu paket unga bog'liq emas.
+   * If not given, the `appPublish` tool is NOT DECLARED AT ALL and the prompt
+   * does not mention it either (see `dashboard-tools.ts`). The same inversion
+   * as `serverProvider`, for the same reason: the manifest database lives in
+   * `platform-server`, and this package does not depend on it.
    */
-  dashboardManbasi?: DashboardManbasi
+  dashboardSink?: DashboardSink
   /**
-   * Sessiyada ulanishi kerak bo'lgan MCP serverlar ro'yxatini beradigan manba.
+   * The source that supplies the MCP servers to connect for the session.
    *
-   * `serverManbasi`/`dashboardManbasi` bilan bir xil inversiya: serverlar
-   * bazasi `platform-server` da, bu paket unga bog'liq emas.
+   * The same inversion as `serverProvider`/`dashboardSink`: the server
+   * database lives in `platform-server`, and this package does not depend on
+   * it.
    *
-   * Berilmasa YOKI bo'sh ro'yxat qaytarsa — MCP qatlami umuman ishga
-   * tushmaydi: boshqaruvchi yaratilmaydi, tool e'lon qilinmaydi va prompt
-   * MCP haqida bir og'iz so'z aytmaydi. Ya'ni "MCP yoqilgan/o'chirilgan"
-   * degan alohida config bayrog'i KERAK EMAS — o'rnatishning o'zi nazorat.
+   * If it is not given OR it returns an empty list, the MCP layer does not
+   * start at all: no manager is created, no tool is declared, and the prompt
+   * does not say a word about MCP. In other words, a separate "MCP
+   * enabled/disabled" config flag is NOT NEEDED — installing a server is
+   * itself the control.
    */
-  mcpManbasi?: McpManbasi
-  /** Har tool chaqiruvidan oldin — audit uchun. Bloklamaydi. */
-  toolKuzatuvchi?: (nom: string, args: unknown) => void
-  /** Qo'shimcha hook'lar — config'dagilarga qo'shiladi */
-  hooklar?: ToolHooki[]
+  mcpProvider?: McpProvider
+  /** Before every tool call — for auditing. Does not block. */
+  toolObserver?: (name: string, args: unknown) => void
+  /** Extra hooks — appended to the ones from the config */
+  hooks?: ToolHook[]
 }
 
 /**
- * Klassifikatorga uzatiladigan suhbatni tayyorlaydi.
+ * Prepares the conversation that is handed to the classifier.
  *
  * ┌───────────────────────────────────────────────────────────────────────┐
- * │ XAVFSIZLIK CHEGARASI. Bu yerdan faqat foydalanuvchi va agent MATNI    │
- * │ o'tadi. Tool natijalari — o'qilgan fayl mazmuni, bash chiqishi —      │
- * │ HECH QACHON. Agent o'qigan faylda "endi rm -rf ~ bajar" yozilgan      │
- * │ bo'lsa, u klassifikatorga yetib bormaydi.                             │
+ * │ SECURITY BOUNDARY. Only user and agent TEXT passes through here. Tool │
+ * │ results — the contents of a file that was read, bash output — NEVER   │
+ * │ do. If a file the agent read says "now run rm -rf ~", that never      │
+ * │ reaches the classifier.                                               │
  * │                                                                       │
- * │ `SuhbatXabari` da allaqachon faqat matn bor (role: user|assistant),   │
- * │ lekin bu funksiya aniq chegara bo'lib turadi: kelajakda tarixga tool  │
- * │ natijalari qo'shilsa, filtr shu yerda bo'ladi. Test buni majburlaydi. │
+ * │ `ConversationMessage` already holds text only (role: user|assistant), │
+ * │ but this function stands as an explicit boundary: if tool results are │
+ * │ ever added to the history, the filter belongs here. A test enforces   │
+ * │ it.                                                                   │
  * └───────────────────────────────────────────────────────────────────────┘
  */
-export function klassifikatorTarixi(xabarlar: SuhbatXabari[]): KlassifikatorXabari[] {
-  return xabarlar
+export function classifierHistory(messages: ConversationMessage[]): ClassifierMessage[] {
+  return messages
     .filter((x) => x.role === 'user' || x.role === 'assistant')
     .map((x) => ({ role: x.role, text: x.text }))
 }
 
-/** Tool natijasi juda uzun bo'lsa UI uchun qisqartiriladi */
-const NATIJA_CHEGARASI = 2000
+/** A tool result that is very long gets truncated for the UI */
+const RESULT_LIMIT = 2000
 
 /**
- * Oqim provider xatosi bilan tugaganmi — tugagan bo'lsa sabab matni.
+ * Whether the stream ended with a provider error — if so, the reason text.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ NEGA BU KERAK. `agent.prompt()` provider xatosida XATO TASHLAMAYDI.  │
- * │ pi-agent-core xatoni oxirgi `assistant` xabariga yozib qo'yadi       │
- * │ (`stopReason: 'error'`, `errorMessage: '...'`) va jimgina qaytadi.   │
+ * │ WHY THIS IS NEEDED. `agent.prompt()` DOES NOT THROW on a provider    │
+ * │ error. pi-agent-core writes the error into the last `assistant`      │
+ * │ message (`stopReason: 'error'`, `errorMessage: '...'`) and returns   │
+ * │ quietly.                                                             │
  * │                                                                      │
- * │ Buni tekshirmasak oqim MUVAFFAQIYATLI deb hisoblanardi: matn bo'sh,  │
- * │ tool yo'q, xato yo'q. Foydalanuvchi uchun bu "chat boshlandi va      │
- * │ darhol tugadi, hech narsa bo'lmadi" — sababi ko'rinmaydi. Bazada     │
- * │ ham iz qolmasdi (`orchestrator.ts`: bo'sh javob yozilmaydi).         │
+ * │ Without this check the stream counted as SUCCESSFUL: no text, no     │
+ * │ tools, no error. To the user that looks like "the chat started and   │
+ * │ ended immediately, nothing happened" — with no visible reason. It    │
+ * │ left no trace in the database either (`orchestrator.ts`: an empty    │
+ * │ reply is not written).                                               │
  * │                                                                      │
- * │ Haqiqiy misollar: OpenRouter `400 Reasoning is mandatory for this    │
- * │ endpoint`, Codex `invalidated oauth token`. Ikkalasi ham shu yo'ldan │
- * │ o'tib, foydalanuvchiga bo'sh javob bo'lib ko'ringan.                 │
+ * │ Real examples: OpenRouter `400 Reasoning is mandatory for this       │
+ * │ endpoint`, Codex `invalidated oauth token`. Both went down this path │
+ * │ and showed up to the user as an empty reply.                         │
  * └──────────────────────────────────────────────────────────────────────┘
  *
- * `aborted` bu yerda XATO EMAS: bekor qilishni chaqiruvchi o'zi biladi
- * (`signal.aborted`) va uni alohida xabar bilan bildiradi.
+ * `aborted` is NOT AN ERROR here: the caller knows about the cancellation
+ * itself (`signal.aborted`) and reports it with a separate message.
  *
- * Faqat OXIRGI assistant xabari tekshiriladi: undan oldingilari muvaffaqiyatli
- * tugagan turn'lar (tool zanjiri) va ular javobni buzmagan.
+ * Only the LAST assistant message is checked: the ones before it are turns
+ * that finished successfully (the tool chain) and they did not break the reply.
  */
-export function oqimXatosi(xabarlar: readonly unknown[]): string | undefined {
-  for (let i = xabarlar.length - 1; i >= 0; i -= 1) {
-    const x = xabarlar[i] as
+export function streamError(messages: readonly unknown[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const x = messages[i] as
       | { role?: string; stopReason?: string; errorMessage?: string }
       | undefined
     if (x?.role !== 'assistant') continue
@@ -220,66 +226,67 @@ export function oqimXatosi(xabarlar: readonly unknown[]): string | undefined {
 }
 
 /**
- * Agentning system prompti.
+ * The agent's system prompt.
  *
- * TUZILISHI (tartib ataylab): kimsan → til → qanday gapirasan → qanday
- * ishlaysan → tool'lar → qo'shimcha qatlamlar. Xulq-atvor qoidalari
- * tool mexanikasidan OLDIN turadi, chunki ular har javobga taalluqli;
- * tool qoidalari esa faqat tool ishlatilganda.
+ * STRUCTURE (the order is deliberate): who you are → language → how you speak
+ * → how you work → tools → extra layers. The behavioural rules come BEFORE the
+ * tool mechanics, because they apply to every reply; the tool rules only apply
+ * when a tool is used.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ NEGA "BULARNI QILMA" RO'YXATI BOR.                                   │
+ * │ WHY THERE IS A "DO NOT DO THIS" LIST.                                │
  * │                                                                      │
- * │ Prompt modelga tool ro'yxatini, ish papkasi yo'lini va ruxsat        │
- * │ qoidalarini beradi. Bu ma'lumot ISHLASH uchun kerak, lekin model     │
- * │ uni FOYDALANUVCHIGA QAYTA O'QIB berishga moyil: "Salom! Mana nima    │
- * │ qila olaman: fayl o'qish, yozish… Ish papkam: /home/…". Haqiqiy      │
- * │ sinovda aynan shunday bo'ldi.                                        │
+ * │ The prompt gives the model the tool list, the working directory path │
+ * │ and the permission rules. It needs that information to WORK, but the │
+ * │ model tends to READ IT BACK TO THE USER: "Hello! Here is what I can  │
+ * │ do: read files, write them… My working directory: /home/…". That is  │
+ * │ exactly what happened in real testing.                               │
  * │                                                                      │
- * │ Ya'ni promptdagi har qator ikki vazifani bajaradi — modelga          │
- * │ ko'rsatma va (istalmagan holda) javob uchun material. Ikkinchisini   │
- * │ ochiq taqiqlash kerak, aks holda model o'zini tanishtirganda         │
- * │ promptni qayta aytib beradi.                                         │
+ * │ In other words every line of the prompt does two jobs — an           │
+ * │ instruction to the model and (unwantedly) material for a reply. The  │
+ * │ second one has to be forbidden explicitly, otherwise the model       │
+ * │ recites the prompt whenever it introduces itself.                    │
  * │                                                                      │
- * │ Shu sabab identifikatsiya ham ochiq yozilgan: "sen kimsan" savoliga  │
- * │ javob bo'lmasa, model o'z trening identifikatsiyasiga qaytadi va     │
- * │ o'zini boshqa mahsulot nomi bilan tanishtiradi.                      │
+ * │ That is also why the identity is written out explicitly: with no     │
+ * │ answer to "who are you", the model falls back on its training        │
+ * │ identity and introduces itself under another product's name.         │
  * └──────────────────────────────────────────────────────────────────────┘
  *
- * TIL STATIK EMAS. Ilgari prompt "o'zbek tilida muloqot qil" deb qat'iy
- * aytardi va model boshqa tilda yozilgan xabarga ham o'zbekcha javob
- * berardi. Endi til HAR XABARDA foydalanuvchining tilidan aniqlanadi;
- * o'zbekcha faqat til noaniq bo'lganda ishlatiladigan zaxira.
+ * THE LANGUAGE IS NOT STATIC. The prompt used to say flatly "communicate in
+ * Uzbek", and the model answered in Uzbek even to a message written in another
+ * language. Now the language is detected from the user's own ON EVERY MESSAGE;
+ * Uzbek is only the fallback used when the language is unclear.
  *
- * `loyihaKonteksti` — ish papkasidagi `AGENTS.md`/`CLAUDE.md` matni
- * (`loyiha-konteksti.ts`). U promptning OXIRIGA, platformaning o'z
- * qoidalaridan KEYIN qo'shiladi: model uchun keyingi matn kuchliroq
- * ko'rinmasin degan qoida yo'q, lekin tartib niyatni aniq ko'rsatadi —
- * platforma qoidalari asos, loyiha ko'rsatmasi ular ustiga qo'shiladi.
+ * `projectContext` — the text of `AGENTS.md`/`CLAUDE.md` in the working
+ * directory (`project-context.ts`). It is appended at the END of the prompt,
+ * AFTER the platform's own rules: there is no rule that later text looks
+ * stronger to the model, but the order states the intent clearly — the
+ * platform rules are the foundation, the project's instructions go on top.
  *
- * `skilllar` — ish papkasidagi `.platforma/skills/` ro'yxati
- * (`skill-yuklash.ts`). Faqat nom+tavsif+yo'l tushadi, to'liq matnni model
- * `read` bilan o'zi oladi.
+ * `skills` — the listing of `.platforma/skills/` in the working directory
+ * (`skill-load.ts`). Only name+description+path goes in; the model fetches the
+ * full text itself with `read`.
  *
- * `xotira` — ish papkasidagi `.platforma/memory/` ro'yxati (`xotira.ts`).
- * Skilllar bilan bir xil progressive disclosure, lekin bo'sh bo'lganda ham
- * qo'shiladi: yozish qoidasi bo'lmasa agent mexanizm borligini bilmaydi.
+ * `memory` — the listing of `.platforma/memory/` in the working directory
+ * (`memory.ts`). The same progressive disclosure as the skills, but it is
+ * included even when empty: without the writing rule the agent would not know
+ * the mechanism exists.
  *
- * Uchala matn ham KLASSIFIKATORGA BORMAYDI — u alohida prompt
- * (`klassifikator.ts`) bilan ishlaydi va bu funksiyani umuman chaqirmaydi.
+ * None of these three texts GOES TO THE CLASSIFIER — it works off a separate
+ * prompt (`classifier.ts`) and never calls this function at all.
  *
- * `serverlarBor` — `serverList` tool'i e'lon qilinganmi. Yuqoridagi uchtadan
- * FARQLI o'laroq bu matn emas, bayroq: tool mavjud bo'lmaganda uni tilga
- * olish modelni yo'q imkoniyatga undardi.
+ * `hasServers` — whether the `serverList` tool was declared. UNLIKE the three
+ * above this is not text but a flag: mentioning the tool when it does not
+ * exist would push the model towards a capability it does not have.
  */
-export const AGENT_SISTEM_PROMPT = (
-  ishPapkasi: string,
-  loyihaKonteksti?: string,
-  skilllar?: string,
-  xotira?: string,
-  serverlarBor = false,
-  dashboardBor = false,
-  mcpBor = false,
+export const AGENT_SYSTEM_PROMPT = (
+  workDir: string,
+  projectContext?: string,
+  skills?: string,
+  memory?: string,
+  hasServers = false,
+  hasDashboard = false,
+  hasMcp = false,
 ) =>
   [
     'You are the AI assistant of this platform. You work on the user\'s project:',
@@ -357,13 +364,13 @@ export const AGENT_SISTEM_PROMPT = (
     '- find: locate files by glob',
     '- ls: list a directory',
     '- bash: run a command',
-    ...(serverlarBor ? SERVER_PROMPT_QISMI.royxat : []),
-    ...(dashboardBor ? DASHBOARD_PROMPT_QISMI.royxat : []),
-    ...(mcpBor ? MCP_PROMPT_QISMI.royxat : []),
+    ...(hasServers ? SERVER_PROMPT_SECTION.list : []),
+    ...(hasDashboard ? DASHBOARD_PROMPT_SECTION.list : []),
+    ...(hasMcp ? MCP_PROMPT_SECTION.list : []),
     '',
-    ...(serverlarBor ? [...SERVER_PROMPT_QISMI.qoida, ''] : []),
-    ...(dashboardBor ? [...DASHBOARD_PROMPT_QISMI.qoida, ''] : []),
-    ...(mcpBor ? [...MCP_PROMPT_QISMI.qoida, ''] : []),
+    ...(hasServers ? [...SERVER_PROMPT_SECTION.rules, ''] : []),
+    ...(hasDashboard ? [...DASHBOARD_PROMPT_SECTION.rules, ''] : []),
+    ...(hasMcp ? [...MCP_PROMPT_SECTION.rules, ''] : []),
     'To find files use `grep`/`find`/`ls`, NOT `bash` — they are faster and ask',
     'for no permission. Reach for `bash` only when nothing else will do. Those',
     'three tools work only inside the working directory and by default skip',
@@ -376,7 +383,7 @@ export const AGENT_SISTEM_PROMPT = (
     'it, and never run an irreversible one (deleting files, `git reset --hard`,',
     'force push) unless the user explicitly asked for it.',
     '',
-    `Your working directory: ${ishPapkasi}`,
+    `Your working directory: ${workDir}`,
     'Relative paths resolve against it. Normally, work inside this directory.',
     '',
     'IMPORTANT: files outside the working directory and dangerous commands (rm,',
@@ -387,333 +394,345 @@ export const AGENT_SISTEM_PROMPT = (
     'Read a file before you edit it. Use one tool at a time. After changing a',
     'file you do not need to read it back to verify — if `edit` returned',
     'successfully, the change was written.',
-    ...(skilllar ? [skilllar] : []),
-    ...(xotira ? [xotira] : []),
-    ...(loyihaKonteksti ? [loyihaKonteksti] : []),
+    ...(skills ? [skills] : []),
+    ...(memory ? [memory] : []),
+    ...(projectContext ? [projectContext] : []),
   ].join('\n')
 
 /**
- * Tool bilan ishlaydigan javob oqimi.
- * Xato tashlamaydi — muammo `{ tur: 'xato' }` bo'lib qaytadi.
+ * The reply stream that works with tools.
+ * Does not throw — a problem comes back as `{ kind: 'error' }`.
  */
-export async function* agentOqimi(
-  tanlov: ModelTanlovi,
-  xabarlar: SaqlanganXabar[],
-  sozlama: AgentSozlamalari,
-): AsyncGenerator<AgentHodisasi> {
-  const sozlamalar = sozlama.sozlamalar ?? standartConfig()
-  // Ishlab chiqaruvchi (agent) va iste'molchi (bu generator) o'rtasidagi
-  // navbat. `uygonish` obyekt maydonida saqlanadi — TS ni lokal o'zgaruvchi
-  // bo'yicha control-flow xulosasi chalg'itmasin.
-  const holat: { navbat: AgentHodisasi[]; uygonish: (() => void) | undefined; tugadi: boolean } = {
-    navbat: [],
-    uygonish: undefined,
-    tugadi: false,
+export async function* agentStream(
+  choice: ModelChoice,
+  messages: StoredMessage[],
+  options: AgentOptions,
+): AsyncGenerator<AgentEvent> {
+  const config = options.config ?? defaultConfig()
+  // The queue between the producer (the agent) and the consumer (this
+  // generator). `wake` is kept in an object field so that TS's control-flow
+  // analysis of a local variable does not mislead us.
+  const state: { queue: AgentEvent[]; wake: (() => void) | undefined; done: boolean } = {
+    queue: [],
+    wake: undefined,
+    done: false,
   }
 
-  const qoy = (h: AgentHodisasi) => {
-    holat.navbat.push(h)
-    holat.uygonish?.()
+  const emit = (e: AgentEvent) => {
+    state.queue.push(e)
+    state.wake?.()
   }
 
-  // Config qiymatlarini boshqaruvchilarga uzatamiz. Ular sessiya bo'yicha
-  // reestrda saqlanadi va yaratilgan paytda config hali ma'lum emas edi.
-  sozlama.ruxsat.kutishMuddatiniOrnat(sozlamalar.ruxsat.kutishSoniya * 1000)
-  sozlama.rejim?.chegaralarniOrnat(
-    sozlamalar.ruxsat.ketmaKetBlokChegarasi,
-    sozlamalar.ruxsat.jamiBlokChegarasi,
+  // We pass the config values down to the managers. They are held in a
+  // per-session registry and the config was not yet known when they were
+  // created.
+  options.permission.setWaitTimeout(config.permission.waitSeconds * 1000)
+  options.mode?.setLimits(
+    config.permission.consecutiveBlockLimit,
+    config.permission.totalBlockLimit,
   )
 
-  // Ruxsat so'rovlari oqimga qo'shiladi — orchestrator ularni WS'ga uzatadi
-  const ruxsatBekor = sozlama.ruxsat.kuzat((sorov) => qoy({ tur: 'ruxsat_kerak', sorov }))
-  const qarorBekor = sozlama.ruxsat.qarorlarniKuzat((q) =>
-    qoy({ tur: 'klassifikator', qaror: q.qaror, izoh: q.izoh }),
+  // Permission requests are pushed onto the stream — the orchestrator relays
+  // them to the WS
+  const unsubscribeRequests = options.permission.subscribe((request) =>
+    emit({ kind: 'permission_required', request }),
   )
-  const ruxsatQaroriBekor = sozlama.ruxsat.ruxsatQarorlariniKuzat((qaror) =>
-    qoy({ tur: 'ruxsat_qarori', qaror }),
+  const unsubscribeVerdicts = options.permission.subscribeVerdicts((v) =>
+    emit({ kind: 'classifier', verdict: v.verdict, note: v.note }),
   )
-  const rejimBekor = sozlama.rejim?.kuzat((o) =>
-    qoy({ tur: 'rejim', rejim: o.rejim, sabab: o.sabab }),
+  const unsubscribeDecisions = options.permission.subscribeDecisions((decision) =>
+    emit({ kind: 'permission_decision', decision }),
+  )
+  const unsubscribeMode = options.mode?.subscribe((change) =>
+    emit({ kind: 'mode', mode: change.mode, reason: change.reason }),
   )
 
-  // Klassifikatorga uzatiladigan kontekst — TOOL NATIJALARISIZ tarix.
-  // Chaqiruvchi tayyor matnli tarix bergan bo'lsa shuni olamiz, aks holda
-  // saqlangan xabarlarning faqat `text` maydonidan quramiz. Ikkala yo'lda
-  // ham `agentMessages` (tool natijalari bor joy) HISOBGA OLINMAYDI.
-  // Kontekst faqat `rejim` berilgan bo'lsa ulanadi; aks holda tasdiq rejimi.
-  if (sozlama.rejim) {
-    sozlama.ruxsat.klassifikatorniUla({
-      rejim: sozlama.rejim,
-      suhbat: klassifikatorTarixi(sozlama.klassifikatorTarixi ?? matnliTarix(xabarlar)),
-      ishPapkasi: sozlama.ishPapkasi,
-      signal: sozlama.signal,
-      model: sozlamalar.ruxsat.klassifikatorModeli,
+  // The context handed to the classifier — the history WITHOUT TOOL RESULTS.
+  // If the caller supplied a ready text history we take that, otherwise we
+  // build it from the `text` field of the stored messages alone. Neither path
+  // TAKES `agentMessages` (where the tool results live) INTO ACCOUNT.
+  // The context is wired up only when `mode` is given; otherwise it is
+  // confirm mode.
+  if (options.mode) {
+    options.permission.setClassifierContext({
+      mode: options.mode,
+      conversation: classifierHistory(options.classifierHistory ?? textHistory(messages)),
+      workDir: options.workDir,
+      signal: options.signal,
+      model: config.permission.classifierModel,
     })
   } else {
-    sozlama.ruxsat.klassifikatorniUla(undefined)
+    options.permission.setClassifierContext(undefined)
   }
 
-  // MCP boshqaruvchisi `bajarish` ichida yaratiladi, lekin `tozala()` unga
-  // yeta olishi kerak: oqim bekor qilinganda ham jarayonlar yopilishi shart.
-  // Shu sabab tashqarida e'lon qilinadi.
-  let mcpBoshqaruvchi: McpBoshqaruvchi | undefined
+  // The MCP manager is created inside `run`, but `cleanup()` has to be able to
+  // reach it: the processes must be closed even when the stream is cancelled.
+  // That is why it is declared out here.
+  let mcpManager: McpManager | undefined
 
-  const tozala = () => {
-    ruxsatBekor()
-    qarorBekor()
-    ruxsatQaroriBekor()
-    rejimBekor?.()
-    sozlama.ruxsat.klassifikatorniUla(undefined)
-    // ZOMBI JARAYON QOLDIRMASLIK. `tozala()` sinxron (uni `finally` bloklari
-    // chaqiradi), MCP yopish esa async — natijani KUTMAYMIZ, faqat ishga
-    // tushiramiz. Xato yutiladi: tozalash har qanday holatda oxirigacha
-    // borishi kerak va MCP yopilmagani sessiyani yiqitmasligi lozim.
-    mcpBoshqaruvchi?.yop().catch(() => undefined)
-    mcpBoshqaruvchi = undefined
+  const cleanup = () => {
+    unsubscribeRequests()
+    unsubscribeVerdicts()
+    unsubscribeDecisions()
+    unsubscribeMode?.()
+    options.permission.setClassifierContext(undefined)
+    // LEAVE NO ZOMBIE PROCESSES. `cleanup()` is synchronous (`finally` blocks
+    // call it) while closing MCP is async — so we DO NOT AWAIT the result, we
+    // only kick it off. The error is swallowed: cleanup has to run to the end
+    // in every case, and a failed MCP close must not bring the session down.
+    mcpManager?.close().catch(() => undefined)
+    mcpManager = undefined
   }
 
-  const bajarish = (async () => {
+  const run = (async () => {
     try {
-      const models = await modelsKolleksiyasi()
-      const model = models.getModel(tanlov.provider, tanlov.model)
+      const models = await modelsCollection()
+      const model = models.getModel(choice.provider, choice.model)
       if (!model) {
-        qoy({
-          tur: 'xato',
-          xabar: `Model not found: ${tanlov.provider}/${tanlov.model}. Check that the provider is configured.`,
+        emit({
+          kind: 'error',
+          message: `Model not found: ${choice.provider}/${choice.model}. Check that the provider is configured.`,
         })
         return
       }
 
-      const muhit = new ChegaralanganMuhit({
-        ishPapkasi: sozlama.ishPapkasi,
-        ruxsat: sozlama.ruxsat,
-        buyruqTimeoutMs: sozlamalar.agent.toollar.bashTimeoutSekund * 1000,
+      const environment = new RestrictedEnv({
+        workDir: options.workDir,
+        permission: options.permission,
+        commandTimeoutMs: config.agent.tools.bashTimeoutSeconds * 1000,
       })
-      const toolKonteksti = { env: muhit }
+      const toolContext = { env: environment }
 
-      // --- MCP serverlar: sessiyaga o'rnatilganlarga ulanish ---
+      // --- MCP servers: connecting to the ones installed for the session ---
       //
-      // AYNI `sozlama.ruxsat` INSTANSIYASI beriladi (yangisi yaratilmaydi):
-      // shunda "har doim ruxsat" naqshlari, blok hisoblagichlari va
-      // klassifikator konteksti fayl/buyruq so'rovlari bilan BIR XIL
-      // holatni baham ko'radi. Foydalanuvchi uchun ruxsat tizimi yagona.
+      // THE VERY SAME `options.permission` INSTANCE is passed in (a new one is
+      // not created): that way the "always allow" patterns, the block counters
+      // and the classifier context share THE SAME state as the file/command
+      // requests. To the user the permission system is one single thing.
       //
-      // XATO TASHLAMAYDI: ulanolmagan server `ulanishXatolari` da qoladi va
-      // sessiya USIZ davom etadi (`mcp-boshqaruvchi.ts` izohiga q.).
-      if (sozlama.mcpManbasi) {
-        const serverlar = await sozlama.mcpManbasi()
-        if (serverlar.length > 0) {
-          mcpBoshqaruvchi = new McpBoshqaruvchi(sozlama.sessionId, sozlama.ruxsat)
-          // Timeoutlar CONFIGDAN qo'llanadi. Manba (`platform-server`) ularni
-          // bilmaydi — u faqat "qaysi serverga ulanish kerak" ni aytadi,
-          // "qancha kutish" esa platforma sozlamasi. Manba o'zi bergan
-          // qiymat bo'lsa u ustun turadi (test va maxsus holatlar uchun).
-          await mcpBoshqaruvchi.ulash(
-            serverlar.map((s) => ({
+      // DOES NOT THROW: a server that could not be connected stays in
+      // `connectionErrors` and the session carries on WITHOUT it (see
+      // `mcp-manager.ts`).
+      if (options.mcpProvider) {
+        const servers = await options.mcpProvider()
+        if (servers.length > 0) {
+          mcpManager = new McpManager(options.sessionId, options.permission)
+          // The timeouts are applied FROM THE CONFIG. The source
+          // (`platform-server`) does not know them — it only says "which
+          // server to connect to", while "how long to wait" is a platform
+          // setting. A value the source supplies itself takes precedence (for
+          // tests and special cases).
+          await mcpManager.connect(
+            servers.map((s) => ({
               ...s,
-              sozlama: {
-                handshakeTimeoutMs: sozlamalar.mcp.ulanishTimeoutSekund * 1000,
-                chaqiruvTimeoutMs: sozlamalar.mcp.chaqiruvTimeoutSekund * 1000,
-                ...s.sozlama,
+              config: {
+                handshakeTimeoutMs: config.mcp.connectTimeoutSeconds * 1000,
+                callTimeoutMs: config.mcp.callTimeoutSeconds * 1000,
+                ...s.config,
               },
             })),
-            sozlama.signal,
+            options.signal,
           )
         }
       }
 
-      // --- Kontekstni tayyorlash: tool natijalari bilan, siqilgan holda ---
-      const oxirgiUser = oxirgiUserIndeksi(xabarlar)
-      if (oxirgiUser < 0) {
-        qoy({ tur: 'xato', xabar: 'No user message found to send' })
+      // --- Preparing the context: with tool results, compacted ---
+      const lastUser = lastUserIndex(messages)
+      if (lastUser < 0) {
+        emit({ kind: 'error', message: 'No user message found to send' })
         return
       }
-      const prompt = biriktirmaEslatmasi(
-        xabarlar[oxirgiUser]!.text,
-        xabarlar[oxirgiUser]!.biriktirmalar,
+      const prompt = attachmentNote(
+        messages[lastUser]!.text,
+        messages[lastUser]!.attachments,
       )
 
-      // Oxirgi user xabari `prompt()` ga beriladi — tarixda takrorlanmasin.
-      // Undan KEYINGI xabarlar (bekor qilingan javob) tarixda qoladi.
-      const tarixXabarlari = [...xabarlar.slice(0, oxirgiUser), ...xabarlar.slice(oxirgiUser + 1)]
+      // The last user message is handed to `prompt()` — it must not be
+      // repeated in the history. The messages AFTER it (a cancelled reply)
+      // stay in the history.
+      const historyMessages = [...messages.slice(0, lastUser), ...messages.slice(lastUser + 1)]
 
-      let kontekst = kontekstniQur(tarixXabarlari)
-      kontekst = toolNatijalariniQisqart(kontekst, sozlamalar.agent.tarix.toolNatijasiChegarasi)
+      let context = buildContext(historyMessages)
+      context = truncateToolResults(context, config.agent.history.toolResultLimit)
 
-      // Siqish: avval LLM bilan xulosalash, u ishlamasa qattiq kesish.
-      // Ikkalasi ham bo'lmasa uzun suhbat context window'ga sig'may qoladi
-      // va sessiya butunlay ishlamay qo'yadi.
-      if (siqishKerakmi(kontekst, model.contextWindow, sozlamalar.agent.siqish)) {
-        const oldingi = kontekstTokenlari(kontekst)
-        const natija = await siq(
-          kontekst,
+      // Compaction: summarising with the LLM first, and hard trimming if that
+      // does not work. Without either, a long conversation stops fitting in
+      // the context window and the session breaks entirely.
+      if (needsCompaction(context, model.contextWindow, config.agent.compaction)) {
+        const previous = contextTokens(context)
+        const result = await compact(
+          context,
           models,
-          siqishModeli(models, model, sozlamalar),
-          sozlamalar.agent.siqish,
-          sozlama.signal,
+          compactionModel(models, model, config),
+          config.agent.compaction,
+          options.signal,
         )
-        if (natija.holat === 'siqildi') {
-          kontekst = natija.xabarlar
-          qoy({
-            tur: 'siqildi',
-            oldingiTokenlar: natija.oldingiTokenlar,
-            yangiTokenlar: kontekstTokenlari(kontekst),
+        if (result.status === 'compacted') {
+          context = result.messages
+          emit({
+            kind: 'compacted',
+            previousTokens: result.previousTokens,
+            newTokens: contextTokens(context),
           })
-        } else if (natija.holat === 'nosoz') {
-          // Xulosalash ishlamadi — qattiq kesishga o'tamiz. Kontekst
-          // yo'qoladi, lekin sessiya ishlashda davom etadi (alternativa —
-          // so'rov context window xatosi bilan yiqilishi).
-          kontekst = eskilarniTashla(kontekst, Math.floor(sozlamalar.agent.tarix.maksXabar / 2))
-          qoy({ tur: 'siqildi', oldingiTokenlar: oldingi, yangiTokenlar: kontekstTokenlari(kontekst) })
+        } else if (result.status === 'failed') {
+          // Summarising did not work — we fall back to hard trimming. Context
+          // is lost, but the session keeps working (the alternative being the
+          // request failing with a context window error).
+          context = dropOldest(context, Math.floor(config.agent.history.maxMessages / 2))
+          emit({ kind: 'compacted', previousTokens: previous, newTokens: contextTokens(context) })
         }
       }
 
-      // Qattiq chegara har holda qo'llanadi — siqish yoqilmagan bo'lsa ham
-      kontekst = eskilarniTashla(kontekst, sozlamalar.agent.tarix.maksXabar)
+      // The hard limit is applied in any case — even when compaction is off
+      context = dropOldest(context, config.agent.history.maxMessages)
 
-      // --- Hook zanjiri ---
-      const hooklar: ToolHooki[] = [
-        qoshimchaTaqiqHooki(sozlamalar.ruxsat.qoshimchaTaqiqlar),
-        maxfiyniYashirHooki(),
-        uzunlikHooki(sozlamalar.agent.tarix.toolNatijasiChegarasi),
-        ...(sozlama.hooklar ?? []),
+      // --- The hook chain ---
+      const hooks: ToolHook[] = [
+        extraDenyHook(config.permission.extraDenyList),
+        redactSecretsHook(),
+        lengthHook(config.agent.history.toolResultLimit),
+        ...(options.hooks ?? []),
       ]
-      const hookKonteksti = { ishPapkasi: sozlama.ishPapkasi, sessionId: sozlama.sessionId }
+      const hookContext = { workDir: options.workDir, sessionId: options.sessionId }
 
-      // Ish papkasidagi AGENTS.md / CLAUDE.md — agentga qo'shimcha
-      // ko'rsatma. Klassifikatorga bormaydi (loyiha-konteksti.ts ga q.).
-      const loyihaKonteksti = loyihaKontekstiniOqi(sozlama.ishPapkasi)
+      // The AGENTS.md / CLAUDE.md in the working directory — extra
+      // instructions for the agent. Does not go to the classifier (see
+      // project-context.ts).
+      const projectContext = readProjectContext(options.workDir)
 
-      // O'rnatilgan skilllar ro'yxati (`.platforma/skills/`). Papkani sessiya
-      // boshida server tayyorlaydi — bu yerda faqat o'qiymiz.
-      const skilllar = skilllarniPromptga(skilllarniOqi(sozlama.ishPapkasi))
+      // The list of installed skills (`.platforma/skills/`). The server
+      // prepares the directory at the start of the session — here we only
+      // read it.
+      const skills = skillsToPrompt(readSkills(options.workDir))
 
-      // Loyiha xotirasi (`.platforma/memory/`) — agentning o'z yozuvlari.
-      // Skilllardan farqli, hech kim sinxronlamaydi: fayllar o'sha yerda
-      // yashaydi. Klassifikatorga bormaydi (`xotira.ts` ga q.).
+      // The project memory (`.platforma/memory/`) — the agent's own notes.
+      // Unlike the skills, nobody syncs them: the files just live there. Does
+      // not go to the classifier (see `memory.ts`).
       //
-      // Indeks (`MEMORY.md`) TO'LIQ tushadi, xotira fayllari — faqat
-      // nom+tavsif. Ikkalasi bir-birini to'ldiradi: indeks agentning o'z
-      // yo'l xaritasi, ro'yxat esa mashina qurgan to'liq katalog.
-      const xotira = xotiralarniPromptga(
-        xotiralarniOqi(sozlama.ishPapkasi),
-        sozlama.ishPapkasi,
-        indeksniOqi(sozlama.ishPapkasi),
+      // The index (`MEMORY.md`) goes in IN FULL, the memory files only as
+      // name+description. The two complement each other: the index is the
+      // agent's own roadmap, the listing is the full catalogue built by the
+      // machine.
+      const memory = memoriesToPrompt(
+        readMemories(options.workDir),
+        options.workDir,
+        readMemoryIndex(options.workDir),
       )
 
-      // Tool ro'yxati bir marta quriladi va prompt bayrog'i undan OLINADI:
-      // `serverList` config'da o'chirilgan bo'lishi ham mumkin, u holda
-      // prompt uni tilga olmasligi kerak. Ikkisini alohida hisoblasak,
-      // ular bir-biridan uzoqlashib "yo'q tool haqidagi ko'rsatma" paydo
-      // bo'lardi.
-      const toollar = toollarniTayyorla(
-        toolKonteksti,
-        sozlamalar.agent.toollar.yoqilgan,
-        sozlama.serverManbasi,
-        sozlama.dashboardManbasi,
-        mcpBoshqaruvchi,
+      // The tool list is built once and the prompt flags are DERIVED FROM IT:
+      // `serverList` may well be turned off in the config, and in that case
+      // the prompt must not mention it. If we computed the two separately they
+      // would drift apart and produce "instructions about a tool that is not
+      // there".
+      const tools = prepareTools(
+        toolContext,
+        config.agent.tools.enabled,
+        options.serverProvider,
+        options.dashboardSink,
+        mcpManager,
       )
-      const serverlarBor = toollar.some((t) => t.name === 'serverList')
-      const dashboardBor = toollar.some((t) => t.name === 'appPublish')
-      // MCP tool'lari dinamik — nomlarini oldindan bilmaymiz, shuning uchun
-      // prefiks bo'yicha tekshiramiz. Bittasi ham bo'lmasa prompt MCP'ni
-      // tilga OLMAYDI.
-      const mcpBor = toollar.some((t) => mcpTooliMi(t.name))
+      const hasServers = tools.some((t) => t.name === 'serverList')
+      const hasDashboard = tools.some((t) => t.name === 'appPublish')
+      // The MCP tools are dynamic — we do not know their names in advance, so
+      // we check by prefix. If there is not a single one, the prompt DOES NOT
+      // mention MCP.
+      const hasMcp = tools.some((t) => isMcpTool(t.name))
 
       const agent = new Agent({
         initialState: {
-          systemPrompt: AGENT_SISTEM_PROMPT(
-            sozlama.ishPapkasi,
-            loyihaKonteksti ? kontekstniPromptga(loyihaKonteksti) : undefined,
-            skilllar ?? undefined,
-            xotira,
-            serverlarBor,
-            dashboardBor,
-            mcpBor,
+          systemPrompt: AGENT_SYSTEM_PROMPT(
+            options.workDir,
+            projectContext ? contextToPrompt(projectContext) : undefined,
+            skills ?? undefined,
+            memory,
+            hasServers,
+            hasDashboard,
+            hasMcp,
           ),
           model,
-          tools: toollar,
-          messages: kontekst,
+          tools,
+          messages: context,
         },
         streamFn: models.streamSimple.bind(models),
-        sessionId: sozlama.sessionId,
-        // Sinovda parallel rejim poyga holatiga olib keldi (write/read)
+        sessionId: options.sessionId,
+        // In testing, parallel mode led to a race condition (write/read)
         toolExecution: 'sequential',
         beforeToolCall: async ({ toolCall, args }) => {
-          sozlama.toolKuzatuvchi?.(toolCall.name, args)
-          // Hook'lar QO'SHIMCHA cheklov qo'ya oladi. Asosiy xavfsizlik
-          // (qat'iy taqiq, ish papkasi chegarasi, klassifikator) muhit
-          // qatlamida va undan oldinroq ishlaydi — hook uni bekor qila olmaydi.
-          const qaror = await oldinZanjiri(hooklar, {
-            ...hookKonteksti,
-            nom: toolCall.name,
+          options.toolObserver?.(toolCall.name, args)
+          // Hooks can impose ADDITIONAL restrictions. The core safety (the
+          // hard denies, the working directory boundary, the classifier) runs
+          // in the environment layer and earlier than this — a hook cannot
+          // override it.
+          const verdict = await beforeChain(hooks, {
+            ...hookContext,
+            name: toolCall.name,
             args,
           })
-          if (qaror?.blokla) return { block: true, reason: qaror.sabab }
+          if (verdict?.block) return { block: true, reason: verdict.reason }
           return undefined
         },
         afterToolCall: async ({ toolCall, args, result, isError }) => {
-          const xom = natijaMatni(result)
-          const yangi = await keyinZanjiri(hooklar, {
-            ...hookKonteksti,
-            nom: toolCall.name,
+          const raw = resultText(result)
+          const updated = await afterChain(hooks, {
+            ...hookContext,
+            name: toolCall.name,
             args,
-            natija: xom,
-            xatomi: isError,
+            result: raw,
+            isError,
           })
-          if (yangi.natija === xom && yangi.xatomi === isError) return undefined
-          // MATN bloklari almashtiriladi, QOLGANLARI SAQLANADI.
+          if (updated.result === raw && updated.isError === isError) return undefined
+          // The TEXT blocks are replaced, THE REST ARE KEPT.
           //
-          // Ilgari `content` butunlay `[{type:'text'}]` bilan almashtirilardi
-          // va bu RASMNI YO'Q QILARDI: `read` tool'i rasm faylini o'qiganda
-          // `[{type:'text'}, {type:'image'}]` qaytaradi, hook'lar esa
-          // (`uzunlikHooki`, `maxfiyniYashirHooki`) deyarli har natijadan
-          // o'tadi. Natijada model rasmni hech qachon ko'rmasdi — jimgina,
-          // xato xabarisiz. Biriktirilgan rasm aynan shu yo'ldan keladi.
+          // `content` used to be replaced wholesale with `[{type:'text'}]`,
+          // and that DESTROYED THE IMAGE: when the `read` tool reads an image
+          // file it returns `[{type:'text'}, {type:'image'}]`, while the hooks
+          // (`lengthHook`, `redactSecretsHook`) run over almost every result.
+          // The upshot was that the model never saw the image — silently, with
+          // no error message. An attached image comes down exactly this path.
           //
-          // Hook'lar faqat MATN bilan ishlaydi (`hooklar.ts`: `natija: string`),
-          // shuning uchun ular o'zgartirgan narsani matn blokiga qaytarish
-          // to'g'ri — rasm ularning qarshisiga tushmagan.
+          // Hooks only work with TEXT (`hooks.ts`: `result: string`), so
+          // putting what they changed back into the text block is correct —
+          // the image never came before them.
           return {
             content: [
-              { type: 'text', text: yangi.natija },
-              ...matnsizBloklar(result),
+              { type: 'text', text: updated.result },
+              ...nonTextBlocks(result),
             ],
-            isError: yangi.xatomi,
+            isError: updated.isError,
           }
         },
       })
 
-      agent.subscribe((event: AgentEvent) => {
+      agent.subscribe((event: PiAgentEvent) => {
         switch (event.type) {
           case 'message_update':
             if (event.assistantMessageEvent.type === 'text_delta') {
-              qoy({ tur: 'delta', matn: event.assistantMessageEvent.delta })
+              emit({ kind: 'delta', text: event.assistantMessageEvent.delta })
             }
             break
 
           case 'tool_execution_start':
-            qoy({
-              tur: 'tool_boshlandi',
+            emit({
+              kind: 'tool_start',
               id: event.toolCallId,
-              nom: event.toolName,
-              args: argsMatni(event.toolName, event.args),
+              name: event.toolName,
+              args: argsText(event.toolName, event.args),
             })
             break
 
           case 'tool_execution_update': {
-            const matn = natijaMatni(event.partialResult)
-            if (matn) qoy({ tur: 'tool_yangilandi', id: event.toolCallId, matn })
+            const text = resultText(event.partialResult)
+            if (text) emit({ kind: 'tool_update', id: event.toolCallId, text })
             break
           }
 
           case 'tool_execution_end':
-            qoy({
-              tur: 'tool_tugadi',
+            emit({
+              kind: 'tool_end',
               id: event.toolCallId,
-              natija: qisqart(natijaMatni(event.result)),
-              xatomi: event.isError,
-              tafsilot: tafsilotniOl(event.result),
+              result: truncate(resultText(event.result)),
+              isError: event.isError,
+              detail: extractDetails(event.result),
             })
             break
 
@@ -722,263 +741,268 @@ export async function* agentOqimi(
         }
       })
 
-      // Prompt va tarix yuqorida ajratilgan.
+      // The prompt and the history were separated above.
       //
-      // ESLATMA: "massivning oxirgi elementi user'mi" deb tekshirish YETARLI
-      // EMAS. Tarix `assistant` bilan tugashi mumkin — quyidagi POYGA HOLATI
-      // haqiqatda uchraydi:
-      //   1) foydalanuvchi xabar yubordi, oqim ketmoqda;
-      //   2) u "To'xtatish" bosdi va darhol yangi xabar yubordi;
-      //   3) `javobOqizi` eski oqimni abort qiladi va YANGI user xabarini
-      //      bazaga yozadi;
-      //   4) abort qilingan eski oqim esa `finally` da o'z javobini
-      //      ("⚠︎ Javob to'liq kelmadi: So'rov bekor qilindi") endi saqlaydi —
-      //      ya'ni yangi user xabaridan KEYIN.
-      // Natijada tarix `... user, assistant` bo'lib qoladi va oldingi kod
-      // 'No user message found to send' xatosi bilan
-      // foydalanuvchining xabarini JIMGINA yo'qotardi. Shuning uchun oxirgi
-      // USER xabari qidiriladi va undan keyingilari tarixda qoldiriladi.
+      // NOTE: checking "is the last element of the array a user message" is
+      // NOT ENOUGH. The history may end with an `assistant` — the following
+      // RACE CONDITION really does happen:
+      //   1) the user sent a message, the stream is running;
+      //   2) they hit "Stop" and immediately sent a new message;
+      //   3) `streamReply` aborts the old stream and writes the NEW user
+      //      message to the database;
+      //   4) the aborted old stream then saves its own reply in `finally`
+      //      ("⚠︎ Javob to'liq kelmadi: So'rov bekor qilindi") — that is,
+      //      AFTER the new user message.
+      // The history ends up as `... user, assistant` and the earlier code
+      // SILENTLY lost the user's message with a 'No user message found to
+      // send' error. That is why we look for the last USER message and leave
+      // the ones after it in the history.
 
-      // `prompt()` signal olmaydi — bekor qilish `abort()` orqali
-      const bekorQil = () => agent.abort()
-      sozlama.signal?.addEventListener('abort', bekorQil, { once: true })
+      // `prompt()` takes no signal — cancellation goes through `abort()`
+      const cancel = () => agent.abort()
+      options.signal?.addEventListener('abort', cancel, { once: true })
       try {
         await agent.prompt(prompt)
       } finally {
-        sozlama.signal?.removeEventListener('abort', bekorQil)
+        options.signal?.removeEventListener('abort', cancel)
       }
 
-      if (sozlama.signal?.aborted) {
-        qoy({ tur: 'xato', xabar: "So'rov bekor qilindi" })
+      if (options.signal?.aborted) {
+        emit({ kind: 'error', message: 'The request was cancelled' })
         return
       }
 
-      // Provider xatosi `prompt()` dan tashqariga chiqmaydi — u oxirgi
-      // assistant xabarida yozilib qoladi (`oqimXatosi` izohiga q.).
-      // Tekshirmasak bo'sh javob "muvaffaqiyat" bo'lib ketardi.
-      const providerXatosi = oqimXatosi(agent.state.messages)
-      if (providerXatosi) {
-        qoy({ tur: 'xato', xabar: providerXatosi })
+      // A provider error does not escape `prompt()` — it ends up written into
+      // the last assistant message (see the note on `streamError`). Without
+      // the check, an empty reply would pass for "success".
+      const providerError = streamError(agent.state.messages)
+      if (providerError) {
+        emit({ kind: 'error', message: providerError })
         return
       }
 
-      const matn = toplanganMatn(agent)
-      qoy({
-        tur: 'tugadi',
-        matn,
-        sarflov: sarflovniHisobla(agent),
-        // To'liq kontekst — tool natijalari bilan. Chaqiruvchi buni saqlaydi
-        // va keyingi turn'da qaytaradi, shunda agent xotirasini yo'qotmaydi.
-        xabarlar: agent.state.messages,
-        kontekstTokenlari: kontekstTokenlari(agent.state.messages),
+      const text = collectedText(agent)
+      emit({
+        kind: 'done',
+        text,
+        usage: calculateUsage(agent),
+        // The full context — with tool results. The caller stores this and
+        // passes it back on the next turn, so the agent does not lose its
+        // memory.
+        messages: agent.state.messages,
+        contextTokens: contextTokens(agent.state.messages),
       })
-    } catch (xato) {
-      qoy({ tur: 'xato', xabar: xato instanceof Error ? xato.message : String(xato) })
+    } catch (error) {
+      emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
     } finally {
-      tozala()
-      holat.tugadi = true
-      holat.uygonish?.()
+      cleanup()
+      state.done = true
+      state.wake?.()
     }
   })()
 
-  // Navbatni oqimga aylantiramiz
+  // Turning the queue into a stream
   try {
     while (true) {
-      while (holat.navbat.length > 0) {
-        yield holat.navbat.shift()!
+      while (state.queue.length > 0) {
+        yield state.queue.shift()!
       }
-      if (holat.tugadi) break
+      if (state.done) break
       await new Promise<void>((r) => {
-        holat.uygonish = () => {
-          holat.uygonish = undefined
+        state.wake = () => {
+          state.wake = undefined
           r()
         }
       })
     }
   } finally {
-    tozala()
-    await bajarish.catch(() => undefined)
+    cleanup()
+    await run.catch(() => undefined)
   }
 }
 
-/** Tool'larga chegaralangan muhit kontekstini biriktiradi */
-function toollarniTayyorla(
-  kontekst: { env: ChegaralanganMuhit },
-  yoqilgan: readonly string[],
-  serverManbasi?: ServerManbasi,
-  dashboardManbasi?: DashboardManbasi,
-  mcpBoshqaruvchi?: McpBoshqaruvchi,
+/** Attaches the restricted environment context to the tools */
+function prepareTools(
+  context: { env: RestrictedEnv },
+  enabled: readonly string[],
+  serverProvider?: ServerProvider,
+  dashboardSink?: DashboardSink,
+  mcpManager?: McpManager,
 ): AgentTool<never>[] {
-  // pi'ning tayyor tool'lari + o'zimizning qidiruv va server tool'lari.
-  // Hammasi kontekstni oxirgi argument sifatida oladi, shuning uchun
-  // quyidagi o'ram ularga bir xil qo'llanadi (`serverList` kontekstni
-  // ishlatmaydi, lekin shaklga rioya qiladi).
-  const barchasi = [
+  // pi's ready-made tools + our own search and server tools. They all take the
+  // context as their last argument, so the wrapper below applies to them
+  // uniformly (`serverList` does not use the context, but it follows the same
+  // shape).
+  const all = [
     createReadTool(),
     createWriteTool(),
     createEditTool(),
     createBashTool(),
-    ...qidiruvToollariXom(),
-    ...serverToollariXom(serverManbasi),
-    ...dashboardToollariXom(dashboardManbasi),
+    ...searchToolsRaw(),
+    ...serverToolsRaw(serverProvider),
+    ...dashboardToolsRaw(dashboardSink),
   ]
 
-  // Configda o'chirilgan tool UMUMAN E'LON QILINMAYDI — agent uning
-  // borligini bilmaydi. Bu "chaqirsang rad etaman" dan yaxshiroq: model
-  // mavjud bo'lmagan imkoniyatni qayta-qayta urinib vaqt sarflamaydi.
-  const ruxsatEtilgan = new Set(yoqilgan)
-  const asosiy = barchasi.filter((tool) => ruxsatEtilgan.has(tool.name))
+  // A tool disabled in the config is NOT DECLARED AT ALL — the agent does not
+  // know it exists. That is better than "I will refuse if you call it": the
+  // model does not waste time repeatedly trying a capability that is not
+  // there.
+  const allowed = new Set(enabled)
+  const core = all.filter((tool) => allowed.has(tool.name))
 
-  // MCP tool'lari YUQORIDAGI FILTRDAN O'TMAYDI — ular statik ro'yxatda yo'q
-  // va nomlari sessiyada aniqlanadi (`mcp-toollari.ts` izohiga q.).
-  // Nazorat o'rnatishda: server o'rnatilmagan bo'lsa boshqaruvchi umuman
-  // yaratilmaydi va bu ro'yxat bo'sh bo'ladi.
-  const hammasi = [...asosiy, ...mcpToollariXom(mcpBoshqaruvchi)]
+  // The MCP tools DO NOT GO THROUGH THE FILTER ABOVE — they are not in the
+  // static list and their names are determined per session (see
+  // `mcp-tools.ts`). Installation is the control here: if no server is
+  // installed, no manager is created at all and this list is empty.
+  const withMcp = [...core, ...mcpToolsRaw(mcpManager)]
 
-  return hammasi.map((tool) => ({
+  return withMcp.map((tool) => ({
     ...tool,
     execute: (toolCallId: string, params: never, signal?: AbortSignal, onUpdate?: never) =>
-      // pi-agent-core ning AgentHarnessTool'i kontekstni oxirgi argument
-      // sifatida oladi; AgentTool esa olmaydi. Shu yerda biriktiramiz.
+      // pi-agent-core's AgentHarnessTool takes the context as its last
+      // argument; AgentTool does not. We attach it here.
       (tool.execute as unknown as (
         id: string,
         p: unknown,
         s: AbortSignal | undefined,
         u: unknown,
         c: unknown,
-      ) => Promise<unknown>)(toolCallId, params, signal, onUpdate, kontekst),
+      ) => Promise<unknown>)(toolCallId, params, signal, onUpdate, context),
   })) as unknown as AgentTool<never>[]
 }
 
 /**
- * Biriktirilgan fayllar haqidagi eslatmani prompt matniga qo'shadi.
+ * Appends the note about attached files to the prompt text.
  *
  * ┌───────────────────────────────────────────────────────────────────────┐
- * │ NEGA ESLATMA `chat_messages.text` GA YOZILMAYDI. Klassifikator aynan  │
- * │ `text` ni oladi (`orchestrator.ts`: `klassifikatorTarixiniTayyorla`). │
- * │ Fayl nomi u yerga tushsa, u ruxsat qaroriga ta'sir qiladigan          │
- * │ INJECTION VEKTORI bo'lardi: foydalanuvchi (yoki uchinchi tomon        │
- * │ yuborgan fayl) nomi orqali klassifikatorga gap yeta olardi.           │
+ * │ WHY THE NOTE IS NOT WRITTEN TO `chat_messages.text`. The classifier   │
+ * │ takes exactly that `text` (`orchestrator.ts`:                         │
+ * │ `klassifikatorTarixiniTayyorla`). If a file name landed there it      │
+ * │ would be an INJECTION VECTOR affecting the permission decision: the   │
+ * │ user (or a file sent by a third party) could get a message through to │
+ * │ the classifier via its name.                                          │
  * │                                                                       │
- * │ Nom allaqachon sanitizatsiya qilingan (`ish-papkasi.ts`:              │
- * │ `yuklamaNomi`), lekin bu qatlam ikki qatlamli himoya qoidasiga        │
- * │ rioya qiladi: bitta himoya buzilsa ikkinchisi ushlab qolsin.          │
+ * │ The name is already sanitised (`workdir.ts`: `uploadName`), but this  │
+ * │ layer follows the two-layer defence rule: if one defence is breached, │
+ * │ the other still holds.                                                │
  * └───────────────────────────────────────────────────────────────────────┘
  *
- * Eslatma `agent.state.messages` ga tushadi, ya'ni `agentMessages` bo'lib
- * bazaga yoziladi va keyingi turn'da agent faylni eslaydi. Klassifikator esa
- * `agentMessages` ni hech qachon ko'rmaydi — chegara joyida qoladi.
+ * The note lands in `agent.state.messages`, which means it is written to the
+ * database as `agentMessages` and the agent remembers the file on the next
+ * turn. The classifier never sees `agentMessages` — the boundary stays where
+ * it is.
  *
- * RASM HAM FAYL: base64 bo'lib uzatilmaydi, agent uni `read` bilan o'zi
- * o'qiydi va o'shanda ko'radi. Bu pi'ning interaktiv rejimidagi yo'l va u
- * ikki foyda beradi: fayl bilan bitta kod yo'li, va rasm kontekstga faqat
- * agent xohlaganda kiradi.
+ * AN IMAGE IS A FILE TOO: it is not passed along as base64; the agent reads it
+ * itself with `read` and sees it then. This is the path pi's interactive mode
+ * takes and it gives two benefits: one code path for files, and the image
+ * enters the context only when the agent wants it to.
  */
-export function biriktirmaEslatmasi(
-  matn: string,
-  biriktirmalar?: XabarBiriktirmasi[],
+export function attachmentNote(
+  text: string,
+  attachments?: MessageAttachment[],
 ): string {
-  if (!biriktirmalar?.length) return matn
+  if (!attachments?.length) return text
 
-  const rasmBor = biriktirmalar.some((b) => b.tur === 'rasm')
-  const qatorlar = biriktirmalar.map((b) => `- ${b.yol}`)
+  const hasImage = attachments.some((a) => a.kind === 'image')
+  const lines = attachments.map((a) => `- ${a.path}`)
 
-  const bosh =
-    biriktirmalar.length === 1
-      ? `The user attached one ${biriktirmalar[0]!.tur === 'rasm' ? 'image' : 'file'} to this message:`
+  const heading =
+    attachments.length === 1
+      ? `The user attached one ${attachments[0]!.kind === 'image' ? 'image' : 'file'} to this message:`
       : 'The user attached these files to this message:'
 
-  // Ko'rsatma INGLIZCHA — system prompt ham shunday (`AGENT_SISTEM_PROMPT`).
-  // Javob tili foydalanuvchi tilidan aniqlanadi, ko'rsatmalar esa modelga
-  // ingliz tilida beriladi.
-  const izoh = rasmBor
+  // The instruction is IN ENGLISH — so is the system prompt
+  // (`AGENT_SYSTEM_PROMPT`). The reply language is detected from the user's
+  // language, while instructions are given to the model in English.
+  const hint = hasImage
     ? 'Use the `read` tool on a path above when you need its contents. Reading an image path shows you the image itself.'
     : 'Use the `read` tool on a path above when you need its contents.'
 
-  return `${matn}\n\n<attachments>\n${bosh}\n${qatorlar.join('\n')}\n\n${izoh}\n</attachments>`
+  return `${text}\n\n<attachments>\n${heading}\n${lines.join('\n')}\n\n${hint}\n</attachments>`
 }
 
 /**
- * Oxirgi `user` xabarining indeksi, topilmasa -1.
+ * The index of the last `user` message, or -1 if there is none.
  *
- * `prompt()` ga aynan shu xabar beriladi. Oddiy holatda u massivning oxirgi
- * elementi, lekin har doim emas — yuqoridagi poyga holati izohiga qarang.
+ * That is exactly the message handed to `prompt()`. In the ordinary case it is
+ * the last element of the array, but not always — see the note on the race
+ * condition above.
  */
-export function oxirgiUserIndeksi(xabarlar: { role: 'user' | 'assistant' }[]): number {
-  for (let i = xabarlar.length - 1; i >= 0; i -= 1) {
-    if (xabarlar[i]?.role === 'user') return i
+export function lastUserIndex(messages: { role: 'user' | 'assistant' }[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') return i
   }
   return -1
 }
 
 /**
- * Saqlangan xabarlardan FAQAT MATNLI tarix ajratadi.
+ * Extracts a TEXT-ONLY history from the stored messages.
  *
- * Klassifikator uchun ishlatiladi: `agentMessages` (tool natijalari bor joy)
- * ataylab tashlanadi. Chaqiruvchi o'z matnli tarixini bergan bo'lsa bu
- * funksiya kerak bo'lmaydi — u holda ikki qatlamli himoya hosil bo'ladi.
+ * Used for the classifier: `agentMessages` (where the tool results live) is
+ * dropped deliberately. If the caller supplied its own text history this
+ * function is not needed — and then there are two layers of defence.
  */
-function matnliTarix(xabarlar: SaqlanganXabar[]): SuhbatXabari[] {
-  return xabarlar
+function textHistory(messages: StoredMessage[]): ConversationMessage[] {
+  return messages
     .filter((x) => x.text.trim().length > 0)
     .map((x) => ({ role: x.role, text: x.text }))
 }
 
 /**
- * Siqish uchun modelni tanlaydi.
+ * Picks the model used for compaction.
  *
- * Standart holatda ASOSIY CHAT MODELI ishlatiladi. Sabab: xulosa sifati
- * to'g'ridan-to'g'ri agentning keyingi ishiga ta'sir qiladi — yomon xulosa
- * jimgina noto'g'ri xulqqa olib keladi va buni foydalanuvchi darrov
- * sezmaydi. Arzon model bilan tejash bu xavfga arzimaydi.
+ * By default THE MAIN CHAT MODEL is used. The reason: the quality of the
+ * summary directly affects the agent's subsequent work — a bad summary leads
+ * quietly to wrong behaviour and the user does not notice it right away.
+ * Saving money with a cheap model is not worth that risk.
  *
- * Configda `agent.siqish.modeli` berilgan bo'lsa o'sha ishlatiladi; topilmasa
- * asosiy modelga qaytiladi (xato tashlamaymiz — siqish umuman bo'lmagandan
- * ko'ra asosiy model bilan bo'lgani yaxshi).
+ * If `agent.compaction.model` is set in the config, that one is used; if it is
+ * not found we fall back to the main model (we do not throw — better to
+ * compact with the main model than not to compact at all).
  */
-function siqishModeli(models: Models, asosiy: Model<Api>, sozlamalar: Config): Model<Api> {
-  const tanlangan = sozlamalar.agent.siqish.modeli
-  if (!tanlangan) return asosiy
-  const [provider, ...qolgan] = tanlangan.split('/')
-  const model = qolgan.join('/')
-  if (!provider || !model) return asosiy
-  return models.getModel(provider, model) ?? asosiy
+function compactionModel(models: Models, main: Model<Api>, config: Config): Model<Api> {
+  const selected = config.agent.compaction.model
+  if (!selected) return main
+  const [provider, ...rest] = selected.split('/')
+  const model = rest.join('/')
+  if (!provider || !model) return main
+  return models.getModel(provider, model) ?? main
 }
 
-/** Tool argumentlarini UI uchun bitta qatorga siqadi */
-function argsMatni(nom: string, args: unknown): string {
+/** Squeezes the tool arguments onto a single line for the UI */
+function argsText(name: string, args: unknown): string {
   if (!args || typeof args !== 'object') return ''
   const a = args as Record<string, unknown>
-  if (nom === 'bash') return typeof a.command === 'string' ? a.command : ''
+  if (name === 'bash') return typeof a.command === 'string' ? a.command : ''
   if (typeof a.path === 'string') {
-    if (nom === 'edit' && Array.isArray(a.edits)) return `${a.path} (${a.edits.length} o'zgarish)`
+    if (name === 'edit' && Array.isArray(a.edits)) return `${a.path} (${a.edits.length} changes)`
     return a.path
   }
   return JSON.stringify(args).slice(0, 200)
 }
 
 /**
- * Tool natijasidagi MATNSIZ bloklar (hozircha faqat `image`).
+ * The NON-TEXT blocks in a tool result (so far only `image`).
  *
- * Hook zanjiri matn bilan ishlaydi, lekin natijada boshqa bloklar ham
- * bo'lishi mumkin — ular hook'dan keyin ham joyida qolishi kerak
- * (`afterToolCall` izohiga q.).
+ * The hook chain works with text, but the result may hold other blocks too —
+ * and those have to stay in place after the hooks as well (see the note on
+ * `afterToolCall`).
  */
-export function matnsizBloklar(natija: unknown): ImageContent[] {
-  if (!natija || typeof natija !== 'object') return []
-  const mazmun = (natija as { content?: unknown }).content
-  if (!Array.isArray(mazmun)) return []
-  // `image` blokini ANIQ tanlaymiz, "matn emas" deb inkor bilan emas:
-  // pi kelajakda yangi blok turi qo'shsa, u tekshirilmagan holda
-  // providerga o'tib ketmasligi kerak.
-  return mazmun.filter(
+export function nonTextBlocks(result: unknown): ImageContent[] {
+  if (!result || typeof result !== 'object') return []
+  const content = (result as { content?: unknown }).content
+  if (!Array.isArray(content)) return []
+  // We pick the `image` block EXPLICITLY, not by negation as "not text": if pi
+  // adds a new block kind in the future, it must not slip through to the
+  // provider unchecked.
+  return content.filter(
     (b): b is ImageContent => (b as { type?: string } | null)?.type === 'image',
   )
 }
 
-function natijaMatni(natija: unknown): string {
-  if (!natija || typeof natija !== 'object') return String(natija ?? '')
-  const r = natija as { content?: { type?: string; text?: string }[] }
+function resultText(result: unknown): string {
+  if (!result || typeof result !== 'object') return String(result ?? '')
+  const r = result as { content?: { type?: string; text?: string }[] }
   if (!Array.isArray(r.content)) return ''
   return r.content
     .filter((c) => c?.type === 'text' && typeof c.text === 'string')
@@ -986,39 +1010,39 @@ function natijaMatni(natija: unknown): string {
     .join('\n')
 }
 
-function tafsilotniOl(natija: unknown): { diff?: string; qisqartirilgan?: boolean } | undefined {
-  if (!natija || typeof natija !== 'object') return undefined
-  const d = (natija as { details?: unknown }).details
+function extractDetails(result: unknown): { diff?: string; truncated?: boolean } | undefined {
+  if (!result || typeof result !== 'object') return undefined
+  const d = (result as { details?: unknown }).details
   if (!d || typeof d !== 'object') return undefined
-  const tafsilot = d as { diff?: unknown; truncation?: { truncated?: unknown } }
-  const natijaTafsiloti: { diff?: string; qisqartirilgan?: boolean } = {}
-  if (typeof tafsilot.diff === 'string') natijaTafsiloti.diff = tafsilot.diff
-  if (tafsilot.truncation?.truncated === true) natijaTafsiloti.qisqartirilgan = true
-  return Object.keys(natijaTafsiloti).length > 0 ? natijaTafsiloti : undefined
+  const details = d as { diff?: unknown; truncation?: { truncated?: unknown } }
+  const resultDetails: { diff?: string; truncated?: boolean } = {}
+  if (typeof details.diff === 'string') resultDetails.diff = details.diff
+  if (details.truncation?.truncated === true) resultDetails.truncated = true
+  return Object.keys(resultDetails).length > 0 ? resultDetails : undefined
 }
 
-function qisqart(matn: string): string {
-  if (matn.length <= NATIJA_CHEGARASI) return matn
-  return `${matn.slice(0, NATIJA_CHEGARASI)}\n… (${matn.length - NATIJA_CHEGARASI} characters truncated)`
+function truncate(text: string): string {
+  if (text.length <= RESULT_LIMIT) return text
+  return `${text.slice(0, RESULT_LIMIT)}\n… (${text.length - RESULT_LIMIT} characters truncated)`
 }
 
-/** Agent tugagach oxirgi assistant matnini yig'adi */
-function toplanganMatn(agent: Agent): string {
-  const xabarlar = agent.state.messages
-  for (let i = xabarlar.length - 1; i >= 0; i -= 1) {
-    const x = xabarlar[i]
+/** Collects the last assistant text once the agent has finished */
+function collectedText(agent: Agent): string {
+  const messages = agent.state.messages
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const x = messages[i]
     if (x?.role !== 'assistant') continue
-    const matn = (x.content as { type?: string; text?: string }[])
+    const text = (x.content as { type?: string; text?: string }[])
       .filter((c) => c?.type === 'text' && typeof c.text === 'string')
       .map((c) => c.text)
       .join('')
-    if (matn.trim()) return matn
+    if (text.trim()) return text
   }
   return ''
 }
 
-/** Barcha assistant xabarlaridagi sarflovni qo'shadi */
-function sarflovniHisobla(agent: Agent): Sarflov {
+/** Sums the usage across all assistant messages */
+function calculateUsage(agent: Agent): Usage {
   let input = 0
   let output = 0
   let cost = 0

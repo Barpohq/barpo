@@ -1,12 +1,12 @@
-"""Bitta tekshiruv sikli — serverlarni aylanib, natijani yozish.
+"""A single check cycle — walk the servers and record the results.
 
-Bu funksiya scheduler'dan ham, CLI'dan ham chaqiriladi va hech qachon
-exception tashlamaydi: bitta server yiqilsa qolganlari tekshirilaveradi
-(`bot/scheduler.py` dagi qoida bilan bir xil).
+Called from both the scheduler and the CLI, and it never raises: if one
+server falls over the rest are still checked (the same rule as in
+`bot/scheduler.py`).
 
-`errors.component` har doim `monitor.*` prefiksi bilan — botning
-`_currently_broken_sources()` funksiyasi `collector%` ni tortadi,
-to'qnashuv bo'lmasligi kerak.
+`errors.component` always carries the `monitor.*` prefix — the bot's
+`_currently_broken_sources()` selects `collector%`, and the two must not
+collide.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ log = get_logger(__name__)
 
 @dataclass(slots=True)
 class CycleReport:
-    """Bitta siklning natijasi."""
+    """The outcome of a single cycle."""
 
     servers_checked: int = 0
     checks_total: int = 0
@@ -37,21 +37,22 @@ class CycleReport:
     results: list[CheckResult] = field(default_factory=list)
 
     def summary(self) -> str:
+        """One-line summary for logs and `runs.note` — internal, not Telegram."""
         text = (
-            f"{self.servers_checked} server, {self.checks_total} tekshiruv, "
-            f"{self.problems} muammo"
+            f"{self.servers_checked} servers, {self.checks_total} checks, "
+            f"{self.problems} problems"
         )
         if self.alerts_sent:
-            text += f", {self.alerts_sent} alert"
+            text += f", {self.alerts_sent} alerts"
         if self.alerts_resolved:
-            text += f", {self.alerts_resolved} tiklandi"
+            text += f", {self.alerts_resolved} recovered"
         if self.failed_servers:
-            text += f" (ulanmadi: {', '.join(self.failed_servers)})"
+            text += f" (unreachable: {', '.join(self.failed_servers)})"
         return text
 
 
 def check_one(server: Server) -> list[CheckResult]:
-    """Bitta serverni tekshirib, natijani bazaga yozish."""
+    """Check one server and write the results to the database."""
     started = time.monotonic()
     results = check_server(server)
     elapsed = int((time.monotonic() - started) * 1000)
@@ -62,10 +63,10 @@ def check_one(server: Server) -> list[CheckResult]:
 def _notify(
     results: list[CheckResult], servers: list[Server], *, diagnose: bool
 ) -> tuple[int, int]:
-    """Alertlarni yuborish va tuzalganlarini yopish.
+    """Send alerts and close the ones that have recovered.
 
-    Xato bo'lsa ham sikl davom etadi: xabar yuborilmasligi o'lchov
-    yig'ishni to'xtatmasligi kerak.
+    The cycle continues even on error: a message failing to send must not
+    stop metric collection.
     """
     from monitor.notify import process_results, resolve_alerts
     from monitor.state import current_states
@@ -78,18 +79,18 @@ def _notify(
             results, diagnose=diagnose, servers={s.name: s for s in servers}
         )
     except Exception as exc:  # noqa: BLE001
-        log.exception("Alert yuborishda xato")
+        log.exception("Error while sending alerts")
         log_error("monitor.notify", str(exc), traceback=traceback.format_exc())
 
     try:
-        # Tiklanish faqat shu siklda tekshirilgan serverlar bo'yicha:
-        # tekshirilmagan serverning eski holati "tuzaldi" deb hisoblanmasin
+        # Recovery only covers servers checked in this cycle: an unchecked
+        # server's stale state must not be counted as "fixed"
         healthy = [
             s for s in current_states() if s.server in checked_servers and not s.is_problem
         ]
         resolved = resolve_alerts(healthy)
     except Exception as exc:  # noqa: BLE001
-        log.exception("Tiklanish xabarlarida xato")
+        log.exception("Error while sending recovery messages")
         log_error("monitor.notify", str(exc), traceback=traceback.format_exc())
 
     return sent, resolved
@@ -101,15 +102,15 @@ def run_checks(
     notify: bool = False,
     diagnose: bool = False,
 ) -> CycleReport:
-    """To'liq sikl: tekshirish, saqlash va (so'ralsa) alert yuborish.
+    """A full cycle: check, persist, and (if asked) send alerts.
 
-    Exception tashlamaydi — scheduler jobni o'chirib qo'ymasligi kerak.
+    Never raises — the scheduler must not end up disabling the job.
     """
     targets = servers if servers is not None else enabled_servers()
     report = CycleReport()
 
     if not targets:
-        log.warning("Kuzatiladigan server yo'q — servers.yaml ni tekshiring")
+        log.warning("No servers to monitor — check servers.yaml")
         return report
 
     run_id = start_run("monitor")
@@ -117,8 +118,8 @@ def run_checks(
     for server in targets:
         try:
             results = check_one(server)
-        except Exception as exc:  # noqa: BLE001 — bitta server qolganlarini to'xtatmasin
-            log.exception("%s: tekshirishda kutilmagan xato", server.name)
+        except Exception as exc:  # noqa: BLE001 — one server must not stop the rest
+            log.exception("%s: unexpected error while checking", server.name)
             log_error(
                 "monitor.check",
                 str(exc),
@@ -147,11 +148,11 @@ def run_checks(
         items_in=len(targets),
         items_out=report.checks_total,
         error_count=report.problems,
-        # `ok` — sikl bajarildimi, muammo topilganmi emas: topilgan
-        # muammo botning "bosqich ishlamadi" hisobotiga tushmasligi kerak
+        # `ok` means "did the cycle run", not "were problems found": a
+        # detected problem must not show up in the bot's "stage failed" report
         ok=not report.failed_servers,
         note=report.summary(),
     )
 
-    log.info("Sikl tugadi: %s", report.summary())
+    log.info("Cycle finished: %s", report.summary())
     return report

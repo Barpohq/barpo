@@ -1,6 +1,6 @@
-// Baza bilan ishlash qatlami — SQL faqat shu yerda (va audit.ts da) yoziladi.
-// Route fayllari SQL yozmaydi, shu funksiyalarni chaqiradi. Sabab: jadval
-// sxemasi o'zgarganda bitta joy tahrirlansa yetadi.
+// The database layer — SQL is written only here (and in audit.ts). Route files
+// do not write SQL, they call these functions. The reason: when the table
+// schema changes, only one place needs editing.
 
 import type { Database } from 'bun:sqlite'
 import type {
@@ -8,35 +8,35 @@ import type {
   AppRecord,
   BuildSession,
   BuildSessionStatus,
-  ChatBiriktirma,
+  ChatAttachment,
   ChatMessage,
   ChatSession,
-  McpKatalogManbaTuri,
-  McpKatalogYozuvi,
-  McpManba,
-  McpOrnatish,
-  McpQamrov,
+  McpCatalogEntry,
+  McpCatalogSourceKind,
+  McpInstall,
+  McpScope,
   McpServer,
-  McpSozlamaMaydoni,
-  McpTransportTuri,
+  McpSettingField,
+  McpSource,
+  McpTransportKind,
   Project,
   Server,
   Skill,
-  SkillManba,
-  SkillManbaTuri,
-  SkillOrnatish,
-  SkillQamrov,
+  SkillInstall,
+  SkillScope,
+  SkillSource,
+  SkillSourceKind,
+  ToolCall,
   ToolCard,
-  ToolChaqiruv,
 } from '@platforma/shared'
-import { manifestniTekshir } from '@platforma/shared'
+import { validateManifest } from '@platforma/shared'
 import { db as globalDb } from './db.ts'
 
 // ---------------------------------------------------------------------------
-// Serverlar
+// Servers
 // ---------------------------------------------------------------------------
 
-interface ServerQator {
+interface ServerRow {
   id: string
   name: string
   host: string
@@ -45,48 +45,48 @@ interface ServerQator {
   created_at: string
 }
 
-function serverQatordan(q: ServerQator): Server {
+function serverFromRow(r: ServerRow): Server {
   return {
-    id: q.id,
-    name: q.name,
-    host: q.host,
-    port: q.port,
-    username: q.username,
-    createdAt: q.created_at,
+    id: r.id,
+    name: r.name,
+    host: r.host,
+    port: r.port,
+    username: r.username,
+    createdAt: r.created_at,
   }
 }
 
-export function serverlarOqi(baza?: Database): Server[] {
-  const d = baza ?? globalDb()
+export function readServers(database?: Database): Server[] {
+  const d = database ?? globalDb()
   return d
-    .query<ServerQator, []>('SELECT * FROM servers ORDER BY rowid')
+    .query<ServerRow, []>('SELECT * FROM servers ORDER BY rowid')
     .all()
-    .map(serverQatordan)
+    .map(serverFromRow)
 }
 
-export function serverIdBoyicha(id: string, baza?: Database): Server | null {
-  const d = baza ?? globalDb()
-  const q = d.query<ServerQator, [string]>('SELECT * FROM servers WHERE id = ?').get(id)
-  return q ? serverQatordan(q) : null
+export function serverById(id: string, database?: Database): Server | null {
+  const d = database ?? globalDb()
+  const r = d.query<ServerRow, [string]>('SELECT * FROM servers WHERE id = ?').get(id)
+  return r ? serverFromRow(r) : null
 }
 
-export function serverNomBoyicha(name: string, baza?: Database): Server | null {
-  const d = baza ?? globalDb()
-  const q = d.query<ServerQator, [string]>('SELECT * FROM servers WHERE name = ?').get(name)
-  return q ? serverQatordan(q) : null
+export function serverByName(name: string, database?: Database): Server | null {
+  const d = database ?? globalDb()
+  const r = d.query<ServerRow, [string]>('SELECT * FROM servers WHERE name = ?').get(name)
+  return r ? serverFromRow(r) : null
 }
 
-export function serverYarat(
-  malumot: { name: string; host: string; port: number; username: string },
-  baza?: Database,
+export function createServer(
+  data: { name: string; host: string; port: number; username: string },
+  database?: Database,
 ): Server {
-  const d = baza ?? globalDb()
+  const d = database ?? globalDb()
   const server: Server = {
     id: crypto.randomUUID(),
-    name: malumot.name,
-    host: malumot.host,
-    port: malumot.port,
-    username: malumot.username,
+    name: data.name,
+    host: data.host,
+    port: data.port,
+    username: data.username,
     createdAt: new Date().toISOString(),
   }
   d.query(
@@ -95,594 +95,593 @@ export function serverYarat(
   return server
 }
 
-export function serverOchir(id: string, baza?: Database): boolean {
-  const d = baza ?? globalDb()
-  const q = d.query('DELETE FROM servers WHERE id = ?').run(id)
-  return q.changes > 0
+export function deleteServer(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  const r = d.query('DELETE FROM servers WHERE id = ?').run(id)
+  return r.changes > 0
 }
 
 // ---------------------------------------------------------------------------
-// Skilllar
+// Skills
 // ---------------------------------------------------------------------------
 //
-// Uch jadval: manba (repo) → skill (katalog yozuvi) → o'rnatish (qamrov).
-// Batafsil model izohi: migrations/006-skilllar.ts.
+// Three tables: source (repo) → skill (catalog entry) → install (scope).
+// The full model rationale is in migrations/006-skills.ts.
 
-interface ManbaQator {
+interface SkillSourceRow {
   id: string
-  tur: SkillManbaTuri
+  kind: SkillSourceKind
   url: string
   owner: string
   repo: string
   ref: string
   commit_sha: string | null
-  oxirgi_sinxron: string | null
+  last_sync: string | null
   created_at: string
 }
 
-function manbaQatordan(q: ManbaQator): SkillManba {
+function skillSourceFromRow(r: SkillSourceRow): SkillSource {
   return {
-    id: q.id,
-    tur: q.tur,
-    url: q.url,
-    owner: q.owner,
-    repo: q.repo,
-    ref: q.ref,
-    commitSha: q.commit_sha,
-    oxirgiSinxron: q.oxirgi_sinxron,
-    createdAt: q.created_at,
+    id: r.id,
+    kind: r.kind,
+    url: r.url,
+    owner: r.owner,
+    repo: r.repo,
+    ref: r.ref,
+    commitSha: r.commit_sha,
+    lastSync: r.last_sync,
+    createdAt: r.created_at,
   }
 }
 
-export function manbalarOqi(baza?: Database): SkillManba[] {
-  const d = baza ?? globalDb()
+export function readSkillSources(database?: Database): SkillSource[] {
+  const d = database ?? globalDb()
   return d
-    .query<ManbaQator, []>('SELECT * FROM skill_manbalari ORDER BY created_at')
+    .query<SkillSourceRow, []>('SELECT * FROM skill_sources ORDER BY created_at')
     .all()
-    .map(manbaQatordan)
+    .map(skillSourceFromRow)
 }
 
-export function manbaOqi(id: string, baza?: Database): SkillManba | null {
-  const d = baza ?? globalDb()
-  const q = d.query<ManbaQator, [string]>('SELECT * FROM skill_manbalari WHERE id = ?').get(id)
-  return q ? manbaQatordan(q) : null
+export function readSkillSource(id: string, database?: Database): SkillSource | null {
+  const d = database ?? globalDb()
+  const r = d.query<SkillSourceRow, [string]>('SELECT * FROM skill_sources WHERE id = ?').get(id)
+  return r ? skillSourceFromRow(r) : null
 }
 
 /**
- * Manbani yaratadi yoki mavjudini qaytaradi.
+ * Creates the source, or returns the existing one.
  *
- * Takroriy ulash XATO EMAS: foydalanuvchi bir repo'ni ikki marta qo'shsa,
- * "allaqachon bor" deb yiqilishdan ko'ra mavjudini qaytargan tuzukroq —
- * natija baribir u kutgan holat (repo ulangan).
+ * Connecting the same repo twice is NOT AN ERROR: if the user adds a repo a
+ * second time, returning the existing record is better than failing with
+ * "already exists" — the outcome is the state they wanted anyway (repo
+ * connected).
  */
-export function manbaYarat(
-  m: Omit<SkillManba, 'id' | 'commitSha' | 'oxirgiSinxron' | 'createdAt'>,
-  baza?: Database,
-): SkillManba {
-  const d = baza ?? globalDb()
-  const mavjud = d
-    .query<ManbaQator, [string, string, string]>(
-      'SELECT * FROM skill_manbalari WHERE owner = ? AND repo = ? AND ref = ?',
+export function createSkillSource(
+  source: Omit<SkillSource, 'id' | 'commitSha' | 'lastSync' | 'createdAt'>,
+  database?: Database,
+): SkillSource {
+  const d = database ?? globalDb()
+  const existing = d
+    .query<SkillSourceRow, [string, string, string]>(
+      'SELECT * FROM skill_sources WHERE owner = ? AND repo = ? AND ref = ?',
     )
-    .get(m.owner, m.repo, m.ref)
-  if (mavjud) return manbaQatordan(mavjud)
+    .get(source.owner, source.repo, source.ref)
+  if (existing) return skillSourceFromRow(existing)
 
   const id = crypto.randomUUID()
-  const hozir = new Date().toISOString()
+  const now = new Date().toISOString()
   d.prepare(
-    `INSERT INTO skill_manbalari (id, tur, url, owner, repo, ref, commit_sha, oxirgi_sinxron, created_at)
+    `INSERT INTO skill_sources (id, kind, url, owner, repo, ref, commit_sha, last_sync, created_at)
      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
-  ).run(id, m.tur, m.url, m.owner, m.repo, m.ref, hozir)
+  ).run(id, source.kind, source.url, source.owner, source.repo, source.ref, now)
 
-  return { ...m, id, commitSha: null, oxirgiSinxron: null, createdAt: hozir }
+  return { ...source, id, commitSha: null, lastSync: null, createdAt: now }
 }
 
-/** Manba va uning HAMMA skilllari (CASCADE orqali o'rnatishlar ham) o'chadi */
-export function manbaOchir(id: string, baza?: Database): boolean {
-  const d = baza ?? globalDb()
-  return d.prepare('DELETE FROM skill_manbalari WHERE id = ?').run(id).changes > 0
+/** The source and ALL of its skills are removed (and their installs via CASCADE) */
+export function deleteSkillSource(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  return d.prepare('DELETE FROM skill_sources WHERE id = ?').run(id).changes > 0
 }
 
-interface SkillQator {
+interface SkillRow {
   id: string
-  manba_id: string
-  yol: string
-  nom: string
-  tavsif: string
-  litsenziya: string | null
+  source_id: string
+  path: string
+  name: string
+  description: string
+  license: string | null
   allowed_tools: string | null
-  ogohlantirishlar: string
+  warnings: string
 }
 
 /**
- * `skilllar` + `skill_ornatish` ni birlashtirib qaytaradi.
+ * Joins `skills` with `skill_installs` and returns the combined records.
  *
- * O'rnatishlar alohida so'rov bilan olinadi va xotirada bog'lanadi (JOIN
- * emas): JOIN bir skillni har o'rnatish uchun takrorlab yuborardi va uni
- * qayta yig'ish kerak bo'lardi. Skilllar soni yuzlab — bu tezlik muammosi emas.
+ * The installs are fetched with a separate query and stitched together in
+ * memory (rather than a JOIN): a JOIN would repeat each skill once per install
+ * and the rows would have to be regrouped afterwards. There are only hundreds
+ * of skills, so this is not a performance concern.
  */
-function skilllarniYig(qatorlar: SkillQator[], d: Database): Skill[] {
-  const ornatishlar = new Map<string, SkillOrnatish[]>()
-  for (const o of d
-    .query<{ skill_id: string; qamrov: SkillQamrov; project_id: string | null }, []>(
-      'SELECT skill_id, qamrov, project_id FROM skill_ornatish',
+function collectSkills(rows: SkillRow[], d: Database): Skill[] {
+  const installs = new Map<string, SkillInstall[]>()
+  for (const i of d
+    .query<{ skill_id: string; scope: SkillScope; project_id: string | null }, []>(
+      'SELECT skill_id, scope, project_id FROM skill_installs',
     )
     .all()) {
-    const royxat = ornatishlar.get(o.skill_id) ?? []
-    royxat.push({ qamrov: o.qamrov, projectId: o.project_id ?? undefined })
-    ornatishlar.set(o.skill_id, royxat)
+    const list = installs.get(i.skill_id) ?? []
+    list.push({ scope: i.scope, projectId: i.project_id ?? undefined })
+    installs.set(i.skill_id, list)
   }
 
-  return qatorlar.map((q) => ({
-    id: q.id,
-    manbaId: q.manba_id,
-    yol: q.yol,
-    nom: q.nom,
-    tavsif: q.tavsif,
-    litsenziya: q.litsenziya ?? undefined,
-    allowedTools: q.allowed_tools ? (JSON.parse(q.allowed_tools) as string[]) : undefined,
-    ogohlantirishlar: JSON.parse(q.ogohlantirishlar) as string[],
-    ornatilgan: ornatishlar.get(q.id) ?? [],
+  return rows.map((r) => ({
+    id: r.id,
+    sourceId: r.source_id,
+    path: r.path,
+    name: r.name,
+    description: r.description,
+    license: r.license ?? undefined,
+    allowedTools: r.allowed_tools ? (JSON.parse(r.allowed_tools) as string[]) : undefined,
+    warnings: JSON.parse(r.warnings) as string[],
+    installs: installs.get(r.id) ?? [],
   }))
 }
 
-/** Butun katalog — o'rnatilgani ham, o'rnatilmagani ham */
-export function skilllarOqi(baza?: Database): Skill[] {
-  const d = baza ?? globalDb()
-  const qatorlar = d.query<SkillQator, []>('SELECT * FROM skilllar ORDER BY nom').all()
-  return skilllarniYig(qatorlar, d)
+/** The whole catalog — both installed and not installed */
+export function readSkills(database?: Database): Skill[] {
+  const d = database ?? globalDb()
+  const rows = d.query<SkillRow, []>('SELECT * FROM skills ORDER BY name').all()
+  return collectSkills(rows, d)
 }
 
-export function skillOqi(id: string, baza?: Database): Skill | null {
-  const d = baza ?? globalDb()
-  const q = d.query<SkillQator, [string]>('SELECT * FROM skilllar WHERE id = ?').get(id)
-  return q ? (skilllarniYig([q], d)[0] ?? null) : null
+export function readSkill(id: string, database?: Database): Skill | null {
+  const d = database ?? globalDb()
+  const r = d.query<SkillRow, [string]>('SELECT * FROM skills WHERE id = ?').get(id)
+  return r ? (collectSkills([r], d)[0] ?? null) : null
 }
 
 /**
- * Loyihada FAOL skilllar: global o'rnatilganlar + shu loyihaga
- * o'rnatilganlar. `projectId` null bo'lsa (loyihasiz sessiya) faqat global.
+ * The skills ACTIVE in a project: the globally installed ones plus those
+ * installed for this project. When `projectId` is null (a session with no
+ * project) only the global ones apply.
  *
- * Sessiya boshida `.platforma/skills/` shu ro'yxatga qarab quriladi.
+ * At the start of a session `.platforma/skills/` is built from this list.
  */
-export function faolSkilllar(projectId: string | null, baza?: Database): Skill[] {
-  const d = baza ?? globalDb()
-  const qatorlar = d
-    .query<SkillQator, [string | null]>(
-      `SELECT DISTINCT s.* FROM skilllar s
-         JOIN skill_ornatish o ON o.skill_id = s.id
-        WHERE o.qamrov = 'global' OR o.project_id = ?
-        ORDER BY s.nom`,
+export function activeSkills(projectId: string | null, database?: Database): Skill[] {
+  const d = database ?? globalDb()
+  const rows = d
+    .query<SkillRow, [string | null]>(
+      `SELECT DISTINCT s.* FROM skills s
+         JOIN skill_installs i ON i.skill_id = s.id
+        WHERE i.scope = 'global' OR i.project_id = ?
+        ORDER BY s.name`,
     )
     .all(projectId)
-  return skilllarniYig(qatorlar, d)
+  return collectSkills(rows, d)
 }
 
 /**
- * Sinxronlash natijasini bazaga yozadi: topilganlar UPSERT qilinadi,
- * yo'qolganlar o'chiriladi.
+ * Writes the result of a sync to the database: what was found is UPSERTed,
+ * what disappeared is deleted.
  *
- * UPSERT (INSERT emas) ATAYLAB: qayta sinxronlashda skill `id` si o'zgarmasa,
- * unga bog'langan o'rnatishlar saqlanadi. Aks holda foydalanuvchi har
- * sinxrondan keyin hammasini qayta o'rnatishga majbur bo'lardi.
+ * UPSERT (rather than INSERT) IS DELIBERATE: if a skill's `id` does not change
+ * across re-syncs, the installs attached to it survive. Otherwise the user
+ * would have to reinstall everything after every sync.
  */
-export function skilllarniSinxronla(
-  manbaId: string,
-  topilgan: Omit<Skill, 'id' | 'manbaId' | 'ornatilgan'>[],
+export function syncSkills(
+  sourceId: string,
+  found: Omit<Skill, 'id' | 'sourceId' | 'installs'>[],
   commitSha: string | null,
-  baza?: Database,
-): { qoshildi: number; yangilandi: number; ochirildi: number } {
-  const d = baza ?? globalDb()
-  const natija = { qoshildi: 0, yangilandi: 0, ochirildi: 0 }
+  database?: Database,
+): { added: number; updated: number; deleted: number } {
+  const d = database ?? globalDb()
+  const result = { added: 0, updated: 0, deleted: 0 }
 
   d.transaction(() => {
-    const eskiYollar = new Set(
+    const oldPaths = new Set(
       d
-        .query<{ yol: string }, [string]>('SELECT yol FROM skilllar WHERE manba_id = ?')
-        .all(manbaId)
-        .map((q) => q.yol),
+        .query<{ path: string }, [string]>('SELECT path FROM skills WHERE source_id = ?')
+        .all(sourceId)
+        .map((r) => r.path),
     )
 
     const st = d.prepare(
-      `INSERT INTO skilllar (id, manba_id, yol, nom, tavsif, litsenziya, allowed_tools, ogohlantirishlar)
+      `INSERT INTO skills (id, source_id, path, name, description, license, allowed_tools, warnings)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (manba_id, yol) DO UPDATE SET
-            nom = excluded.nom,
-            tavsif = excluded.tavsif,
-            litsenziya = excluded.litsenziya,
+       ON CONFLICT (source_id, path) DO UPDATE SET
+            name = excluded.name,
+            description = excluded.description,
+            license = excluded.license,
             allowed_tools = excluded.allowed_tools,
-            ogohlantirishlar = excluded.ogohlantirishlar`,
+            warnings = excluded.warnings`,
     )
 
-    for (const s of topilgan) {
+    for (const s of found) {
       st.run(
         crypto.randomUUID(),
-        manbaId,
-        s.yol,
-        s.nom,
-        s.tavsif,
-        s.litsenziya ?? null,
+        sourceId,
+        s.path,
+        s.name,
+        s.description,
+        s.license ?? null,
         s.allowedTools ? JSON.stringify(s.allowedTools) : null,
-        JSON.stringify(s.ogohlantirishlar),
+        JSON.stringify(s.warnings),
       )
-      if (eskiYollar.delete(s.yol)) natija.yangilandi++
-      else natija.qoshildi++
+      if (oldPaths.delete(s.path)) result.updated++
+      else result.added++
     }
 
-    // Repo'dan olib tashlangan skilllar — CASCADE o'rnatishlarni ham tozalaydi
-    const ochir = d.prepare('DELETE FROM skilllar WHERE manba_id = ? AND yol = ?')
-    for (const yol of eskiYollar) {
-      ochir.run(manbaId, yol)
-      natija.ochirildi++
+    // Skills removed from the repo — CASCADE clears their installs too
+    const remove = d.prepare('DELETE FROM skills WHERE source_id = ? AND path = ?')
+    for (const path of oldPaths) {
+      remove.run(sourceId, path)
+      result.deleted++
     }
 
-    d.prepare('UPDATE skill_manbalari SET commit_sha = ?, oxirgi_sinxron = ? WHERE id = ?').run(
+    d.prepare('UPDATE skill_sources SET commit_sha = ?, last_sync = ? WHERE id = ?').run(
       commitSha,
       new Date().toISOString(),
-      manbaId,
+      sourceId,
     )
   })()
 
-  return natija
+  return result
 }
 
-/** Idempotent — allaqachon o'rnatilgan bo'lsa jim o'tadi */
-export function skillOrnat(
+/** Idempotent — passes silently when it is already installed */
+export function installSkill(
   skillId: string,
-  qamrov: SkillQamrov,
+  scope: SkillScope,
   projectId: string | null,
-  baza?: Database,
+  database?: Database,
 ): void {
-  const d = baza ?? globalDb()
+  const d = database ?? globalDb()
   d.prepare(
-    `INSERT INTO skill_ornatish (id, skill_id, qamrov, project_id, created_at)
+    `INSERT INTO skill_installs (id, skill_id, scope, project_id, created_at)
           VALUES (?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING`,
-  ).run(crypto.randomUUID(), skillId, qamrov, projectId, new Date().toISOString())
+  ).run(crypto.randomUUID(), skillId, scope, projectId, new Date().toISOString())
 }
 
-export function skillOrnatishniOchir(
+export function uninstallSkill(
   skillId: string,
-  qamrov: SkillQamrov,
+  scope: SkillScope,
   projectId: string | null,
-  baza?: Database,
+  database?: Database,
 ): boolean {
-  const d = baza ?? globalDb()
+  const d = database ?? globalDb()
   return (
     d
       .prepare(
-        `DELETE FROM skill_ornatish
-          WHERE skill_id = ? AND qamrov = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
+        `DELETE FROM skill_installs
+          WHERE skill_id = ? AND scope = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
       )
-      .run(skillId, qamrov, projectId).changes > 0
+      .run(skillId, scope, projectId).changes > 0
   )
 }
 
 // ---------------------------------------------------------------------------
-// MCP serverlar
+// MCP servers
 // ---------------------------------------------------------------------------
 //
-// Yuqoridagi skilllar bo'limi bilan AYNAN BIR XIL uch qatlamli naqsh
-// (manba → katalog → o'rnatish) va bir xil qoidalar:
-//   - `mcpManbaYarat` idempotent (takroriy ulash xato emas);
-//   - `mcpServerlarniSinxronla` UPSERT + diff, id o'zgarmaydi;
-//   - o'rnatish alohida jadvalda, `COALESCE` bilan global/loyiha solishtiriladi.
+// EXACTLY THE SAME three-layer pattern as the skills section above
+// (source → catalog → install), with the same rules:
+//   - `createMcpSource` is idempotent (connecting twice is not an error);
+//   - `syncMcpServers` does UPSERT + diff, ids do not change;
+//   - installs live in their own table, compared with `COALESCE` for
+//     global/project.
 //
-// FARQ: `McpOrnatish` da `id` va `sozlamaQiymatlari` bor. `id` kerak, chunki
-// maxfiy kredensiallar shu id bo'yicha alohida faylda saqlanadi
-// (`mcp-kredensial.ts`) — skilllarda saqlanadigan narsa yo'q edi.
+// THE DIFFERENCE: `McpInstall` carries an `id` and `settingValues`. The `id` is
+// needed because secret credentials are stored against it in a separate file
+// (`mcp-credentials.ts`) — skills had nothing to store.
 //
-// Batafsil model izohi: migrations/011-mcp-serverlar.ts.
+// The full model rationale is in migrations/011-mcp-servers.ts.
 
-interface McpManbaQator {
+interface McpSourceRow {
   id: string
-  tur: McpKatalogManbaTuri
-  manba_nomi: string
+  kind: McpCatalogSourceKind
+  source_name: string
   owner: string | null
   repo: string | null
   ref: string
-  oxirgi_sinxron: string | null
+  last_sync: string | null
   created_at: string
 }
 
-function mcpManbaQatordan(q: McpManbaQator): McpManba {
+function mcpSourceFromRow(r: McpSourceRow): McpSource {
   return {
-    id: q.id,
-    tur: q.tur,
-    manbaNomi: q.manba_nomi,
-    owner: q.owner,
-    repo: q.repo,
-    ref: q.ref,
-    oxirgiSinxron: q.oxirgi_sinxron,
-    createdAt: q.created_at,
+    id: r.id,
+    kind: r.kind,
+    sourceName: r.source_name,
+    owner: r.owner,
+    repo: r.repo,
+    ref: r.ref,
+    lastSync: r.last_sync,
+    createdAt: r.created_at,
   }
 }
 
-export function mcpManbalarOqi(baza?: Database): McpManba[] {
-  const d = baza ?? globalDb()
+export function readMcpSources(database?: Database): McpSource[] {
+  const d = database ?? globalDb()
   return d
-    .query<McpManbaQator, []>('SELECT * FROM mcp_manbalari ORDER BY created_at')
+    .query<McpSourceRow, []>('SELECT * FROM mcp_sources ORDER BY created_at')
     .all()
-    .map(mcpManbaQatordan)
+    .map(mcpSourceFromRow)
 }
 
-export function mcpManbaOqi(id: string, baza?: Database): McpManba | null {
-  const d = baza ?? globalDb()
-  const q = d.query<McpManbaQator, [string]>('SELECT * FROM mcp_manbalari WHERE id = ?').get(id)
-  return q ? mcpManbaQatordan(q) : null
+export function readMcpSource(id: string, database?: Database): McpSource | null {
+  const d = database ?? globalDb()
+  const r = d.query<McpSourceRow, [string]>('SELECT * FROM mcp_sources WHERE id = ?').get(id)
+  return r ? mcpSourceFromRow(r) : null
 }
 
 /**
- * Manbani yaratadi yoki mavjudini qaytaradi.
+ * Creates the source, or returns the existing one.
  *
- * `manbaYarat` (skilllar) bilan bir xil qoida: takroriy ulash XATO EMAS,
- * chunki natija baribir foydalanuvchi kutgan holat. Faqat yagonalik kaliti
- * boshqacha — bu yerda `(tur, manba_nomi, ref)`, chunki manba GitHub repo
- * bo'lishi ham, registry yozuvi yoki qo'lda kiritilgan nom bo'lishi ham
- * mumkin.
+ * Same rule as `createSkillSource`: connecting twice is NOT AN ERROR, because
+ * the outcome is the state the user wanted anyway. Only the uniqueness key
+ * differs — here it is `(kind, source_name, ref)`, because a source can be a
+ * GitHub repo, a registry entry, or a manually entered name.
  */
-export function mcpManbaYarat(
-  m: Omit<McpManba, 'id' | 'oxirgiSinxron' | 'createdAt'>,
-  baza?: Database,
-): McpManba {
-  const d = baza ?? globalDb()
-  const mavjud = d
-    .query<McpManbaQator, [string, string, string]>(
-      'SELECT * FROM mcp_manbalari WHERE tur = ? AND manba_nomi = ? AND ref = ?',
+export function createMcpSource(
+  source: Omit<McpSource, 'id' | 'lastSync' | 'createdAt'>,
+  database?: Database,
+): McpSource {
+  const d = database ?? globalDb()
+  const existing = d
+    .query<McpSourceRow, [string, string, string]>(
+      'SELECT * FROM mcp_sources WHERE kind = ? AND source_name = ? AND ref = ?',
     )
-    .get(m.tur, m.manbaNomi, m.ref)
-  if (mavjud) return mcpManbaQatordan(mavjud)
+    .get(source.kind, source.sourceName, source.ref)
+  if (existing) return mcpSourceFromRow(existing)
 
   const id = crypto.randomUUID()
-  const hozir = new Date().toISOString()
+  const now = new Date().toISOString()
   d.prepare(
-    `INSERT INTO mcp_manbalari (id, tur, manba_nomi, owner, repo, ref, oxirgi_sinxron, created_at)
+    `INSERT INTO mcp_sources (id, kind, source_name, owner, repo, ref, last_sync, created_at)
      VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
-  ).run(id, m.tur, m.manbaNomi, m.owner, m.repo, m.ref, hozir)
+  ).run(id, source.kind, source.sourceName, source.owner, source.repo, source.ref, now)
 
-  return { ...m, id, oxirgiSinxron: null, createdAt: hozir }
+  return { ...source, id, lastSync: null, createdAt: now }
 }
 
-/** Manba, uning serverlari va o'rnatishlari (CASCADE) o'chadi */
-export function mcpManbaOchir(id: string, baza?: Database): boolean {
-  const d = baza ?? globalDb()
-  return d.prepare('DELETE FROM mcp_manbalari WHERE id = ?').run(id).changes > 0
+/** The source, its servers and their installs (CASCADE) are all removed */
+export function deleteMcpSource(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  return d.prepare('DELETE FROM mcp_sources WHERE id = ?').run(id).changes > 0
 }
 
-interface McpServerQator {
+interface McpServerRow {
   id: string
-  manba_id: string
-  nom: string
-  tavsif: string
-  transport: McpTransportTuri
-  buyruq: string | null
-  argumentlar: string | null
+  source_id: string
+  name: string
+  description: string
+  transport: McpTransportKind
+  command: string | null
+  args: string | null
   url: string | null
-  sozlamalar: string
+  settings: string
 }
 
 /**
- * `mcp_serverlar` + `mcp_ornatish` ni birlashtiradi.
+ * Joins `mcp_servers` with `mcp_installs`.
  *
- * `skilllarniYig` bilan bir xil sabab bo'yicha JOIN emas: JOIN bir serverni
- * har o'rnatish uchun takrorlab yuborardi.
+ * Not a JOIN, for the same reason as `collectSkills`: a JOIN would repeat each
+ * server once per install.
  */
-function mcpServerlarniYig(qatorlar: McpServerQator[], d: Database): McpServer[] {
-  const ornatishlar = new Map<string, McpOrnatish[]>()
-  for (const o of d
+function collectMcpServers(rows: McpServerRow[], d: Database): McpServer[] {
+  const installs = new Map<string, McpInstall[]>()
+  for (const i of d
     .query<
       {
         id: string
         server_id: string
-        qamrov: McpQamrov
+        scope: McpScope
         project_id: string | null
-        sozlama_qiymatlari: string
+        setting_values: string
       },
       []
-    >('SELECT id, server_id, qamrov, project_id, sozlama_qiymatlari FROM mcp_ornatish')
+    >('SELECT id, server_id, scope, project_id, setting_values FROM mcp_installs')
     .all()) {
-    const royxat = ornatishlar.get(o.server_id) ?? []
-    royxat.push({
-      id: o.id,
-      qamrov: o.qamrov,
-      projectId: o.project_id ?? undefined,
-      sozlamaQiymatlari: JSON.parse(o.sozlama_qiymatlari) as Record<string, string>,
+    const list = installs.get(i.server_id) ?? []
+    list.push({
+      id: i.id,
+      scope: i.scope,
+      projectId: i.project_id ?? undefined,
+      settingValues: JSON.parse(i.setting_values) as Record<string, string>,
     })
-    ornatishlar.set(o.server_id, royxat)
+    installs.set(i.server_id, list)
   }
 
-  return qatorlar.map((q) => ({
-    id: q.id,
-    manbaId: q.manba_id,
-    nom: q.nom,
-    tavsif: q.tavsif,
-    transport: q.transport,
-    buyruq: q.buyruq ?? undefined,
-    argumentlar: q.argumentlar ? (JSON.parse(q.argumentlar) as string[]) : undefined,
-    url: q.url ?? undefined,
-    sozlamalar: JSON.parse(q.sozlamalar) as McpSozlamaMaydoni[],
-    // Katalog yozuvi manbadan keladi va o'z `created_at` ustuni yo'q —
-    // sinxronlashda u qayta yozilishi mumkin, ya'ni "qachon paydo bo'lgani"
-    // manba darajasida ma'noli. UI'da ham manba sanasi ko'rsatiladi.
+  return rows.map((r) => ({
+    id: r.id,
+    sourceId: r.source_id,
+    name: r.name,
+    description: r.description,
+    transport: r.transport,
+    command: r.command ?? undefined,
+    args: r.args ? (JSON.parse(r.args) as string[]) : undefined,
+    url: r.url ?? undefined,
+    settings: JSON.parse(r.settings) as McpSettingField[],
+    // A catalog entry comes from its source and has no `created_at` column of
+    // its own — a sync may rewrite it, so "when it appeared" is only meaningful
+    // at the source level. The UI shows the source's date as well.
     createdAt: '',
-    ornatilgan: ornatishlar.get(q.id) ?? [],
+    installs: installs.get(r.id) ?? [],
   }))
 }
 
-/** Butun katalog — o'rnatilgani ham, o'rnatilmagani ham */
-export function mcpServerlarOqi(baza?: Database): McpServer[] {
-  const d = baza ?? globalDb()
-  const qatorlar = d.query<McpServerQator, []>('SELECT * FROM mcp_serverlar ORDER BY nom').all()
-  return mcpServerlarniYig(qatorlar, d)
+/** The whole catalog — both installed and not installed */
+export function readMcpServers(database?: Database): McpServer[] {
+  const d = database ?? globalDb()
+  const rows = d.query<McpServerRow, []>('SELECT * FROM mcp_servers ORDER BY name').all()
+  return collectMcpServers(rows, d)
 }
 
-export function mcpServerOqi(id: string, baza?: Database): McpServer | null {
-  const d = baza ?? globalDb()
-  const q = d.query<McpServerQator, [string]>('SELECT * FROM mcp_serverlar WHERE id = ?').get(id)
-  return q ? (mcpServerlarniYig([q], d)[0] ?? null) : null
+export function readMcpServer(id: string, database?: Database): McpServer | null {
+  const d = database ?? globalDb()
+  const r = d.query<McpServerRow, [string]>('SELECT * FROM mcp_servers WHERE id = ?').get(id)
+  return r ? (collectMcpServers([r], d)[0] ?? null) : null
 }
 
 /**
- * Loyihada FAOL MCP serverlar: global o'rnatilganlar + shu loyihaga
- * o'rnatilganlar. `faolSkilllar` bilan bir xil so'rov.
+ * The MCP servers ACTIVE in a project: the globally installed ones plus those
+ * installed for this project. The same query as `activeSkills`.
  *
- * Sessiya boshida shu ro'yxatga qarab ulanish amalga oshiriladi
- * (`orchestrator.ts` → `agentOqimi` → `McpBoshqaruvchi`).
+ * At the start of a session the connections are made from this list
+ * (`orchestrator.ts` → `agentStream` → `McpManager`).
  */
-export function faolMcpServerlar(projectId: string | null, baza?: Database): McpServer[] {
-  const d = baza ?? globalDb()
-  const qatorlar = d
-    .query<McpServerQator, [string | null]>(
-      `SELECT DISTINCT s.* FROM mcp_serverlar s
-         JOIN mcp_ornatish o ON o.server_id = s.id
-        WHERE o.qamrov = 'global' OR o.project_id = ?
-        ORDER BY s.nom`,
+export function activeMcpServers(projectId: string | null, database?: Database): McpServer[] {
+  const d = database ?? globalDb()
+  const rows = d
+    .query<McpServerRow, [string | null]>(
+      `SELECT DISTINCT s.* FROM mcp_servers s
+         JOIN mcp_installs i ON i.server_id = s.id
+        WHERE i.scope = 'global' OR i.project_id = ?
+        ORDER BY s.name`,
     )
     .all(projectId)
-  return mcpServerlarniYig(qatorlar, d)
+  return collectMcpServers(rows, d)
 }
 
 /**
- * Skanerlash natijasini bazaga yozadi: topilganlar UPSERT, yo'qolganlar
- * o'chiriladi.
+ * Writes the result of a scan to the database: what was found is UPSERTed,
+ * what disappeared is deleted.
  *
- * `skilllarniSinxronla` bilan bir xil sabab bo'yicha UPSERT: server `id` si
- * saqlansa, unga bog'langan o'rnatishlar VA kredensiallar (ular o'rnatish
- * id'siga bog'langan) joyida qoladi. INSERT bo'lsa foydalanuvchi har
- * sinxrondan keyin tokenni qaytadan kiritishga majbur bo'lardi.
+ * UPSERT for the same reason as `syncSkills`: keeping the server `id` keeps its
+ * installs AND the credentials bound to them (which are keyed by install id) in
+ * place. With INSERT the user would have to re-enter the token after every sync.
  */
-export function mcpServerlarniSinxronla(
-  manbaId: string,
-  topilgan: Omit<McpKatalogYozuvi, 'id' | 'manbaId' | 'createdAt'>[],
-  baza?: Database,
-): { qoshildi: number; yangilandi: number; ochirildi: number } {
-  const d = baza ?? globalDb()
-  const natija = { qoshildi: 0, yangilandi: 0, ochirildi: 0 }
+export function syncMcpServers(
+  sourceId: string,
+  found: Omit<McpCatalogEntry, 'id' | 'sourceId' | 'createdAt'>[],
+  database?: Database,
+): { added: number; updated: number; deleted: number } {
+  const d = database ?? globalDb()
+  const result = { added: 0, updated: 0, deleted: 0 }
 
   d.transaction(() => {
-    const eskiNomlar = new Set(
+    const oldNames = new Set(
       d
-        .query<{ nom: string }, [string]>('SELECT nom FROM mcp_serverlar WHERE manba_id = ?')
-        .all(manbaId)
-        .map((q) => q.nom),
+        .query<{ name: string }, [string]>('SELECT name FROM mcp_servers WHERE source_id = ?')
+        .all(sourceId)
+        .map((r) => r.name),
     )
 
     const st = d.prepare(
-      `INSERT INTO mcp_serverlar (id, manba_id, nom, tavsif, transport, buyruq, argumentlar, url, sozlamalar)
+      `INSERT INTO mcp_servers (id, source_id, name, description, transport, command, args, url, settings)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (manba_id, nom) DO UPDATE SET
-            tavsif = excluded.tavsif,
+       ON CONFLICT (source_id, name) DO UPDATE SET
+            description = excluded.description,
             transport = excluded.transport,
-            buyruq = excluded.buyruq,
-            argumentlar = excluded.argumentlar,
+            command = excluded.command,
+            args = excluded.args,
             url = excluded.url,
-            sozlamalar = excluded.sozlamalar`,
+            settings = excluded.settings`,
     )
 
-    for (const s of topilgan) {
+    for (const s of found) {
       st.run(
         crypto.randomUUID(),
-        manbaId,
-        s.nom,
-        s.tavsif,
+        sourceId,
+        s.name,
+        s.description,
         s.transport,
-        s.buyruq ?? null,
-        s.argumentlar ? JSON.stringify(s.argumentlar) : null,
+        s.command ?? null,
+        s.args ? JSON.stringify(s.args) : null,
         s.url ?? null,
-        JSON.stringify(s.sozlamalar),
+        JSON.stringify(s.settings),
       )
-      if (eskiNomlar.delete(s.nom)) natija.yangilandi++
-      else natija.qoshildi++
+      if (oldNames.delete(s.name)) result.updated++
+      else result.added++
     }
 
-    // Manbadan yo'qolgan serverlar — CASCADE o'rnatishlarni ham tozalaydi
-    const ochir = d.prepare('DELETE FROM mcp_serverlar WHERE manba_id = ? AND nom = ?')
-    for (const nom of eskiNomlar) {
-      ochir.run(manbaId, nom)
-      natija.ochirildi++
+    // Servers that vanished from the source — CASCADE clears their installs too
+    const remove = d.prepare('DELETE FROM mcp_servers WHERE source_id = ? AND name = ?')
+    for (const name of oldNames) {
+      remove.run(sourceId, name)
+      result.deleted++
     }
 
-    d.prepare('UPDATE mcp_manbalari SET oxirgi_sinxron = ? WHERE id = ?').run(
+    d.prepare('UPDATE mcp_sources SET last_sync = ? WHERE id = ?').run(
       new Date().toISOString(),
-      manbaId,
+      sourceId,
     )
   })()
 
-  return natija
+  return result
 }
 
 /**
- * Serverni o'rnatadi va o'rnatish id'sini qaytaradi.
+ * Installs the server and returns the install id.
  *
- * ID QAYTARILADI (skilllardan farqli): maxfiy kredensiallar shu id bo'yicha
- * saqlanadi, ya'ni chaqiruvchiga u kerak.
+ * THE ID IS RETURNED (unlike for skills): secret credentials are stored against
+ * it, so the caller needs it.
  *
- * Idempotent: allaqachon o'rnatilgan bo'lsa sozlama qiymatlari YANGILANADI
- * va mavjud id qaytariladi. Sabab — foydalanuvchi uchun "o'rnatish" tugmasi
- * ikkinchi marta bosilganda sozlamani tahrirlash ma'nosini beradi; yangi
- * qator yaratsak eski kredensial yetim qolardi.
+ * Idempotent: if it is already installed the setting values are UPDATED and the
+ * existing id is returned. The reason — for the user, pressing "install" a
+ * second time means editing the settings; creating a new row would orphan the
+ * old credentials.
  */
-export function mcpServerOrnat(
+export function installMcpServer(
   serverId: string,
-  qamrov: McpQamrov,
+  scope: McpScope,
   projectId: string | null,
-  sozlamaQiymatlari: Record<string, string>,
-  baza?: Database,
+  settingValues: Record<string, string>,
+  database?: Database,
 ): string {
-  const d = baza ?? globalDb()
-  const qiymatlar = JSON.stringify(sozlamaQiymatlari)
+  const d = database ?? globalDb()
+  const values = JSON.stringify(settingValues)
 
-  const mavjud = d
-    .query<{ id: string }, [string, McpQamrov, string | null]>(
-      `SELECT id FROM mcp_ornatish
-        WHERE server_id = ? AND qamrov = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
+  const existing = d
+    .query<{ id: string }, [string, McpScope, string | null]>(
+      `SELECT id FROM mcp_installs
+        WHERE server_id = ? AND scope = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
     )
-    .get(serverId, qamrov, projectId)
+    .get(serverId, scope, projectId)
 
-  if (mavjud) {
-    d.prepare('UPDATE mcp_ornatish SET sozlama_qiymatlari = ? WHERE id = ?').run(
-      qiymatlar,
-      mavjud.id,
-    )
-    return mavjud.id
+  if (existing) {
+    d.prepare('UPDATE mcp_installs SET setting_values = ? WHERE id = ?').run(values, existing.id)
+    return existing.id
   }
 
   const id = crypto.randomUUID()
   d.prepare(
-    `INSERT INTO mcp_ornatish (id, server_id, qamrov, project_id, sozlama_qiymatlari, created_at)
+    `INSERT INTO mcp_installs (id, server_id, scope, project_id, setting_values, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, serverId, qamrov, projectId, qiymatlar, new Date().toISOString())
+  ).run(id, serverId, scope, projectId, values, new Date().toISOString())
   return id
 }
 
 /**
- * O'rnatishni bekor qiladi. O'chirilgan qatorning id'sini qaytaradi (yoki
- * null) — chaqiruvchi shu id bo'yicha kredensialni ham tozalaydi.
+ * Removes an install. Returns the id of the deleted row (or null) — the caller
+ * uses that id to clear the matching credentials as well.
  */
-export function mcpServerOrnatishniOchir(
+export function uninstallMcpServer(
   serverId: string,
-  qamrov: McpQamrov,
+  scope: McpScope,
   projectId: string | null,
-  baza?: Database,
+  database?: Database,
 ): string | null {
-  const d = baza ?? globalDb()
-  const mavjud = d
-    .query<{ id: string }, [string, McpQamrov, string | null]>(
-      `SELECT id FROM mcp_ornatish
-        WHERE server_id = ? AND qamrov = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
+  const d = database ?? globalDb()
+  const existing = d
+    .query<{ id: string }, [string, McpScope, string | null]>(
+      `SELECT id FROM mcp_installs
+        WHERE server_id = ? AND scope = ? AND COALESCE(project_id, '') = COALESCE(?, '')`,
     )
-    .get(serverId, qamrov, projectId)
-  if (!mavjud) return null
+    .get(serverId, scope, projectId)
+  if (!existing) return null
 
-  d.prepare('DELETE FROM mcp_ornatish WHERE id = ?').run(mavjud.id)
-  return mavjud.id
+  d.prepare('DELETE FROM mcp_installs WHERE id = ?').run(existing.id)
+  return existing.id
 }
 
 // ---------------------------------------------------------------------------
-// Ilovalar
+// Apps
 // ---------------------------------------------------------------------------
 
-interface AppQator {
+interface AppRow {
   id: string
   manifest: string
   status: AppRecord['status']
@@ -691,79 +690,81 @@ interface AppQator {
 }
 
 /**
- * DB qatorini `AppRecord` ga aylantiradi. Manifest YAROQSIZ bo'lsa `null`.
+ * Converts a DB row into an `AppRecord`. Returns `null` if the manifest is
+ * INVALID.
  *
  * ┌────────────────────────────────────────────────────────────────────┐
- * │ NEGA BU YERDA TEKSHIRUV BOR. Avval `JSON.parse(...) as AppManifest` │
- * │ yozilgan edi — ya'ni tip KAFOLATI yo'q, faqat va'da. Manifestni AI  │
- * │ yozadi, ustiga u bazada yotadi va sxema keyinchalik o'zgarishi      │
- * │ mumkin. Buzuq qiymat o'sha kastdan jimgina o'tib, keyin UI'da       │
- * │ render paytida yiqilardi — foydalanuvchi uchun bu "platforma        │
- * │ ishlamayapti" bo'lib ko'rinadi.                                     │
+ * │ WHY THE VALIDATION IS HERE. This used to be                        │
+ * │ `JSON.parse(...) as AppManifest` — that is, no type GUARANTEE, just │
+ * │ a promise. The manifest is written by the AI, then it sits in the   │
+ * │ database, and the schema may change later. A malformed value would  │
+ * │ pass silently through that cast and then crash during render in the │
+ * │ UI — which the user experiences as "the platform is broken".        │
  * │                                                                     │
- * │ Endi buzuq yozuv SHU YERDA to'xtaydi: ilova ro'yxatdan tushadi,     │
- * │ qolgan hammasi ishlayveradi.                                        │
+ * │ Now a malformed record stops HERE: the app drops off the list and   │
+ * │ everything else keeps working.                                      │
  * └────────────────────────────────────────────────────────────────────┘
  */
-function appQatordan(q: AppQator): AppRecord | null {
-  let xom: unknown
+function appFromRow(r: AppRow): AppRecord | null {
+  let raw: unknown
   try {
-    xom = JSON.parse(q.manifest)
+    raw = JSON.parse(r.manifest)
   } catch {
-    // Buzuq JSON — yozuv o'qib bo'lmaydi. Tashlaymiz, yiqilmaymiz.
+    // Malformed JSON — the record cannot be read. Drop it, do not crash.
     return null
   }
 
-  const natija = manifestniTekshir(xom)
-  if (!natija.ok || !natija.qiymat) return null
+  const result = validateManifest(raw)
+  if (!result.ok || !result.value) return null
 
   return {
-    id: q.id,
-    manifest: natija.qiymat,
-    status: q.status,
-    createdAt: q.created_at,
-    updatedAt: q.updated_at,
+    id: r.id,
+    manifest: result.value,
+    status: r.status,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
   }
 }
 
-export function ilovalarOqi(baza?: Database): AppRecord[] {
-  const d = baza ?? globalDb()
+export function readApps(database?: Database): AppRecord[] {
+  const d = database ?? globalDb()
   return d
-    .query<AppQator, []>('SELECT * FROM apps ORDER BY created_at')
+    .query<AppRow, []>('SELECT * FROM apps ORDER BY created_at')
     .all()
-    .map(appQatordan)
+    .map(appFromRow)
     .filter((a): a is AppRecord => a !== null)
 }
 
-export function ilovaOqi(id: string, baza?: Database): AppRecord | null {
-  const d = baza ?? globalDb()
-  const q = d.query<AppQator, [string]>('SELECT * FROM apps WHERE id = ?').get(id)
-  return q ? appQatordan(q) : null
+export function readApp(id: string, database?: Database): AppRecord | null {
+  const d = database ?? globalDb()
+  const r = d.query<AppRow, [string]>('SELECT * FROM apps WHERE id = ?').get(id)
+  return r ? appFromRow(r) : null
 }
 
 /**
- * Manifestni yozadi yoki yangilaydi (upsert). Yangi ilova o'rnatilganda ham,
- * mavjudi yangilanganda ham shu funksiya ishlatiladi — qaysi biri bo'lganini
- * qaytariladigan `yangi` bayrog'i aytadi (WS eventini tanlash uchun kerak).
+ * Writes or updates the manifest (upsert). The same function is used when a new
+ * app is installed and when an existing one is updated — which of the two
+ * happened is reported by the returned `isNew` flag (needed to pick the WS
+ * event).
  */
-export function ilovaSaqla(
+export function saveApp(
   manifest: AppManifest,
-  baza?: Database,
-): { record: AppRecord; yangi: boolean } {
-  const d = baza ?? globalDb()
-  const hozir = new Date().toISOString()
-  const mavjud = ilovaOqi(manifest.id, d)
+  database?: Database,
+): { record: AppRecord; isNew: boolean } {
+  const d = database ?? globalDb()
+  const now = new Date().toISOString()
+  const existing = readApp(manifest.id, d)
 
-  if (mavjud) {
+  if (existing) {
     d.prepare('UPDATE apps SET manifest = ?, status = ?, updated_at = ? WHERE id = ?').run(
       JSON.stringify(manifest),
       manifest.status,
-      hozir,
+      now,
       manifest.id,
     )
     return {
-      record: { ...mavjud, manifest, status: manifest.status, updatedAt: hozir },
-      yangi: false,
+      record: { ...existing, manifest, status: manifest.status, updatedAt: now },
+      isNew: false,
     }
   }
 
@@ -771,117 +772,119 @@ export function ilovaSaqla(
     manifest.id,
     JSON.stringify(manifest),
     manifest.status,
-    hozir,
-    hozir,
+    now,
+    now,
   )
   return {
-    record: { id: manifest.id, manifest, status: manifest.status, createdAt: hozir, updatedAt: hozir },
-    yangi: true,
+    record: { id: manifest.id, manifest, status: manifest.status, createdAt: now, updatedAt: now },
+    isNew: true,
   }
 }
 
 // ---------------------------------------------------------------------------
-// Loyihalar
+// Projects
 // ---------------------------------------------------------------------------
 
-interface LoyihaQator {
+interface ProjectRow {
   id: string
   name: string
-  papka: string
+  folder: string
   created_at: string
 }
 
-function loyihaQatordan(q: LoyihaQator, chatlarSoni?: number): Project {
+function projectFromRow(r: ProjectRow, chatCount?: number): Project {
   return {
-    id: q.id,
-    name: q.name,
-    papka: q.papka,
-    createdAt: q.created_at,
-    chatlarSoni,
+    id: r.id,
+    name: r.name,
+    folder: r.folder,
+    createdAt: r.created_at,
+    chatCount,
   }
 }
 
 /**
- * Barcha loyihalar, har biriga ulangan chatlar soni bilan.
+ * All projects, each with the number of chats attached to it.
  *
- * `LEFT JOIN`: chati yo'q loyiha ham ro'yxatda ko'rinadi (0 bilan).
+ * `LEFT JOIN`: a project with no chats still appears in the list (with 0).
  */
-export function loyihalarOqi(baza?: Database): Project[] {
-  const d = baza ?? globalDb()
+export function readProjects(database?: Database): Project[] {
+  const d = database ?? globalDb()
   return d
-    .query<LoyihaQator & { chatlar: number }, []>(
-      `SELECT p.*, COUNT(s.id) AS chatlar
+    .query<ProjectRow & { chats: number }, []>(
+      `SELECT p.*, COUNT(s.id) AS chats
          FROM projects p
          LEFT JOIN chat_sessions s ON s.project_id = p.id
         GROUP BY p.id
         ORDER BY p.created_at DESC`,
     )
     .all()
-    .map((q) => loyihaQatordan(q, q.chatlar))
+    .map((r) => projectFromRow(r, r.chats))
 }
 
-export function loyihaOqi(id: string, baza?: Database): Project | null {
-  const d = baza ?? globalDb()
-  const q = d.query<LoyihaQator, [string]>('SELECT * FROM projects WHERE id = ?').get(id)
-  return q ? loyihaQatordan(q) : null
+export function readProject(id: string, database?: Database): Project | null {
+  const d = database ?? globalDb()
+  const r = d.query<ProjectRow, [string]>('SELECT * FROM projects WHERE id = ?').get(id)
+  return r ? projectFromRow(r) : null
 }
 
-/** Nom bo'yicha izlash — takroriy nomni oldindan ushlash uchun */
-export function loyihaNomBoyicha(name: string, baza?: Database): Project | null {
-  const d = baza ?? globalDb()
-  const q = d.query<LoyihaQator, [string]>('SELECT * FROM projects WHERE name = ?').get(name)
-  return q ? loyihaQatordan(q) : null
+/** Lookup by name — to catch a duplicate name up front */
+export function projectByName(name: string, database?: Database): Project | null {
+  const d = database ?? globalDb()
+  const r = d.query<ProjectRow, [string]>('SELECT * FROM projects WHERE name = ?').get(name)
+  return r ? projectFromRow(r) : null
 }
 
 /**
- * Loyiha yozuvini yaratadi. Papkani chaqiruvchi (route) yaratadi va to'liq
- * yo'lini beradi — bu qatlam fayl tizimiga tegmaydi.
+ * Creates the project record. The folder is created by the caller (the route),
+ * which passes its full path — this layer does not touch the file system.
  *
- * Nom takrorlansa UNIQUE indeks xato tashlaydi; route uni 409 ga aylantiradi.
+ * If the name is a duplicate the UNIQUE index raises an error; the route turns
+ * that into a 409.
  */
-export function loyihaYarat(name: string, papka: string, baza?: Database): Project {
-  const d = baza ?? globalDb()
-  const loyiha: Project = {
+export function createProject(name: string, folder: string, database?: Database): Project {
+  const d = database ?? globalDb()
+  const project: Project = {
     id: crypto.randomUUID(),
     name,
-    papka,
+    folder,
     createdAt: new Date().toISOString(),
-    chatlarSoni: 0,
+    chatCount: 0,
   }
-  d.prepare('INSERT INTO projects (id, name, papka, created_at) VALUES (?, ?, ?, ?)').run(
-    loyiha.id,
-    loyiha.name,
-    loyiha.papka,
-    loyiha.createdAt,
+  d.prepare('INSERT INTO projects (id, name, folder, created_at) VALUES (?, ?, ?, ?)').run(
+    project.id,
+    project.name,
+    project.folder,
+    project.createdAt,
   )
-  return loyiha
+  return project
 }
 
 /**
- * Sessiya ulangan loyihaning papkasi. Sessiya loyihasiz bo'lsa (yoki umuman
- * yo'q bo'lsa) `null` — chaqiruvchi sessiya papkasiga qaytadi.
+ * The folder of the project a session is attached to. `null` when the session
+ * has no project (or does not exist) — the caller then falls back to the
+ * session folder.
  *
- * Bitta SQL bilan: orchestrator har javob oqizishda chaqiradi, ikkita
- * so'rov ortiqcha.
+ * A single SQL statement: the orchestrator calls this on every reply stream, so
+ * a second query would be wasteful.
  */
-export function sessiyaLoyihaPapkasi(sessionId: string, baza?: Database): string | null {
-  const d = baza ?? globalDb()
-  const q = d
-    .query<{ papka: string }, [string]>(
-      `SELECT p.papka AS papka
+export function sessionProjectDir(sessionId: string, database?: Database): string | null {
+  const d = database ?? globalDb()
+  const r = d
+    .query<{ folder: string }, [string]>(
+      `SELECT p.folder AS folder
          FROM chat_sessions s
          JOIN projects p ON p.id = s.project_id
         WHERE s.id = ?`,
     )
     .get(sessionId)
-  return q?.papka ?? null
+  return r?.folder ?? null
 }
 
 // ---------------------------------------------------------------------------
-// Chat sessiyalari
+// Chat sessions
 // ---------------------------------------------------------------------------
 
-interface SessiyaQator {
+interface SessionRow {
   id: string
   title: string
   provider: string | null
@@ -891,134 +894,136 @@ interface SessiyaQator {
   updated_at: string
 }
 
-function sessiyaQatordan(q: SessiyaQator): ChatSession {
+function sessionFromRow(r: SessionRow): ChatSession {
   return {
-    id: q.id,
-    title: q.title,
-    provider: q.provider ?? undefined,
-    model: q.model ?? undefined,
-    projectId: q.project_id ?? undefined,
-    createdAt: q.created_at,
-    updatedAt: q.updated_at,
+    id: r.id,
+    title: r.title,
+    provider: r.provider ?? undefined,
+    model: r.model ?? undefined,
+    projectId: r.project_id ?? undefined,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
   }
 }
 
 /**
- * Barcha sessiyalar, oxirgi faollik bo'yicha (yangisi tepada).
+ * All sessions, ordered by last activity (newest first).
  *
- * `xabarlarSoni` qo'shiladi — UI "bo'sh suhbat" ni ajrata olsin: sessiya
- * yaratilib, birinchi xabar yuborilmasdan tashlab ketilishi oddiy holat.
- * `LEFT JOIN`: xabarsiz sessiya ham ro'yxatda qoladi (0 bilan).
+ * `messageCount` is included so the UI can tell an "empty conversation" apart:
+ * creating a session and abandoning it before the first message is a normal
+ * thing to do. `LEFT JOIN`: a session with no messages stays in the list
+ * (with 0).
  */
-export function sessiyalarOqi(baza?: Database): ChatSession[] {
-  const d = baza ?? globalDb()
+export function readSessions(database?: Database): ChatSession[] {
+  const d = database ?? globalDb()
   return d
-    .query<SessiyaQator & { xabarlar: number }, []>(
-      `SELECT s.*, COUNT(m.id) AS xabarlar
+    .query<SessionRow & { messages: number }, []>(
+      `SELECT s.*, COUNT(m.id) AS messages
          FROM chat_sessions s
          LEFT JOIN chat_messages m ON m.session_id = s.id
         GROUP BY s.id
         ORDER BY s.updated_at DESC`,
     )
     .all()
-    .map((q) => ({ ...sessiyaQatordan(q), xabarlarSoni: q.xabarlar }))
+    .map((r) => ({ ...sessionFromRow(r), messageCount: r.messages }))
 }
 
-export function sessiyaOqi(id: string, baza?: Database): ChatSession | null {
-  const d = baza ?? globalDb()
-  const q = d.query<SessiyaQator, [string]>('SELECT * FROM chat_sessions WHERE id = ?').get(id)
-  return q ? sessiyaQatordan(q) : null
+export function readSession(id: string, database?: Database): ChatSession | null {
+  const d = database ?? globalDb()
+  const r = d.query<SessionRow, [string]>('SELECT * FROM chat_sessions WHERE id = ?').get(id)
+  return r ? sessionFromRow(r) : null
 }
 
 /**
- * Yangi sessiya. `projectId` berilsa sessiya loyihaga ulanadi — agent
- * tool'lari o'sha loyihaning papkasida ishlaydi.
+ * A new session. When `projectId` is given the session is attached to that
+ * project — the agent's tools then run in the project's folder.
  *
- * Loyiha MAVJUDLIGI bu yerda tekshirilmaydi: route qatlami tekshirib,
- * foydalanuvchiga tushunarli xato beradi. Bazada baribir foreign key bor,
- * ya'ni yo'q loyiha bilan yozuv hosil bo'lmaydi.
+ * The project's EXISTENCE is not checked here: the route layer checks it and
+ * gives the user a clear error. There is a foreign key in the database anyway,
+ * so a record pointing at a missing project cannot be created.
  */
-export function sessiyaYarat(
+export function createSession(
   title?: string,
-  baza?: Database,
+  database?: Database,
   projectId?: string,
 ): ChatSession {
-  const d = baza ?? globalDb()
-  const hozir = new Date().toISOString()
-  const sessiya: ChatSession = {
+  const d = database ?? globalDb()
+  const now = new Date().toISOString()
+  const session: ChatSession = {
     id: crypto.randomUUID(),
-    title: title?.trim() || 'Yangi suhbat',
+    title: title?.trim() || 'New conversation',
     projectId,
-    createdAt: hozir,
-    updatedAt: hozir,
+    createdAt: now,
+    updatedAt: now,
   }
   d.prepare(
     'INSERT INTO chat_sessions (id, title, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(sessiya.id, sessiya.title, projectId ?? null, sessiya.createdAt, sessiya.updatedAt)
-  return sessiya
+  ).run(session.id, session.title, projectId ?? null, session.createdAt, session.updatedAt)
+  return session
 }
 
 /**
- * Sessiyaning modelini qulflaydi — faqat BIRINCHI marta yozadi.
+ * Locks the session's model — it only ever writes the FIRST time.
  *
- * `WHERE provider IS NULL` sharti poyga holatini oldini oladi: bir vaqtda
- * ikkita xabar kelsa, ikkinchisi mavjud providerni almashtira olmaydi.
- * Qaytish qiymati: yozildimi (true) yoki allaqachon qulflangan (false).
+ * The `WHERE provider IS NULL` condition prevents a race: if two messages
+ * arrive at once, the second one cannot replace the provider already chosen.
+ * The return value says whether it was written (true) or was already locked
+ * (false).
  */
-export function sessiyaModelQulfla(
+export function lockSessionModel(
   id: string,
   provider: string,
   model: string,
-  baza?: Database,
+  database?: Database,
 ): boolean {
-  const d = baza ?? globalDb()
-  const natija = d
+  const d = database ?? globalDb()
+  const result = d
     .prepare('UPDATE chat_sessions SET provider = ?, model = ? WHERE id = ? AND provider IS NULL')
     .run(provider, model, id)
-  return natija.changes > 0
+  return result.changes > 0
 }
 
 /**
- * Sessiya ichida modelni almashtiradi (provider O'ZGARMAYDI).
- * Bir provider ichida modelni almashtirish xavfsiz — kontekst formati bir xil.
+ * Changes the model within a session (the provider DOES NOT change).
+ * Switching models inside one provider is safe — the context format is the same.
  */
-export function sessiyaModelniOzgart(id: string, model: string, baza?: Database): void {
-  const d = baza ?? globalDb()
+export function changeSessionModel(id: string, model: string, database?: Database): void {
+  const d = database ?? globalDb()
   d.prepare('UPDATE chat_sessions SET model = ? WHERE id = ?').run(model, id)
 }
 
 /**
- * Sarlavhani qo'lda o'zgartiradi.
+ * Renames a session manually.
  *
- * `updated_at` ATAYLAB tegilmaydi: ro'yxat oxirgi FAOLLIK bo'yicha
- * saralanadi, nomni tahrirlash esa suhbatni tepaga ko'tarmasligi kerak.
+ * `updated_at` is DELIBERATELY left alone: the list is sorted by last ACTIVITY,
+ * and editing the title should not push the conversation to the top.
  *
- * `false` — bunday sessiya yo'q.
+ * `false` — no such session.
  */
-export function sessiyaSarlavhaOzgart(id: string, title: string, baza?: Database): boolean {
-  const d = baza ?? globalDb()
-  const natija = d.prepare('UPDATE chat_sessions SET title = ? WHERE id = ?').run(title, id)
-  return natija.changes > 0
+export function renameSession(id: string, title: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  const result = d.prepare('UPDATE chat_sessions SET title = ? WHERE id = ?').run(title, id)
+  return result.changes > 0
 }
 
 /**
- * Sessiyani butunlay o'chiradi. Xabarlar `ON DELETE CASCADE` bilan
- * o'zi ketadi (001-migratsiya), `build_sessions.session_id` esa NULL bo'ladi
- * — qurilish tarixi suhbat o'chirilgani uchun yo'qolmasligi kerak.
+ * Deletes a session entirely. The messages go with it via `ON DELETE CASCADE`
+ * (migration 001), while `build_sessions.session_id` becomes NULL — the build
+ * history should not disappear just because a conversation was deleted.
  *
- * `false` — bunday sessiya yo'q edi.
+ * `false` — there was no such session.
  */
-export function sessiyaOchir(id: string, baza?: Database): boolean {
-  const d = baza ?? globalDb()
-  const natija = d.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id)
-  return natija.changes > 0
+export function deleteSession(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  const result = d.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id)
+  return result.changes > 0
 }
 
 // ---------------------------------------------------------------------------
-// Chat xabarlari
+// Chat messages
 // ---------------------------------------------------------------------------
 
-interface XabarQator {
+interface MessageRow {
   id: string
   session_id: string
   role: ChatMessage['role']
@@ -1030,149 +1035,153 @@ interface XabarQator {
   created_at: string
 }
 
-function xabarQatordan(q: XabarQator): ChatMessage {
+function messageFromRow(r: MessageRow): ChatMessage {
   return {
-    id: q.id,
-    sessionId: q.session_id,
-    role: q.role,
-    text: q.text,
-    toolCard: q.tool_card ? (JSON.parse(q.tool_card) as ToolCard) : undefined,
-    toolCards: q.tool_cards ? (JSON.parse(q.tool_cards) as ToolChaqiruv[]) : undefined,
-    // Buzuq JSON butun sessiyani o'qib bo'lmaydigan qilmasin: bu ustun
-    // faqat LLM konteksti uchun, u yo'qolsa suhbat `text` bilan davom etadi.
-    agentMessages: jsonOqi(q.agent_messages),
-    contextTokens: q.context_tokens ?? undefined,
-    createdAt: q.created_at,
+    id: r.id,
+    sessionId: r.session_id,
+    role: r.role,
+    text: r.text,
+    toolCard: r.tool_card ? (JSON.parse(r.tool_card) as ToolCard) : undefined,
+    toolCards: r.tool_cards ? (JSON.parse(r.tool_cards) as ToolCall[]) : undefined,
+    // Malformed JSON must not make the whole session unreadable: this column is
+    // only for the LLM context, and without it the conversation carries on
+    // using `text`.
+    agentMessages: readJsonArray(r.agent_messages),
+    contextTokens: r.context_tokens ?? undefined,
+    createdAt: r.created_at,
   }
 }
 
-/** Xom JSON ustunini o'qiydi. Buzuq bo'lsa `undefined` — xato tashlamaydi. */
-function jsonOqi(xom: string | null): unknown[] | undefined {
-  if (!xom) return undefined
+/** Reads a raw JSON column. Returns `undefined` when malformed — never throws. */
+function readJsonArray(raw: string | null): unknown[] | undefined {
+  if (!raw) return undefined
   try {
-    const tahlil = JSON.parse(xom) as unknown
-    return Array.isArray(tahlil) ? tahlil : undefined
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed : undefined
   } catch {
     return undefined
   }
 }
 
-export function xabarlarOqi(sessionId: string, baza?: Database): ChatMessage[] {
-  const d = baza ?? globalDb()
-  const xabarlar = d
-    .query<XabarQator, [string]>(
+export function readMessages(sessionId: string, database?: Database): ChatMessage[] {
+  const d = database ?? globalDb()
+  const messages = d
+    .query<MessageRow, [string]>(
       'SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at, rowid',
     )
     .all(sessionId)
-    .map(xabarQatordan)
+    .map(messageFromRow)
 
-  // Tool kartalari `tool_chaqiruvlar` jadvalidan USTUN olinadi.
+  // Tool cards are taken from the `tool_calls` table IN PREFERENCE to the
+  // column.
   //
-  // Sabab: u yerga har chaqiruv OQIM DAVOMIDA yoziladi, `tool_cards`
-  // ustuniga esa oqim OXIRIDA. Oqim uzilgan bo'lsa (provider xatosi, server
-  // qayta ishga tushdi) ustun bo'sh qoladi-yu, jadvalda yozuvlar turadi —
-  // ilgari o'sha bajarilgan buyruqlar tarixda umuman ko'rinmasdi.
+  // The reason: every call is written there DURING the stream, whereas the
+  // `tool_cards` column is written at the END of it. If the stream was
+  // interrupted (provider error, server restart) the column stays empty while
+  // the table holds the records — previously those executed commands did not
+  // show up in the history at all.
   //
-  // Ruxsat qarori ham faqat shu jadvalda bor, ya'ni "bu buyruq nega
-  // bajarildi" ma'lumoti eski ustundan kelmaydi.
-  const chaqiruvlar = new Map<string, ToolChaqiruv[]>()
-  for (const q of d
-    .query<ToolQator, [string]>(
-      'SELECT * FROM tool_chaqiruvlar WHERE session_id = ? ORDER BY created_at, rowid',
+  // The permission decision also exists only in that table, so "why was this
+  // command run" is not answerable from the old column.
+  const calls = new Map<string, ToolCall[]>()
+  for (const r of d
+    .query<ToolCallRow, [string]>(
+      'SELECT * FROM tool_calls WHERE session_id = ? ORDER BY created_at, rowid',
     )
     .all(sessionId)) {
-    const royxat = chaqiruvlar.get(q.message_id)
-    if (royxat) royxat.push(toolQatordan(q))
-    else chaqiruvlar.set(q.message_id, [toolQatordan(q)])
+    const list = calls.get(r.message_id)
+    if (list) list.push(toolCallFromRow(r))
+    else calls.set(r.message_id, [toolCallFromRow(r)])
   }
 
-  // Biriktirmalar — xuddi shu naqsh, lekin ikki FARQ bilan.
+  // Attachments — the same pattern, but with two DIFFERENCES.
   //
-  //   1) `message_id IS NOT NULL` sharti. NULL — yuklangan, lekin hali
-  //      yuborilmagan fayl; u tarixda ko'rinmasligi kerak (chip UI'da,
-  //      mahalliy state'da turadi).
-  //   2) Yetim uchun sun'iy xabar QURILMAYDI. Tool chaqiruvida yetim
-  //      "yo'qolgan ma'lumot" belgisi edi; bu yerda esa NULL — normal
-  //      oraliq holat va uni xabar qilib ko'rsatish yolg'on bo'lardi.
-  const biriktirmalar = new Map<string, ChatBiriktirma[]>()
-  for (const q of d
-    .query<BiriktirmaQator, [string]>(
-      `SELECT * FROM chat_biriktirmalar
+  //   1) The `message_id IS NOT NULL` condition. NULL means uploaded but not
+  //      yet sent; it must not appear in the history (the chip lives in the UI,
+  //      in local state).
+  //   2) No synthetic message is BUILT for an orphan. For a tool call an orphan
+  //      was a sign of LOST DATA; here NULL is a normal intermediate state and
+  //      showing it as a message would be a lie.
+  const attachments = new Map<string, ChatAttachment[]>()
+  for (const r of d
+    .query<AttachmentRow, [string]>(
+      `SELECT * FROM chat_attachments
        WHERE session_id = ? AND message_id IS NOT NULL
        ORDER BY created_at, rowid`,
     )
     .all(sessionId)) {
-    // `message_id` NULL emasligi SQL'da tekshirilgan, tip esa buni bilmaydi
-    const kalit = q.message_id!
-    const royxat = biriktirmalar.get(kalit)
-    if (royxat) royxat.push(biriktirmaQatordan(q))
-    else biriktirmalar.set(kalit, [biriktirmaQatordan(q)])
+    // SQL has already checked that `message_id` is not null; the type does not
+    // know that
+    const key = r.message_id!
+    const list = attachments.get(key)
+    if (list) list.push(attachmentFromRow(r))
+    else attachments.set(key, [attachmentFromRow(r)])
   }
 
-  if (chaqiruvlar.size === 0 && biriktirmalar.size === 0) return xabarlar
+  if (calls.size === 0 && attachments.size === 0) return messages
 
-  const natija = xabarlar.map((x) => {
-    const kartalar = chaqiruvlar.get(x.id)
-    const fayllar = biriktirmalar.get(x.id)
-    if (!kartalar && !fayllar) return x
-    chaqiruvlar.delete(x.id)
+  const result = messages.map((m) => {
+    const cards = calls.get(m.id)
+    const files = attachments.get(m.id)
+    if (!cards && !files) return m
+    calls.delete(m.id)
     return {
-      ...x,
-      ...(kartalar ? { toolCards: kartalar } : {}),
-      ...(fayllar ? { biriktirmalar: fayllar } : {}),
+      ...m,
+      ...(cards ? { toolCards: cards } : {}),
+      ...(files ? { attachments: files } : {}),
     }
   })
 
-  // YETIM CHAQIRUVLAR — xabari yozilmay qolgan javob.
+  // ORPHANED CALLS — a reply whose message was never written.
   //
-  // Bunday bo'lishi mumkin: jarayon oqim o'rtasida to'xtasa (server qayta
-  // ishga tushdi, quvvat uzildi) assistant xabari YOZILMAYDI, chaqiruvlar
-  // esa allaqachon bazada. Ularni tashlab ketsak, foydalanuvchi bajarilgan
-  // buyruqlarni umuman ko'rmasdi — bu aynan shu jadval oldini olishi kerak
-  // bo'lgan ma'lumot yo'qolishi.
+  // This can happen: if the process stops mid-stream (server restart, power
+  // loss) the assistant message IS NOT WRITTEN while the calls are already in
+  // the database. Dropping them would mean the user never sees the commands
+  // that ran — exactly the data loss this table exists to prevent.
   //
-  // Shuning uchun yetimlar uchun sun'iy javob quriladi. `agentMessages`
-  // qo'yilmaydi: yarim qolgan kontekst keyingi turn'ni yiqitardi.
-  for (const [messageId, kartalar] of chaqiruvlar) {
-    natija.push({
+  // So a synthetic reply is built for the orphans. `agentMessages` is left
+  // unset: a half-finished context would break the next turn.
+  for (const [messageId, cards] of calls) {
+    result.push({
       id: messageId,
       sessionId,
       role: 'assistant',
       text: '⚠︎ The response did not finish — the stream was interrupted. The actions that ran are below.',
-      toolCards: kartalar,
-      createdAt: yetimVaqti(d, messageId),
+      toolCards: cards,
+      createdAt: orphanTime(d, messageId),
     })
   }
 
-  // Sun'iy xabarlar oxiriga qo'shildi — vaqt bo'yicha o'z joyiga qaytaramiz
-  return natija.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  // The synthetic messages were appended at the end — put them back in their
+  // rightful place by time
+  return result.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
 
-/** Yetim chaqiruvlar to'plamining birinchi yozuv vaqti — tartib uchun */
-function yetimVaqti(d: Database, messageId: string): string {
-  const q = d
-    .query<{ vaqt: string | null }, [string]>(
-      'SELECT MIN(created_at) AS vaqt FROM tool_chaqiruvlar WHERE message_id = ?',
+/** The time of the first record in a set of orphaned calls — used for ordering */
+function orphanTime(d: Database, messageId: string): string {
+  const r = d
+    .query<{ time: string | null }, [string]>(
+      'SELECT MIN(created_at) AS time FROM tool_calls WHERE message_id = ?',
     )
     .get(messageId)
-  return q?.vaqt ?? new Date().toISOString()
+  return r?.time ?? new Date().toISOString()
 }
 
-export function xabarYoz(
-  xabar: Omit<ChatMessage, 'id' | 'createdAt'> & { id?: string; createdAt?: string },
-  baza?: Database,
+export function writeMessage(
+  message: Omit<ChatMessage, 'id' | 'createdAt'> & { id?: string; createdAt?: string },
+  database?: Database,
 ): ChatMessage {
-  const d = baza ?? globalDb()
-  const toliq: ChatMessage = {
-    id: xabar.id ?? crypto.randomUUID(),
-    sessionId: xabar.sessionId,
-    role: xabar.role,
-    text: xabar.text,
-    toolCard: xabar.toolCard,
-    toolCards: xabar.toolCards,
-    agentMessages: xabar.agentMessages,
-    contextTokens: xabar.contextTokens,
-    createdAt: xabar.createdAt ?? new Date().toISOString(),
+  const d = database ?? globalDb()
+  const full: ChatMessage = {
+    id: message.id ?? crypto.randomUUID(),
+    sessionId: message.sessionId,
+    role: message.role,
+    text: message.text,
+    toolCard: message.toolCard,
+    toolCards: message.toolCards,
+    agentMessages: message.agentMessages,
+    contextTokens: message.contextTokens,
+    createdAt: message.createdAt ?? new Date().toISOString(),
   }
 
   d.prepare(
@@ -1180,375 +1189,378 @@ export function xabarYoz(
        (id, session_id, role, text, tool_card, tool_cards, agent_messages, context_tokens, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    toliq.id,
-    toliq.sessionId,
-    toliq.role,
-    toliq.text,
-    toliq.toolCard ? JSON.stringify(toliq.toolCard) : null,
-    toliq.toolCards?.length ? JSON.stringify(toliq.toolCards) : null,
-    toliq.agentMessages?.length ? JSON.stringify(toliq.agentMessages) : null,
-    toliq.contextTokens ?? null,
-    toliq.createdAt,
+    full.id,
+    full.sessionId,
+    full.role,
+    full.text,
+    full.toolCard ? JSON.stringify(full.toolCard) : null,
+    full.toolCards?.length ? JSON.stringify(full.toolCards) : null,
+    full.agentMessages?.length ? JSON.stringify(full.agentMessages) : null,
+    full.contextTokens ?? null,
+    full.createdAt,
   )
 
-  // Sessiya "oxirgi faollik" vaqti yangilanadi — ro'yxat shu bo'yicha saralanadi
-  d.prepare('UPDATE chat_sessions SET updated_at = ? WHERE id = ?').run(toliq.createdAt, toliq.sessionId)
+  // The session's "last activity" time is refreshed — the list is sorted by it
+  d.prepare('UPDATE chat_sessions SET updated_at = ? WHERE id = ?').run(full.createdAt, full.sessionId)
 
-  return toliq
+  return full
 }
 
 // ---------------------------------------------------------------------------
-// Tool chaqiruvlari
+// Tool calls
 // ---------------------------------------------------------------------------
 //
-// Har chaqiruv AVVAL shu yerga yoziladi, KEYIN UI'ga tarqatiladi
-// (`orchestrator.ts` dagi `toolYubor`). Tartib ataylab shunday: WS eventi
-// yo'qolishi mumkin va oqim o'rtasida uzilishi ham mumkin — bazadagi yozuv
-// esa qoladi. Ilgari aksincha edi va uzilgan oqimda bajarilgan buyruqlar
-// izsiz yo'qolardi.
+// Every call is written HERE FIRST and broadcast to the UI AFTERWARDS
+// (`sendTool` in `orchestrator.ts`). The order is deliberate: a WS event can be
+// lost and a stream can be cut short mid-way — the database record survives.
+// It used to be the other way round, and commands executed during an
+// interrupted stream vanished without a trace.
 //
-// `xabarlarOqi` kartalarni SHU JADVALDAN oladi (eski
-// `chat_messages.tool_cards` ustunidan emas): u yerga yozuv oqim oxirida
-// tushadi, ya'ni uzilgan javobda bo'sh qoladi. Ustun eski xabarlar uchun
-// zaxira bo'lib qoladi.
+// `readMessages` takes the cards FROM THIS TABLE (not from the old
+// `chat_messages.tool_cards` column): that column is only written at the end of
+// a stream, so it stays empty for an interrupted reply. The column remains as a
+// fallback for old messages.
 
-interface ToolQator {
+interface ToolCallRow {
   id: string
   session_id: string
   message_id: string
-  nom: string
+  name: string
   args: string
-  holat: ToolChaqiruv['holat']
-  natija: string | null
-  tafsilot: string | null
-  ruxsat: string | null
-  klassifikator: string | null
+  status: ToolCall['status']
+  result: string | null
+  detail: string | null
+  permission: string | null
+  classifier: string | null
   created_at: string
   updated_at: string
 }
 
-function toolQatordan(q: ToolQator): ToolChaqiruv {
+function toolCallFromRow(r: ToolCallRow): ToolCall {
   return {
-    id: q.id,
-    nom: q.nom,
-    args: q.args,
-    holat: q.holat,
-    natija: q.natija ?? undefined,
-    tafsilot: jsonObyekt<ToolChaqiruv['tafsilot']>(q.tafsilot),
-    ruxsat: jsonObyekt<ToolChaqiruv['ruxsat']>(q.ruxsat),
-    klassifikator: jsonObyekt<ToolChaqiruv['klassifikator']>(q.klassifikator),
+    id: r.id,
+    name: r.name,
+    args: r.args,
+    status: r.status,
+    result: r.result ?? undefined,
+    detail: parseJsonObject<ToolCall['detail']>(r.detail),
+    permission: parseJsonObject<ToolCall['permission']>(r.permission),
+    classifier: parseJsonObject<ToolCall['classifier']>(r.classifier),
   }
 }
 
-/** Buzuq JSON butun javobni o'qib bo'lmaydigan qilmasin — `undefined` qaytadi */
-function jsonObyekt<T>(xom: string | null): T | undefined {
-  if (!xom) return undefined
+/** Malformed JSON must not make the whole reply unreadable — returns `undefined` */
+function parseJsonObject<T>(raw: string | null): T | undefined {
+  if (!raw) return undefined
   try {
-    return JSON.parse(xom) as T
+    return JSON.parse(raw) as T
   } catch {
     return undefined
   }
 }
 
 /**
- * Tool chaqiruvini yozadi yoki yangilaydi (id bo'yicha UPSERT).
+ * Writes or updates a tool call (UPSERT by id).
  *
- * Bitta chaqiruv bir necha marta keladi: `ishlamoqda` → natija bo'laklari →
- * `tugadi`. Har safar shu funksiya chaqiriladi va yozuv ustiga yoziladi.
+ * One call arrives several times: `running` → result chunks → `done`. This
+ * function is called each time and the record is overwritten.
  *
- * `COALESCE` ataylab: keyingi yangilanishda `ruxsat` yoki `klassifikator`
- * berilmagan bo'lsa, allaqachon yozilgani O'CHIRILMAYDI. Ruxsat qarori
- * chaqiruv o'rtasida keladi, tugash eventi esa uni bilmaydi.
+ * `COALESCE` is deliberate: if `permission` or `classifier` is not supplied on
+ * a later update, what was already written IS NOT ERASED. The permission
+ * decision arrives in the middle of a call, and the completion event knows
+ * nothing about it.
  */
-export function toolChaqiruvYoz(
-  chaqiruv: ToolChaqiruv & { sessionId: string; messageId: string },
-  baza?: Database,
+export function writeToolCall(
+  call: ToolCall & { sessionId: string; messageId: string },
+  database?: Database,
 ): void {
-  const d = baza ?? globalDb()
-  const hozir = new Date().toISOString()
+  const d = database ?? globalDb()
+  const now = new Date().toISOString()
   d.prepare(
-    `INSERT INTO tool_chaqiruvlar
-       (id, session_id, message_id, nom, args, holat, natija, tafsilot, ruxsat,
-        klassifikator, created_at, updated_at)
+    `INSERT INTO tool_calls
+       (id, session_id, message_id, name, args, status, result, detail, permission,
+        classifier, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (id) DO UPDATE SET
-       nom           = excluded.nom,
-       args          = excluded.args,
-       holat         = excluded.holat,
-       natija        = excluded.natija,
-       tafsilot      = COALESCE(excluded.tafsilot, tool_chaqiruvlar.tafsilot),
-       ruxsat        = COALESCE(excluded.ruxsat, tool_chaqiruvlar.ruxsat),
-       klassifikator = COALESCE(excluded.klassifikator, tool_chaqiruvlar.klassifikator),
-       updated_at    = excluded.updated_at`,
+       name       = excluded.name,
+       args       = excluded.args,
+       status     = excluded.status,
+       result     = excluded.result,
+       detail     = COALESCE(excluded.detail, tool_calls.detail),
+       permission = COALESCE(excluded.permission, tool_calls.permission),
+       classifier = COALESCE(excluded.classifier, tool_calls.classifier),
+       updated_at = excluded.updated_at`,
   ).run(
-    chaqiruv.id,
-    chaqiruv.sessionId,
-    chaqiruv.messageId,
-    chaqiruv.nom,
-    chaqiruv.args,
-    chaqiruv.holat,
-    chaqiruv.natija ?? null,
-    chaqiruv.tafsilot ? JSON.stringify(chaqiruv.tafsilot) : null,
-    chaqiruv.ruxsat ? JSON.stringify(chaqiruv.ruxsat) : null,
-    chaqiruv.klassifikator ? JSON.stringify(chaqiruv.klassifikator) : null,
-    hozir,
-    hozir,
+    call.id,
+    call.sessionId,
+    call.messageId,
+    call.name,
+    call.args,
+    call.status,
+    call.result ?? null,
+    call.detail ? JSON.stringify(call.detail) : null,
+    call.permission ? JSON.stringify(call.permission) : null,
+    call.classifier ? JSON.stringify(call.classifier) : null,
+    now,
+    now,
   )
 }
 
-/** Bitta javobning tool chaqiruvlari, bajarilish tartibida */
-export function toolChaqiruvlarOqi(messageId: string, baza?: Database): ToolChaqiruv[] {
-  const d = baza ?? globalDb()
+/** The tool calls of a single reply, in execution order */
+export function readToolCalls(messageId: string, database?: Database): ToolCall[] {
+  const d = database ?? globalDb()
   return d
-    .query<ToolQator, [string]>(
-      'SELECT * FROM tool_chaqiruvlar WHERE message_id = ? ORDER BY created_at, rowid',
+    .query<ToolCallRow, [string]>(
+      'SELECT * FROM tool_calls WHERE message_id = ? ORDER BY created_at, rowid',
     )
     .all(messageId)
-    .map(toolQatordan)
+    .map(toolCallFromRow)
 }
 
-/** Sessiyadagi hamma tool chaqiruvi — diagnostika va tarixni tiklash uchun */
-export function sessiyaToolChaqiruvlariOqi(sessionId: string, baza?: Database): ToolChaqiruv[] {
-  const d = baza ?? globalDb()
+/** Every tool call in a session — for diagnostics and restoring the history */
+export function readSessionToolCalls(sessionId: string, database?: Database): ToolCall[] {
+  const d = database ?? globalDb()
   return d
-    .query<ToolQator, [string]>(
-      'SELECT * FROM tool_chaqiruvlar WHERE session_id = ? ORDER BY created_at, rowid',
+    .query<ToolCallRow, [string]>(
+      'SELECT * FROM tool_calls WHERE session_id = ? ORDER BY created_at, rowid',
     )
     .all(sessionId)
-    .map(toolQatordan)
+    .map(toolCallFromRow)
 }
 
 // ---------------------------------------------------------------------------
-// Biriktirmalar — chatga yuklangan fayl va rasmlar
+// Attachments — files and images uploaded to the chat
 // ---------------------------------------------------------------------------
 //
-// `tool_chaqiruvlar` bilan bir xil naqsh: alohida jadval, `xabarlarOqi()`
-// yozuvlarni xabarga ulab beradi. Farqi — `message_id` NULL bo'lishi mumkin
-// (yuklandi, lekin hali yuborilmadi) va bu NORMAL oraliq holat, ya'ni yetim
-// uchun sun'iy xabar QURILMAYDI.
+// The same pattern as `tool_calls`: a separate table, with `readMessages()`
+// stitching the records onto their message. The difference is that
+// `message_id` may be NULL (uploaded but not yet sent) and that this is a
+// NORMAL intermediate state, so no synthetic message is BUILT for an orphan.
 //
-// Bu qatlam FAYL TIZIMIGA TEGMAYDI (`loyihaYarat` dagi bilan bir xil
-// qoida): diskka yozish va o'chirish chaqiruvchining ishi. `yetimlarniOchir`
-// shu sababli o'chirilgan yozuvlar ro'yxatini qaytaradi — chaqiruvchi
-// fayllarni o'zi tozalaydi.
+// This layer DOES NOT TOUCH THE FILE SYSTEM (the same rule as
+// `createProject`): writing and deleting on disk is the caller's job. That is
+// why `deleteOrphanAttachments` returns the list of deleted records — the
+// caller cleans up the files itself.
 
-interface BiriktirmaQator {
+interface AttachmentRow {
   id: string
   session_id: string
   message_id: string | null
-  tur: ChatBiriktirma['tur']
-  nom: string
-  asl_nom: string
-  yol: string
+  kind: ChatAttachment['kind']
+  name: string
+  original_name: string
+  path: string
   mime: string
-  hajm: number
+  size: number
   created_at: string
 }
 
-function biriktirmaQatordan(q: BiriktirmaQator): ChatBiriktirma {
+function attachmentFromRow(r: AttachmentRow): ChatAttachment {
   return {
-    id: q.id,
-    sessionId: q.session_id,
-    tur: q.tur,
-    aslNom: q.asl_nom,
-    yol: q.yol,
-    mime: q.mime,
-    hajm: q.hajm,
-    createdAt: q.created_at,
+    id: r.id,
+    sessionId: r.session_id,
+    kind: r.kind,
+    originalName: r.original_name,
+    path: r.path,
+    mime: r.mime,
+    size: r.size,
+    createdAt: r.created_at,
   }
 }
 
 /**
- * Yangi biriktirma yozuvi. `messageId` berilmasa NULL bo'ladi — fayl
- * yuklandi, lekin xabar hali yuborilmagan.
+ * A new attachment record. When `messageId` is not given it is NULL — the file
+ * was uploaded but the message has not been sent yet.
  *
- * `nom` (diskdagi tozalangan nom) tashqi tipda YO'Q: u faqat serverga
- * kerak — yo'lni qurish uchun. Mijoz `aslNom` va `yol` ni ko'radi.
+ * `name` (the sanitised name on disk) is NOT part of the external type: it is
+ * only needed on the server, to build the path. The client sees `originalName`
+ * and `path`.
  */
-export function biriktirmaYoz(
-  biriktirma: Omit<ChatBiriktirma, 'id' | 'createdAt'> & {
+export function writeAttachment(
+  attachment: Omit<ChatAttachment, 'id' | 'createdAt'> & {
     id?: string
     createdAt?: string
-    nom: string
+    name: string
     messageId?: string | null
   },
-  baza?: Database,
-): ChatBiriktirma {
-  const d = baza ?? globalDb()
-  const toliq: ChatBiriktirma = {
-    id: biriktirma.id ?? crypto.randomUUID(),
-    sessionId: biriktirma.sessionId,
-    tur: biriktirma.tur,
-    aslNom: biriktirma.aslNom,
-    yol: biriktirma.yol,
-    mime: biriktirma.mime,
-    hajm: biriktirma.hajm,
-    createdAt: biriktirma.createdAt ?? new Date().toISOString(),
+  database?: Database,
+): ChatAttachment {
+  const d = database ?? globalDb()
+  const full: ChatAttachment = {
+    id: attachment.id ?? crypto.randomUUID(),
+    sessionId: attachment.sessionId,
+    kind: attachment.kind,
+    originalName: attachment.originalName,
+    path: attachment.path,
+    mime: attachment.mime,
+    size: attachment.size,
+    createdAt: attachment.createdAt ?? new Date().toISOString(),
   }
 
   d.prepare(
-    `INSERT INTO chat_biriktirmalar
-       (id, session_id, message_id, tur, nom, asl_nom, yol, mime, hajm, created_at)
+    `INSERT INTO chat_attachments
+       (id, session_id, message_id, kind, name, original_name, path, mime, size, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    toliq.id,
-    toliq.sessionId,
-    biriktirma.messageId ?? null,
-    toliq.tur,
-    biriktirma.nom,
-    toliq.aslNom,
-    toliq.yol,
-    toliq.mime,
-    toliq.hajm,
-    toliq.createdAt,
+    full.id,
+    full.sessionId,
+    attachment.messageId ?? null,
+    full.kind,
+    attachment.name,
+    full.originalName,
+    full.path,
+    full.mime,
+    full.size,
+    full.createdAt,
   )
 
-  return toliq
+  return full
 }
 
-export function biriktirmaOqi(id: string, baza?: Database): ChatBiriktirma | null {
-  const d = baza ?? globalDb()
-  const q = d
-    .query<BiriktirmaQator, [string]>('SELECT * FROM chat_biriktirmalar WHERE id = ?')
+export function readAttachment(id: string, database?: Database): ChatAttachment | null {
+  const d = database ?? globalDb()
+  const r = d
+    .query<AttachmentRow, [string]>('SELECT * FROM chat_attachments WHERE id = ?')
     .get(id)
-  return q ? biriktirmaQatordan(q) : null
+  return r ? attachmentFromRow(r) : null
 }
 
 /**
- * Berilgan id'lar bo'yicha biriktirmalarni oladi — FAQAT shu sessiyaga
- * tegishlilarini.
+ * Fetches attachments by id — ONLY those belonging to this session.
  *
- * Sessiya filtri XAVFSIZLIK CHEGARASI, qulaylik emas: mijoz `chat.send` da
- * ixtiyoriy id yuborishi mumkin va usiz boshqa suhbatning faylini o'z
- * xabariga bog'lab olardi.
+ * The session filter is a SECURITY BOUNDARY, not a convenience: the client can
+ * send arbitrary ids in `chat.send`, and without it another conversation's file
+ * could be attached to this message.
  *
- * Qaytgan ro'yxat SO'RALGAN TARTIBDA bo'ladi — foydalanuvchi fayllarni
- * qanday tanlagan bo'lsa, promptda ham shunday ko'rinadi. Topilmagan id
- * jimgina tashlanmaydi: chaqiruvchi soni bo'yicha tekshirib xato beradi.
+ * The returned list is IN THE ORDER REQUESTED — the files appear in the prompt
+ * the way the user picked them. A missing id is not silently dropped: the
+ * caller checks the count and raises an error.
  */
-export function biriktirmalarniOl(
+export function readAttachmentsByIds(
   sessionId: string,
-  idlar: string[],
-  baza?: Database,
-): ChatBiriktirma[] {
-  if (idlar.length === 0) return []
-  const d = baza ?? globalDb()
-  const orinlar = idlar.map(() => '?').join(', ')
-  const topilgan = d
-    .query<BiriktirmaQator, string[]>(
-      `SELECT * FROM chat_biriktirmalar WHERE session_id = ? AND id IN (${orinlar})`,
+  ids: string[],
+  database?: Database,
+): ChatAttachment[] {
+  if (ids.length === 0) return []
+  const d = database ?? globalDb()
+  const placeholders = ids.map(() => '?').join(', ')
+  const found = d
+    .query<AttachmentRow, string[]>(
+      `SELECT * FROM chat_attachments WHERE session_id = ? AND id IN (${placeholders})`,
     )
-    .all(sessionId, ...idlar)
-    .map(biriktirmaQatordan)
+    .all(sessionId, ...ids)
+    .map(attachmentFromRow)
 
-  const xarita = new Map(topilgan.map((b) => [b.id, b]))
-  return idlar.map((id) => xarita.get(id)).filter((b): b is ChatBiriktirma => b !== undefined)
+  const byId = new Map(found.map((a) => [a.id, a]))
+  return ids.map((id) => byId.get(id)).filter((a): a is ChatAttachment => a !== undefined)
 }
 
-/** Sessiyadagi hamma biriktirma — papkani tozalash va diagnostika uchun */
-export function sessiyaBiriktirmalari(sessionId: string, baza?: Database): ChatBiriktirma[] {
-  const d = baza ?? globalDb()
+/** Every attachment in a session — for cleaning the folder and for diagnostics */
+export function sessionAttachments(sessionId: string, database?: Database): ChatAttachment[] {
+  const d = database ?? globalDb()
   return d
-    .query<BiriktirmaQator, [string]>(
-      'SELECT * FROM chat_biriktirmalar WHERE session_id = ? ORDER BY created_at, rowid',
+    .query<AttachmentRow, [string]>(
+      'SELECT * FROM chat_attachments WHERE session_id = ? ORDER BY created_at, rowid',
     )
     .all(sessionId)
-    .map(biriktirmaQatordan)
+    .map(attachmentFromRow)
 }
 
 /**
- * Biriktirmalarni xabarga bog'laydi — xabar yozilgandan keyin chaqiriladi.
+ * Links attachments to a message — called once the message has been written.
  *
- * Faqat SHU SESSIYAGA tegishli va hali bog'lanmagan (`message_id IS NULL`)
- * yozuvlar o'zgaradi. Ikkinchi shart takroriy yuborishdan himoya qiladi:
- * allaqachon bir xabarga tegishli fayl ikkinchisiga ko'chib ketmasin.
+ * Only records belonging to THIS SESSION and not yet linked
+ * (`message_id IS NULL`) are changed. The second condition guards against a
+ * repeated send: a file that already belongs to one message must not migrate to
+ * another.
  *
- * O'zgargan yozuvlar sonini qaytaradi.
+ * Returns the number of changed records.
  */
-export function biriktirmalarniXabargaBogla(
+export function linkAttachmentsToMessage(
   sessionId: string,
   messageId: string,
-  idlar: string[],
-  baza?: Database,
+  ids: string[],
+  database?: Database,
 ): number {
-  if (idlar.length === 0) return 0
-  const d = baza ?? globalDb()
-  const orinlar = idlar.map(() => '?').join(', ')
-  const natija = d
+  if (ids.length === 0) return 0
+  const d = database ?? globalDb()
+  const placeholders = ids.map(() => '?').join(', ')
+  const result = d
     .prepare(
-      `UPDATE chat_biriktirmalar SET message_id = ?
-       WHERE session_id = ? AND message_id IS NULL AND id IN (${orinlar})`,
+      `UPDATE chat_attachments SET message_id = ?
+       WHERE session_id = ? AND message_id IS NULL AND id IN (${placeholders})`,
     )
-    .run(messageId, sessionId, ...idlar)
-  return natija.changes
+    .run(messageId, sessionId, ...ids)
+  return result.changes
 }
 
 /**
- * Biriktirma xabarga bog'langanmi.
+ * Whether an attachment is linked to a message.
  *
- * `ChatBiriktirma` da `messageId` ATAYLAB yo'q: u mijozga kerak emas va
- * tashqi tipni ichki holat bilan to'ldirmaymiz. Lekin server bir joyda
- * bilishi kerak — yuborilgan biriktirmani o'chirishga ruxsat bermaslik uchun.
+ * `ChatAttachment` DELIBERATELY has no `messageId`: the client does not need it
+ * and the external type is not padded with internal state. But the server needs
+ * to know it in one place — to refuse deleting an attachment that has been sent.
  */
-export function biriktirmaBoglanganmi(id: string, baza?: Database): boolean {
-  const d = baza ?? globalDb()
-  const q = d
+export function isAttachmentLinked(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  const r = d
     .query<{ message_id: string | null }, [string]>(
-      'SELECT message_id FROM chat_biriktirmalar WHERE id = ?',
+      'SELECT message_id FROM chat_attachments WHERE id = ?',
     )
     .get(id)
-  return q?.message_id !== null && q?.message_id !== undefined
+  return r?.message_id !== null && r?.message_id !== undefined
 }
 
-/** Bitta biriktirmani o'chiradi. Fayl chaqiruvchi tomonidan o'chiriladi. */
-export function biriktirmaOchir(id: string, baza?: Database): boolean {
-  const d = baza ?? globalDb()
-  return d.prepare('DELETE FROM chat_biriktirmalar WHERE id = ?').run(id).changes > 0
+/** Deletes a single attachment. The file is removed by the caller. */
+export function deleteAttachment(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  return d.prepare('DELETE FROM chat_attachments WHERE id = ?').run(id).changes > 0
 }
 
 /**
- * Xabarga bog'lanmagan va eskirgan biriktirmalarni o'chiradi.
+ * Deletes attachments that are not linked to a message and have gone stale.
  *
- * NEGA KERAK: foydalanuvchi fayl yuklab, keyin fikridan qaytishi oddiy
- * holat. Yozuv `message_id IS NULL` bo'lib qolib ketadi va fayl diskda
- * yotadi. Cron kerak emas — `javobOqizi` boshida shu sessiya uchun
- * chaqiriladi (`orchestrator.ts`), ya'ni tozalash tabiiy ravishda
- * foydalanish paytida bo'ladi.
+ * WHY IT IS NEEDED: a user uploading a file and then changing their mind is a
+ * normal thing to do. The record stays at `message_id IS NULL` and the file
+ * sits on disk. No cron job is required — this is called at the start of
+ * `streamReply` for that session (`orchestrator.ts`), so the cleanup happens
+ * naturally as the platform is used.
  *
- * Muddat KATTA (standart 24 soat) ataylab: foydalanuvchi chip ko'rib
- * turgan bo'lsa-yu fayli o'chib ketsa, yuborish payti xato bo'lardi.
+ * The age threshold is LARGE (24 hours by default) on purpose: if a user is
+ * looking at a chip whose file has been deleted underneath them, sending would
+ * fail.
  *
- * O'chirilgan yozuvlarni QAYTARADI — chaqiruvchi fayllarni tozalaydi.
+ * RETURNS the deleted records — the caller cleans up the files.
  */
-export function yetimBiriktirmalarniOchir(
+export function deleteOrphanAttachments(
   sessionId: string,
-  soatOldin = 24,
-  baza?: Database,
-): ChatBiriktirma[] {
-  const d = baza ?? globalDb()
-  const chegara = new Date(Date.now() - soatOldin * 60 * 60 * 1000).toISOString()
-  const yetimlar = d
-    .query<BiriktirmaQator, [string, string]>(
-      `SELECT * FROM chat_biriktirmalar
+  hoursAgo = 24,
+  database?: Database,
+): ChatAttachment[] {
+  const d = database ?? globalDb()
+  const cutoff = new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString()
+  const orphans = d
+    .query<AttachmentRow, [string, string]>(
+      `SELECT * FROM chat_attachments
        WHERE session_id = ? AND message_id IS NULL AND created_at < ?`,
     )
-    .all(sessionId, chegara)
-    .map(biriktirmaQatordan)
+    .all(sessionId, cutoff)
+    .map(attachmentFromRow)
 
-  if (yetimlar.length === 0) return []
+  if (orphans.length === 0) return []
 
-  const orinlar = yetimlar.map(() => '?').join(', ')
-  d.prepare(`DELETE FROM chat_biriktirmalar WHERE id IN (${orinlar})`).run(
-    ...yetimlar.map((b) => b.id),
+  const placeholders = orphans.map(() => '?').join(', ')
+  d.prepare(`DELETE FROM chat_attachments WHERE id IN (${placeholders})`).run(
+    ...orphans.map((a) => a.id),
   )
-  return yetimlar
+  return orphans
 }
 
 // ---------------------------------------------------------------------------
-// Qurilish sessiyalari — skeleton, keyingi bosqichda orchestrator to'ldiradi
+// Build sessions — a skeleton, filled in by the orchestrator at a later stage
 // ---------------------------------------------------------------------------
 
-interface BuildQator {
+interface BuildRow {
   id: string
   app_id: string
   session_id: string | null
@@ -1558,32 +1570,32 @@ interface BuildQator {
   updated_at: string
 }
 
-function buildQatordan(q: BuildQator): BuildSession {
-  return { id: q.id, appId: q.app_id, status: q.status, createdAt: q.created_at }
+function buildFromRow(r: BuildRow): BuildSession {
+  return { id: r.id, appId: r.app_id, status: r.status, createdAt: r.created_at }
 }
 
-export function buildYarat(
+export function createBuild(
   appId: string,
   sessionId: string | null = null,
-  baza?: Database,
+  database?: Database,
 ): BuildSession {
-  const d = baza ?? globalDb()
-  const hozir = new Date().toISOString()
+  const d = database ?? globalDb()
+  const now = new Date().toISOString()
   const id = crypto.randomUUID()
   d.prepare(
     `INSERT INTO build_sessions (id, app_id, session_id, status, created_at, updated_at)
      VALUES (?, ?, ?, 'running', ?, ?)`,
-  ).run(id, appId, sessionId, hozir, hozir)
-  return { id, appId, status: 'running', createdAt: hozir }
+  ).run(id, appId, sessionId, now, now)
+  return { id, appId, status: 'running', createdAt: now }
 }
 
-export function buildHolatiOzgart(
+export function setBuildStatus(
   id: string,
   status: BuildSessionStatus,
   error?: string,
-  baza?: Database,
+  database?: Database,
 ): void {
-  const d = baza ?? globalDb()
+  const d = database ?? globalDb()
   d.prepare('UPDATE build_sessions SET status = ?, error = ?, updated_at = ? WHERE id = ?').run(
     status,
     error ?? null,
@@ -1592,8 +1604,8 @@ export function buildHolatiOzgart(
   )
 }
 
-export function buildOqi(id: string, baza?: Database): BuildSession | null {
-  const d = baza ?? globalDb()
-  const q = d.query<BuildQator, [string]>('SELECT * FROM build_sessions WHERE id = ?').get(id)
-  return q ? buildQatordan(q) : null
+export function readBuild(id: string, database?: Database): BuildSession | null {
+  const d = database ?? globalDb()
+  const r = d.query<BuildRow, [string]>('SELECT * FROM build_sessions WHERE id = ?').get(id)
+  return r ? buildFromRow(r) : null
 }

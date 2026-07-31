@@ -1,18 +1,18 @@
-"""OpenRouter klienti — barcha LLM chaqiruvlar uchun yagona kirish nuqtasi.
+"""OpenRouter client — the single entry point for all LLM calls.
 
-Platformaning "LLM Router" komponenti: ikkala agent ham shu orqali
-model chaqiradi. Boshqa modullarga bog'lanmagan — faqat config va db.
+The platform's "LLM Router" component: both agents call models through
+it. It depends on nothing else — only on config and db.
 
-Xususiyatlari:
-  - Model fallback zanjiri (asosiy model ishlamasa keyingisiga o'tadi)
-  - Retry: exponential backoff, faqat vaqtinchalik xatolarda
-  - Har chaqiruv `llm_calls` jadvaliga yoziladi (model, tokenlar, narx)
-  - Kunlik xarajat limiti — oshsa CostLimitExceeded
+Features:
+  - Model fallback chain (moves to the next model if the primary fails)
+  - Retries: exponential backoff, only on transient errors
+  - Every call is written to the `llm_calls` table (model, tokens, cost)
+  - Daily cost limit — raises CostLimitExceeded once exceeded
 
-Eslatma: `cluster_id` parametri hali botga xos (yangilik klasteri).
-Uni generik `ref` ga umumlashtirish uchun ikkinchi haqiqiy ishlatuvchi
-kerak — monitor unga muhtoj emas, chaqiruvlarini `stage` bo'yicha
-topadi. Uchinchi agent paydo bo'lganda ko'riladi.
+Note: the `cluster_id` parameter is still bot-specific (a news cluster).
+Generalizing it to a plain `ref` needs a second real user — the monitor
+does not need it, it finds its calls by `stage`. Revisit this when a
+third agent shows up.
 """
 
 from __future__ import annotations
@@ -34,25 +34,25 @@ log = get_logger(__name__)
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Shu HTTP statuslarda qayta urinish mantiqiy (vaqtinchalik muammo)
+# Retrying makes sense on these HTTP statuses (transient problems)
 RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504, 520, 522, 524}
 
 
 class LLMError(RuntimeError):
-    """LLM chaqiruvi bilan bog'liq umumiy xato."""
+    """A general error related to an LLM call."""
 
 
 class CostLimitExceeded(LLMError):
-    """Kunlik xarajat limiti oshib ketdi."""
+    """The daily cost limit has been exceeded."""
 
 
 class AllModelsFailed(LLMError):
-    """Fallback zanjiridagi barcha modellar ishlamadi."""
+    """Every model in the fallback chain failed."""
 
 
 @dataclass(slots=True)
 class LLMResponse:
-    """LLM javobi va u haqidagi metama'lumot."""
+    """An LLM response and its metadata."""
 
     text: str
     model: str
@@ -68,14 +68,14 @@ class LLMResponse:
         return self.model != self.requested_model
 
     def json(self) -> Any:
-        """Javob matnini JSON sifatida o'qish.
+        """Parse the response text as JSON.
 
-        Modellar ba'zan JSON'ni ```json ... ``` blokiga o'raydi — tozalanadi.
+        Models sometimes wrap JSON in a ```json ... ``` block — that is stripped.
         """
         text = self.text.strip()
         if text.startswith("```"):
             lines = text.split("\n")
-            # birinchi qator ```json yoki ```, oxirgisi ```
+            # the first line is ```json or ```, the last one is ```
             if lines[-1].strip() == "```":
                 lines = lines[:-1]
             text = "\n".join(lines[1:]).strip()
@@ -83,19 +83,19 @@ class LLMResponse:
             return json.loads(text)
         except json.JSONDecodeError as exc:
             raise LLMError(
-                f"Model javobini JSON sifatida o'qib bo'lmadi: {exc}. "
-                f"Javob boshi: {text[:200]!r}"
+                f"Could not parse the model response as JSON: {exc}. "
+                f"Start of the response: {text[:200]!r}"
             ) from exc
 
 
 def today_cost_usd(
     stages: tuple[str, ...] = (), *, include: bool = True
 ) -> float:
-    """Bugungi (UTC) LLM xarajati.
+    """Today's (UTC) LLM cost.
 
-    `stages` bo'sh bo'lsa — hammasi. Aks holda `include=True` faqat
-    shu bosqichlarni sanaydi, `include=False` esa ularni chiqarib
-    tashlaydi (bosqich bo'yicha alohida limitlar uchun).
+    If `stages` is empty, everything counts. Otherwise `include=True`
+    counts only those stages, while `include=False` excludes them
+    (used for per-stage limits).
     """
     today = datetime.now(UTC).date().isoformat()
     sql = "SELECT COALESCE(SUM(cost_usd), 0.0) AS total FROM llm_calls WHERE created_at >= ?"
@@ -125,7 +125,7 @@ def _record_call(
     error: str = "",
     cluster_id: int | None = None,
 ) -> None:
-    """Chaqiruvni bazaga yozish. Bu yerdagi xato pipeline'ni to'xtatmasligi kerak."""
+    """Write the call to the database. An error here must not stop the pipeline."""
     try:
         execute(
             "INSERT INTO llm_calls (created_at, stage, model, requested_model, prompt_tokens, "
@@ -147,11 +147,11 @@ def _record_call(
             ),
         )
     except Exception:  # noqa: BLE001
-        log.exception("LLM chaqiruvini bazaga yozib bo'lmadi")
+        log.exception("Could not write the LLM call to the database")
 
 
 class LLMClient:
-    """OpenRouter orqali LLM chaqiruvlarini bajaradi."""
+    """Performs LLM calls through OpenRouter."""
 
     def __init__(self, models: ModelsConfig | None = None) -> None:
         self.models = models or load_models()
@@ -166,7 +166,7 @@ class LLMClient:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-        # OpenRouter reyting sahifasida ko'rinish uchun (ixtiyoriy)
+        # To appear on the OpenRouter leaderboard page (optional)
         if site := env_str("OPENROUTER_SITE_URL"):
             headers["HTTP-Referer"] = site
         if name := env_str("OPENROUTER_SITE_NAME"):
@@ -182,7 +182,7 @@ class LLMClient:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    # ─────────────────────── Asosiy API ───────────────────────
+    # ─────────────────────── Public API ───────────────────────
 
     def complete(
         self,
@@ -195,10 +195,10 @@ class LLMClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> LLMResponse:
-        """Bosqich sozlamalari bo'yicha LLM chaqiruvi.
+        """An LLM call using the stage's settings.
 
-        `stage` — models.yaml dagi bosqich nomi (rank, enrich, write).
-        Model ishlamasa fallback zanjiri bo'ylab o'tadi.
+        `stage` is the stage name from models.yaml (rank, enrich, write).
+        If a model fails, it walks down the fallback chain.
         """
         self._check_cost_limit(stage)
 
@@ -230,10 +230,10 @@ class LLMClient:
                 raise
             except LLMError as exc:
                 errors.append(f"{model}: {exc}")
-                log.warning("Model %s ishlamadi (%s), keyingisiga o'tilmoqda", model, exc)
+                log.warning("Model %s failed (%s), moving on to the next one", model, exc)
 
         raise AllModelsFailed(
-            f"'{stage}' bosqichi uchun barcha modellar ishlamadi:\n  " + "\n  ".join(errors)
+            f"Every model failed for the '{stage}' stage:\n  " + "\n  ".join(errors)
         )
 
     def complete_with_model(
@@ -248,10 +248,10 @@ class LLMClient:
         max_tokens: int = 2000,
         temperature: float = 0.7,
     ) -> LLMResponse:
-        """Aniq model bilan chaqiruv — fallback zanjirisiz.
+        """A call against a specific model — no fallback chain.
 
-        Model taqqoslash uchun: fallback ishlasa qaysi model javob
-        berganini bilib bo'lmaydi, natija esa shu savolga bog'liq.
+        For model comparisons: if a fallback kicks in you cannot tell
+        which model answered, and that is exactly what is being measured.
         """
         self._check_cost_limit(stage)
 
@@ -276,7 +276,7 @@ class LLMClient:
             cluster_id=cluster_id,
         )
 
-    # ─────────────────────── Ichki mantiq ───────────────────────
+    # ─────────────────────── Internals ──────────────────────────
 
     def _check_cost_limit(self, stage: str) -> None:
         limits = self.models.limits
@@ -285,9 +285,9 @@ class LLMClient:
         spent = today_cost_usd(stages, include=include)
         if spent >= limit:
             raise CostLimitExceeded(
-                f"'{stage}' uchun kunlik xarajat limiti oshdi: "
+                f"Daily cost limit exceeded for '{stage}': "
                 f"${spent:.4f} / ${limit:.2f}. "
-                f"Limitni models.yaml (limits.{key}) da o'zgartiring."
+                f"Change the limit in models.yaml (limits.{key})."
             )
 
     def _call_with_retry(
@@ -308,7 +308,7 @@ class LLMClient:
             try:
                 response = self._client.post(API_URL, json=payload)
             except httpx.RequestError as exc:
-                last_error = f"tarmoq xatosi: {exc}"
+                last_error = f"network error: {exc}"
                 self._record_failure(stage, model, requested_model, attempt, last_error, cluster_id)
                 if attempt < limits.max_retries:
                     self._sleep_backoff(attempt)
@@ -328,7 +328,7 @@ class LLMClient:
                 raise LLMError(last_error)
 
             if response.status_code >= 400:
-                # 400/401/403/404 — qayta urinish foydasiz
+                # 400/401/403/404 — retrying would be pointless
                 last_error = f"HTTP {response.status_code}: {response.text[:300]}"
                 self._record_failure(
                     stage, model, requested_model, attempt, last_error, cluster_id, duration_ms
@@ -345,10 +345,10 @@ class LLMClient:
                 attempt=attempt,
             )
 
-        raise LLMError(last_error or "noma'lum xato")
+        raise LLMError(last_error or "unknown error")
 
     def _sleep_backoff(self, attempt: int, retry_after: str | None = None) -> None:
-        """Exponential backoff + jitter. Retry-After sarlavhasi bo'lsa unga bo'ysunadi."""
+        """Exponential backoff plus jitter. Honors the Retry-After header if present."""
         if retry_after:
             try:
                 delay = float(retry_after)
@@ -356,8 +356,8 @@ class LLMClient:
                 delay = self.models.limits.retry_base_delay * (2 ** (attempt - 1))
         else:
             delay = self.models.limits.retry_base_delay * (2 ** (attempt - 1))
-        delay += random.uniform(0, delay * 0.25)  # noqa: S311 — jitter, kriptografik emas
-        log.info("Qayta urinishdan oldin %.1f soniya kutilmoqda (urinish %d)", delay, attempt)
+        delay += random.uniform(0, delay * 0.25)  # noqa: S311 — jitter, not cryptographic
+        log.info("Waiting %.1f seconds before retrying (attempt %d)", delay, attempt)
         time.sleep(delay)
 
     def _record_failure(
@@ -370,7 +370,7 @@ class LLMClient:
         cluster_id: int | None,
         duration_ms: int | None = None,
     ) -> None:
-        log.warning("LLM xatosi (%s, %s, urinish %d): %s", stage, model, attempt, error)
+        log.warning("LLM error (%s, %s, attempt %d): %s", stage, model, attempt, error)
         _record_call(
             stage=stage,
             model=model,
@@ -393,28 +393,28 @@ class LLMClient:
         duration_ms: int,
         attempt: int,
     ) -> LLMResponse:
-        # OpenRouter 200 bilan ham xato qaytarishi mumkin
+        # OpenRouter can return an error even with a 200 status
         if "error" in data and not data.get("choices"):
             message = str(data["error"].get("message", data["error"]))
             self._record_failure(
                 stage, model, requested_model, attempt, message, cluster_id, duration_ms
             )
-            raise LLMError(f"OpenRouter xatosi: {message}")
+            raise LLMError(f"OpenRouter error: {message}")
 
         choices = data.get("choices") or []
         if not choices:
-            raise LLMError(f"Javobda 'choices' bo'sh: {str(data)[:300]}")
+            raise LLMError(f"'choices' is empty in the response: {str(data)[:300]}")
 
         text = (choices[0].get("message") or {}).get("content") or ""
         if not text.strip():
             finish = choices[0].get("finish_reason")
-            raise LLMError(f"Model bo'sh javob qaytardi (finish_reason={finish})")
+            raise LLMError(f"The model returned an empty response (finish_reason={finish})")
 
         usage = data.get("usage") or {}
         prompt_tokens = int(usage.get("prompt_tokens", 0))
         completion_tokens = int(usage.get("completion_tokens", 0))
 
-        # Haqiqatda ishlagan model — OpenRouter routing tufayli farq qilishi mumkin
+        # The model that actually ran — it can differ due to OpenRouter routing
         actual_model = data.get("model") or model
         cost = self._cost(actual_model, prompt_tokens, completion_tokens, usage)
 
@@ -432,7 +432,7 @@ class LLMClient:
         )
 
         log.info(
-            "LLM ok: %s (%s) — %d+%d token, $%.5f, %d ms",
+            "LLM ok: %s (%s) — %d+%d tokens, $%.5f, %d ms",
             stage,
             actual_model,
             prompt_tokens,
@@ -455,11 +455,11 @@ class LLMClient:
     def _cost(
         self, model: str, prompt_tokens: int, completion_tokens: int, usage: dict[str, Any]
     ) -> float:
-        """Xarajat: models.yaml narxlaridan, bo'lmasa OpenRouter `usage.cost` dan."""
+        """Cost: from the models.yaml prices, otherwise from OpenRouter's `usage.cost`."""
         price = self.models.price(model)
         if price is not None:
             return price.cost_usd(prompt_tokens, completion_tokens)
         if (reported := usage.get("cost")) is not None:
             return float(reported)
-        log.warning("Model %s uchun narx noma'lum — xarajat 0 deb hisoblandi", model)
+        log.warning("Price unknown for model %s — counting the cost as 0", model)
         return 0.0

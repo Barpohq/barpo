@@ -1,10 +1,11 @@
-"""Doimiy rejim — serverlarni jadval bo'yicha tekshirish.
+"""Continuous mode — checking servers on a schedule.
 
-Bot scheduler'idan alohida jarayon: bot 3 soatda, monitor 10 daqiqada
-ishlaydi, va botning deploy'i monitorni to'xtatmasligi kerak.
+A separate process from the bot's scheduler: the bot runs every 3 hours,
+the monitor every 10 minutes, and deploying the bot must not take the
+monitor down with it.
 
-`run_cycle()` hech qachon exception tashlamaydi — aks holda APScheduler
-jobni o'chirib qo'yadi va monitor jimgina o'lib qoladi.
+`run_cycle()` never raises — otherwise APScheduler would disable the job
+and the monitor would die silently.
 """
 
 from __future__ import annotations
@@ -23,14 +24,14 @@ from monitor.config import DEFAULT_INTERVAL_MINUTES
 
 log = get_logger(__name__)
 
-# Eski yozuvlarni tozalash vaqti (UTC). 3:00 UTC = 8:00 Toshkent —
-# botning kunlik hisobotidan (4:00 UTC) oldin, yuk kam paytda.
+# When old rows are pruned (UTC). 3:00 UTC = 8:00 Tashkent — before the
+# bot's daily report (4:00 UTC), during a quiet period.
 PRUNE_HOUR_UTC = 3
 KEEP_DAYS = 30
 
 
 def run_cycle(*, diagnose: bool = True) -> None:
-    """Bitta tekshiruv sikli. Hech qachon exception tashlamaydi."""
+    """A single check cycle. Never raises."""
     started = datetime.now(UTC)
 
     try:
@@ -38,22 +39,22 @@ def run_cycle(*, diagnose: bool = True) -> None:
 
         report = run_checks(notify=True, diagnose=diagnose)
         elapsed = (datetime.now(UTC) - started).total_seconds()
-        log.info("Sikl: %s (%.1f soniya)", report.summary(), elapsed)
-    except Exception as exc:  # noqa: BLE001 — job o'chib qolmasin
-        log.exception("Tekshiruv siklida kutilmagan xato")
+        log.info("Cycle: %s (%.1fs)", report.summary(), elapsed)
+    except Exception as exc:  # noqa: BLE001 — the job must not get disabled
+        log.exception("Unexpected error in the check cycle")
         log_error("monitor.scheduler", str(exc), traceback=traceback.format_exc())
 
 
 def prune_old() -> None:
-    """Eski tekshiruv yozuvlarini o'chirish."""
+    """Delete old check rows."""
     try:
         from monitor.state import prune
 
         removed = prune(KEEP_DAYS)
         if removed:
-            log.info("Tozalandi: %d ta eski yozuv (%d kundan eski)", removed, KEEP_DAYS)
+            log.info("Pruned %d old rows (older than %d days)", removed, KEEP_DAYS)
     except Exception as exc:  # noqa: BLE001
-        log.exception("Tozalashda xato")
+        log.exception("Error while pruning")
         log_error("monitor.scheduler", str(exc), traceback=traceback.format_exc())
 
 
@@ -62,13 +63,13 @@ def run_forever(
     *,
     diagnose: bool = True,
 ) -> int:
-    """Scheduler bilan doimiy ishlash. SIGTERM/SIGINT da toza to'xtaydi."""
+    """Run continuously under the scheduler. Shuts down cleanly on SIGTERM/SIGINT."""
     check_schema()
 
     scheduler = BackgroundScheduler(
         timezone="UTC",
         job_defaults={
-            # Sekin sikl keyingisiga qo'shilib ketmasin (SSH timeout 20s × 5 server)
+            # Don't let a slow cycle overlap the next one (SSH timeout 20s × 5 servers)
             "max_instances": 1,
             "coalesce": True,
             "misfire_grace_time": 300,
@@ -79,37 +80,37 @@ def run_forever(
         run_cycle,
         CronTrigger(minute=f"*/{interval_minutes}"),
         id="monitor",
-        name=f"Tekshiruv (har {interval_minutes} daqiqada)",
+        name=f"Check (every {interval_minutes} minutes)",
         kwargs={"diagnose": diagnose},
     )
     scheduler.add_job(
         prune_old,
         CronTrigger(hour=PRUNE_HOUR_UTC, minute=30),
         id="prune",
-        name=f"Eski yozuvlarni tozalash ({PRUNE_HOUR_UTC}:30 UTC)",
+        name=f"Prune old rows ({PRUNE_HOUR_UTC}:30 UTC)",
     )
 
     stop_event = threading.Event()
 
     def handle_signal(signum: int, _frame: object) -> None:
-        log.info("Signal %s qabul qilindi, to'xtatilmoqda...", signal.Signals(signum).name)
+        log.info("Received signal %s, shutting down...", signal.Signals(signum).name)
         stop_event.set()
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
     scheduler.start()
-    log.info("Monitor scheduler ishga tushdi. Rejadagi ishlar:")
+    log.info("Monitor scheduler started. Scheduled jobs:")
     for job in scheduler.get_jobs():
-        log.info("  %-44s keyingi: %s", job.name, job.next_run_time)
+        log.info("  %-44s next: %s", job.name, job.next_run_time)
 
-    # Ishga tushganda darhol bir sikl — 10 daqiqa kutmaslik uchun
-    log.info("Boshlang'ich sikl ishga tushirilmoqda...")
+    # Run one cycle immediately on startup so we don't wait 10 minutes
+    log.info("Running initial cycle...")
     run_cycle(diagnose=diagnose)
 
     stop_event.wait()
 
-    log.info("To'xtatilmoqda (joriy sikl tugashini kutmoqda)...")
+    log.info("Shutting down (waiting for the current cycle to finish)...")
     scheduler.shutdown(wait=True)
-    log.info("To'xtatildi.")
+    log.info("Stopped.")
     return 0

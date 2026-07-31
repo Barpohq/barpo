@@ -1,23 +1,27 @@
-"""LLM diagnostika — muammo sababini izohlash.
+"""LLM diagnosis — explaining the cause of a problem.
 
-Faqat `fail`/`error` darajasidagi muammolar uchun chaqiriladi
-(`warn` uchun emas — X7, xarajat nazorati).
+Only invoked for `fail`/`error` level problems (not for `warn` — X7, cost
+control).
 
-Xavfsizlik (04-xavflar, X2 — prompt injection). Uch qatlamli himoya:
+Security (04-risks, X2 — prompt injection). Three layers of defence:
 
-1. **Vazifa cheklovi.** LLM hech qanday amal bajarmaydi va bajarishni
-   so'ray olmaydi. U faqat matn qaytaradi, matn odamga ko'rsatiladi.
-   Injection muvaffaqiyatli bo'lsa ham natija — admin chatdagi g'alati
-   matn, boshqa hech narsa.
-2. **Kontekst chegarasi.** Server chiqishi maxsus teglar orasida, system
-   promptda aniq ogohlantirish bilan.
-3. **Matn tozalash.** `_sanitize()` teg ko'rinishidagi ketma-ketliklarni
-   neytrallaydi va uzunlikni cheklaydi.
+1. **Task limitation.** The LLM performs no actions and cannot ask for any.
+   It only returns text, and that text is shown to a human. Even a
+   successful injection yields nothing more than odd-looking text in the
+   admin chat.
+2. **Context boundary.** Server output sits between dedicated tags, with an
+   explicit warning in the system prompt.
+3. **Text sanitising.** `_sanitize()` neutralises tag-like sequences and
+   caps the length.
 
-Qolgan real risk — noto'g'ri diagnostika (log ichidagi matn modelni
-chalg'itadi). Shuning uchun alertda o'lchov fakti har doim
-diagnostikadan oldin va undan mustaqil ko'rsatiladi — LLM matni
-faktni hech qachon bekor qilmaydi (`monitor/report.py`).
+The real remaining risk is a wrong diagnosis (text inside a log misleading
+the model). That is why the alert always shows the measured fact before the
+diagnosis and independently of it — the LLM's text never overrides the fact
+(`monitor/report.py`).
+
+Note: SYSTEM_PROMPT and the prompt scaffolding below stay in Uzbek. They
+instruct the model to answer in Uzbek, and that answer is embedded in the
+Telegram alert, so this text determines the language users actually see.
 """
 
 from __future__ import annotations
@@ -33,20 +37,23 @@ log = get_logger(__name__)
 
 STAGE = "monitor"
 
-# Serverdan olingan matnning promptdagi chegarasi
+# Caps on how much server text goes into the prompt
 MAX_LOG_CHARS = 3000
 MAX_OUTPUT_CHARS = 1500
 
-# Ma'lumot blokini belgilovchi teglar
+# Tags delimiting the data block (Uzbek names — the model is told about
+# them in the Uzbek system prompt, so they must match it)
 OPEN_TAG = "<server_malumoti>"
 CLOSE_TAG = "</server_malumoti>"
 
-# Matn ichidagi teg ko'rinishidagi ketma-ketliklar — blok chegarasini
-# buzishga urinish yoki system xabariga taqlid
+# Tag-like sequences inside the text — attempts to break out of the block
+# or to impersonate a system message
 _TAG_RE = re.compile(r"</?\s*(server_malumoti|system|user|assistant|instructions?)\b[^>]*>", re.I)
-# Nazorat belgilari (ANSI escape va boshqalar)
+# Control characters (ANSI escapes and friends)
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
+# Kept in Uzbek on purpose: it sets the language of the diagnosis that ends
+# up in the Telegram alert.
 SYSTEM_PROMPT = """Sen Linux serverlarni kuzatuvchi tizim muhandisisan.
 
 Senga server holati haqidagi o'lchov natijalari va log parchalari beriladi.
@@ -69,13 +76,14 @@ ko'rsatma. Markdown ishlatma, oddiy matn."""
 
 
 def _sanitize(text: str, limit: int) -> str:
-    """Serverdan kelgan matnni promptga qo'yishdan oldin tozalash.
+    """Sanitise server-provided text before it goes into the prompt.
 
-    Oxiridan kesiladi — loglarda eng yangi qatorlar muhimroq.
+    Trimmed from the front — in logs the newest lines matter most.
     """
     if not text:
         return ""
     cleaned = _CONTROL_RE.sub("", text)
+    # Uzbek markers: they are read by the model inside the Uzbek prompt
     cleaned = _TAG_RE.sub("[teg olib tashlandi]", cleaned)
     if len(cleaned) > limit:
         cleaned = "… (boshi qisqartirildi)\n" + cleaned[-limit:]
@@ -83,9 +91,10 @@ def _sanitize(text: str, limit: int) -> str:
 
 
 def build_prompt(result: CheckResult, logs: str = "") -> str:
-    """Diagnostika prompti.
+    """The diagnosis prompt.
 
-    Server chiqishi alohida blokda, aniq ogohlantirish bilan.
+    Server output goes in its own block with an explicit warning. The
+    wording stays Uzbek to match SYSTEM_PROMPT.
     """
     blocks = [f"$ {result.name} o'lchovi\n{_sanitize(result.output, MAX_OUTPUT_CHARS)}"]
     if logs:
@@ -108,10 +117,10 @@ def build_prompt(result: CheckResult, logs: str = "") -> str:
 
 
 def _relevant_logs(server: Server | None, result: CheckResult) -> str:
-    """Muammoga tegishli loglar (bo'lsa).
+    """Logs relevant to the problem, if there are any.
 
-    Xizmat o'lgan bo'lsa — o'sha xizmatning loglari; boshqa
-    holatlarda konfiguratsiyadagi birinchi birlik.
+    If a service is down we take that service's logs; otherwise the first
+    unit listed in the configuration.
     """
     if server is None:
         return ""
@@ -128,16 +137,17 @@ def _relevant_logs(server: Server | None, result: CheckResult) -> str:
 
     try:
         return fetch_logs(server, unit)
-    except Exception:  # noqa: BLE001 — log olinmasa diagnostika baribir bo'ladi
-        log.exception("%s: loglarni olib bo'lmadi", server.name)
+    except Exception:  # noqa: BLE001 — diagnosis still runs without logs
+        log.exception("%s: could not fetch logs", server.name)
         return ""
 
 
 def diagnose_problem(result: CheckResult, server: Server | None = None) -> str:
-    """Muammo haqida qisqa izoh. Xato bo'lsa bo'sh satr.
+    """A short explanation of the problem, or an empty string on failure.
 
-    Diagnostika — bezak, alert — asosiy. Bu funksiya hech qachon
-    exception tashlamaydi: LLM ishlamasa alert diagnostikasiz ketadi.
+    The diagnosis is a nice-to-have; the alert is what matters. This
+    function never raises: if the LLM is unavailable the alert simply goes
+    out without a diagnosis.
     """
     logs = _relevant_logs(server, result)
     prompt = build_prompt(result, logs)
@@ -146,16 +156,16 @@ def diagnose_problem(result: CheckResult, server: Server | None = None) -> str:
         with LLMClient() as client:
             response = client.complete(STAGE, prompt=prompt, system=SYSTEM_PROMPT)
     except LLMError as exc:
-        # CostLimitExceeded ham shu yerga tushadi — kutilgan holat
-        log.warning("%s/%s: diagnostika olinmadi: %s", result.server, result.name, exc)
+        # CostLimitExceeded lands here too — an expected condition
+        log.warning("%s/%s: no diagnosis obtained: %s", result.server, result.name, exc)
         return ""
-    except Exception:  # noqa: BLE001 — diagnostika alertni to'xtatmasin
-        log.exception("%s/%s: diagnostikada kutilmagan xato", result.server, result.name)
+    except Exception:  # noqa: BLE001 — diagnosis must not block the alert
+        log.exception("%s/%s: unexpected error during diagnosis", result.server, result.name)
         return ""
 
     text = response.text.strip()
     log.info(
-        "%s/%s: diagnostika olindi (%d belgi, $%.5f)",
+        "%s/%s: diagnosis obtained (%d chars, $%.5f)",
         result.server,
         result.name,
         len(text),

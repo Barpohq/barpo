@@ -1,67 +1,67 @@
-// Serverlar sahifasi — haqiqiy SSH boshqaruvi.
+// Servers page — real SSH management.
 //
-// Server qo'shish = backend platforma kalitini serverga joylaydi, shundan
-// keyin platformada HAM terminalda `ssh <nom>` parolsiz ishlaydi. Kartadagi
-// metrikalar har ochilishda SSH orqali jonli o'qiladi (bazada saqlanmaydi),
-// shuning uchun sekin serverda karta bir necha soniya "tekshirilmoqda"
-// holatida turadi — bu xato emas.
+// Adding a server = the backend installs the platform key on it, after which
+// `ssh <name>` works without a password in your terminal TOO. The metrics on
+// the card are read live over SSH every time the page opens (they are not
+// stored in the database), so on a slow server the card sits in the "checking"
+// state for a few seconds — that is not an error.
 
 import { useCallback, useEffect, useState } from 'react'
-import type { Server, ServerMetrika } from '@platforma/shared'
+import type { Server, ServerMetrics } from '@platforma/shared'
 import {
-  ApiXatosi,
-  serverMetrikaOl,
-  serverOchir,
-  serverQosh,
-  serverlarOl,
+  ApiError,
+  fetchServerMetrics,
+  deleteServer,
+  addServer,
+  fetchServers,
 } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { Card, Meter, PageHead, StatusDot } from '../ui'
 
 // ---------------------------------------------------------------------------
-// Qo'shish modali
+// Add modal
 // ---------------------------------------------------------------------------
 
-function QoshishModal({
+function AddModal({
   onClose,
-  onQoshildi,
+  onAdded,
 }: {
   onClose: () => void
-  onQoshildi: (server: Server, ulanishXatosi?: string) => void
+  onAdded: (server: Server, connectionError?: string) => void
 }) {
-  const [nom, setNom] = useState('')
+  const [name, setName] = useState('')
   const [host, setHost] = useState('')
   const [port, setPort] = useState('22')
   const [username, setUsername] = useState('root')
-  const [parol, setParol] = useState('')
-  const [ishlayapti, setIshlayapti] = useState(false)
-  const [xato, setXato] = useState<string | null>(null)
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const yubor = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIshlayapti(true)
-    setXato(null)
+    setBusy(true)
+    setError(null)
     try {
-      const { server, ulanishXatosi } = await serverQosh({
-        name: nom.trim(),
+      const { server, connectionError } = await addServer({
+        name: name.trim(),
         host: host.trim(),
         port: port.trim(),
         username: username.trim(),
-        parol: parol || undefined,
+        password: password || undefined,
       })
-      onQoshildi(server, ulanishXatosi)
+      onAdded(server, connectionError)
       onClose()
-    } catch (x) {
-      setXato(
-        x instanceof ApiXatosi
-          ? `${x.message}${x.detail ? ` — ${x.detail}` : ''}`
+    } catch (e) {
+      setError(
+        e instanceof ApiError
+          ? `${e.message}${e.detail ? ` — ${e.detail}` : ''}`
           : 'Could not add the server',
       )
-      setIshlayapti(false)
+      setBusy(false)
     }
   }
 
-  const kiritish =
+  const inputClass =
     'mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-sm ' +
     'outline-none focus:border-lazur-dim'
 
@@ -74,20 +74,20 @@ function QoshishModal({
       aria-label="Add server"
     >
       <Card className="rise-in w-full max-w-md p-6">
-        <form onClick={(e) => e.stopPropagation()} onSubmit={yubor}>
+        <form onClick={(e) => e.stopPropagation()} onSubmit={submit}>
           <h2 className="font-display text-lg font-semibold">Add server</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted">
             The platform installs its SSH key on the server — after that{' '}
-            <code className="font-mono text-lazur">ssh {nom.trim() || 'server-name'}</code>{' '}
+            <code className="font-mono text-lazur">ssh {name.trim() || 'server-name'}</code>{' '}
             works without a password in your terminal too.
           </p>
 
           <label className="mt-4 block text-xs font-medium uppercase tracking-wider text-faint">
             Name (ssh alias)
             <input
-              className={kiritish}
-              value={nom}
-              onChange={(e) => setNom(e.target.value)}
+              className={inputClass}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               placeholder="frankfurt-1"
               autoFocus
               required
@@ -98,7 +98,7 @@ function QoshishModal({
             <label className="block flex-1 text-xs font-medium uppercase tracking-wider text-faint">
               Host
               <input
-                className={kiritish}
+                className={inputClass}
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
                 placeholder="203.0.113.10"
@@ -108,7 +108,7 @@ function QoshishModal({
             <label className="block w-24 text-xs font-medium uppercase tracking-wider text-faint">
               Port
               <input
-                className={kiritish}
+                className={inputClass}
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
                 inputMode="numeric"
@@ -118,16 +118,16 @@ function QoshishModal({
 
           <label className="mt-3 block text-xs font-medium uppercase tracking-wider text-faint">
             User
-            <input className={kiritish} value={username} onChange={(e) => setUsername(e.target.value)} />
+            <input className={inputClass} value={username} onChange={(e) => setUsername(e.target.value)} />
           </label>
 
           <label className="mt-3 block text-xs font-medium uppercase tracking-wider text-faint">
             Password (optional)
             <input
-              className={kiritish}
+              className={inputClass}
               type="password"
-              value={parol}
-              onChange={(e) => setParol(e.target.value)}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               placeholder="leave empty if your key already gets you in"
               autoComplete="off"
             />
@@ -137,9 +137,9 @@ function QoshishModal({
             the initial connection and is never stored anywhere.
           </p>
 
-          {xato && (
+          {error && (
             <p className="mt-3 rounded-lg bg-coral/10 px-3 py-2 text-xs leading-relaxed text-coral">
-              {xato}
+              {error}
             </p>
           )}
 
@@ -153,10 +153,10 @@ function QoshishModal({
             </button>
             <button
               type="submit"
-              disabled={ishlayapti}
+              disabled={busy}
               className="rounded-lg bg-lazur-dim px-4 py-1.5 text-sm font-medium text-bg disabled:opacity-60"
             >
-              {ishlayapti ? 'Installing key…' : 'Connect'}
+              {busy ? 'Installing key…' : 'Connect'}
             </button>
           </div>
         </form>
@@ -166,31 +166,31 @@ function QoshishModal({
 }
 
 // ---------------------------------------------------------------------------
-// O'chirish tasdig'i
+// Delete confirmation
 // ---------------------------------------------------------------------------
 
-function OchirishModal({
+function DeleteModal({
   server,
   onClose,
-  onOchirildi,
+  onDeleted,
 }: {
   server: Server
   onClose: () => void
-  onOchirildi: () => void
+  onDeleted: () => void
 }) {
-  const [ishlayapti, setIshlayapti] = useState(false)
-  const [xato, setXato] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const ochir = async () => {
-    setIshlayapti(true)
-    setXato(null)
+  const remove = async () => {
+    setBusy(true)
+    setError(null)
     try {
-      await serverOchir(server.id)
-      onOchirildi()
+      await deleteServer(server.id)
+      onDeleted()
       onClose()
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not delete')
-      setIshlayapti(false)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not delete')
+      setBusy(false)
     }
   }
 
@@ -213,8 +213,8 @@ function OchirishModal({
             — remove it by hand later if you want.
           </p>
 
-          {xato && (
-            <p className="mt-3 rounded-lg bg-coral/10 px-3 py-2 text-xs text-coral">{xato}</p>
+          {error && (
+            <p className="mt-3 rounded-lg bg-coral/10 px-3 py-2 text-xs text-coral">{error}</p>
           )}
 
           <div className="mt-5 flex justify-end gap-2">
@@ -225,11 +225,11 @@ function OchirishModal({
               Cancel
             </button>
             <button
-              onClick={ochir}
-              disabled={ishlayapti}
+              onClick={remove}
+              disabled={busy}
               className="rounded-lg bg-coral/80 px-4 py-1.5 text-sm font-medium text-bg disabled:opacity-60"
             >
-              {ishlayapti ? 'Deleting…' : 'Delete'}
+              {busy ? 'Deleting…' : 'Delete'}
             </button>
           </div>
         </div>
@@ -239,34 +239,34 @@ function OchirishModal({
 }
 
 // ---------------------------------------------------------------------------
-// Server kartasi
+// Server card
 // ---------------------------------------------------------------------------
 
-function ServerKartasi({
+function ServerCard({
   server,
-  onOchir,
+  onDelete,
 }: {
   server: Server
-  onOchir: (s: Server) => void
+  onDelete: (s: Server) => void
 }) {
-  // undefined = hali so'ralmoqda
-  const [metrika, setMetrika] = useState<ServerMetrika | undefined>()
+  // undefined = still being requested
+  const [metrics, setMetrics] = useState<ServerMetrics | undefined>()
 
   useEffect(() => {
-    let tirik = true
-    setMetrika(undefined)
-    serverMetrikaOl(server.id)
-      .then((j) => tirik && setMetrika(j.metrika))
-      .catch((x) => tirik && setMetrika({ holat: 'xato', xato: x instanceof Error ? x.message : String(x) }))
+    let alive = true
+    setMetrics(undefined)
+    fetchServerMetrics(server.id)
+      .then((r) => alive && setMetrics(r.metrics))
+      .catch((e) => alive && setMetrics({ status: 'error', error: e instanceof Error ? e.message : String(e) }))
     return () => {
-      tirik = false
+      alive = false
     }
   }, [server.id])
 
-  const ulangan = metrika?.holat === 'ulangan'
+  const connected = metrics?.status === 'connected'
 
   return (
-    <Card className={`p-5 ${metrika?.holat === 'xato' ? 'border-coral/40' : ''}`}>
+    <Card className={`p-5 ${metrics?.status === 'error' ? 'border-coral/40' : ''}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate font-mono text-[15px] font-semibold">{server.name}</h2>
@@ -276,36 +276,36 @@ function ServerKartasi({
           </div>
           <div className="mt-0.5 font-mono text-[11px] text-faint">ssh {server.name}</div>
         </div>
-        {metrika === undefined ? (
+        {metrics === undefined ? (
           <span className="text-xs text-faint">checking…</span>
         ) : (
-          <StatusDot status={ulangan ? 'healthy' : 'offline'} />
+          <StatusDot status={connected ? 'healthy' : 'offline'} />
         )}
       </div>
 
-      {ulangan && (
+      {connected && (
         <div className="mt-4 space-y-2.5">
           {(['cpu', 'ram', 'disk'] as const).map((k) => (
             <div key={k} className="flex items-center gap-3">
               <span className="w-8 font-mono text-[11px] uppercase text-faint">{k}</span>
               <div className="flex-1">
-                <Meter value={metrika?.[k] ?? 0} />
+                <Meter value={metrics?.[k] ?? 0} />
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {metrika?.holat === 'xato' && (
+      {metrics?.status === 'error' && (
         <p className="mt-3 rounded-lg bg-coral/10 px-3 py-2 font-mono text-[11px] leading-relaxed text-coral">
-          {metrika.xato}
+          {metrics.error}
         </p>
       )}
 
       <div className="mt-4 flex items-center justify-between border-t border-line pt-3 text-[11px] text-faint">
-        <span className="font-mono">{ulangan && metrika?.uptime ? `uptime ${metrika.uptime}` : '—'}</span>
+        <span className="font-mono">{connected && metrics?.uptime ? `uptime ${metrics.uptime}` : '—'}</span>
         <button
-          onClick={() => onOchir(server)}
+          onClick={() => onDelete(server)}
           className="rounded-md px-2 py-1 text-coral/80 hover:bg-coral/10"
         >
           delete
@@ -316,26 +316,26 @@ function ServerKartasi({
 }
 
 // ---------------------------------------------------------------------------
-// Sahifa
+// Page
 // ---------------------------------------------------------------------------
 
 export default function Servers() {
-  const [serverlar, setServerlar] = useState<Server[]>([])
-  const [yuklanmoqda, setYuklanmoqda] = useState(true)
-  const [qoshishOchiq, setQoshishOchiq] = useState(false)
-  const [ochirilayotgan, setOchirilayotgan] = useState<Server | null>(null)
+  const [servers, setServers] = useState<Server[]>([])
+  const [loading, setLoading] = useState(true)
+  const [addOpen, setAddOpen] = useState(false)
+  const [deleting, setDeleting] = useState<Server | null>(null)
   const toast = useToast()
 
-  const yangila = useCallback(() => {
-    serverlarOl()
-      .then((j) => setServerlar(j.servers))
+  const refresh = useCallback(() => {
+    fetchServers()
+      .then((r) => setServers(r.servers))
       .catch(() => toast('Could not load the server list', 'error'))
-      .finally(() => setYuklanmoqda(false))
+      .finally(() => setLoading(false))
   }, [toast])
 
   useEffect(() => {
-    yangila()
-  }, [yangila])
+    refresh()
+  }, [refresh])
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -345,20 +345,20 @@ export default function Servers() {
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {serverlar.map((s) => (
-          <ServerKartasi key={s.id} server={s} onOchir={setOchirilayotgan} />
+        {servers.map((s) => (
+          <ServerCard key={s.id} server={s} onDelete={setDeleting} />
         ))}
 
         <Card className="flex flex-col items-center justify-center border-dashed p-5 text-center">
           <div className="font-display text-sm font-semibold text-muted">
-            {yuklanmoqda ? 'Loading…' : serverlar.length === 0 ? 'No servers yet' : 'Add server'}
+            {loading ? 'Loading…' : servers.length === 0 ? 'No servers yet' : 'Add server'}
           </div>
           <p className="mt-2 max-w-52 text-xs leading-relaxed text-faint">
             Enter a host and a name — the SSH key is installed automatically and
             no password is stored.
           </p>
           <button
-            onClick={() => setQoshishOchiq(true)}
+            onClick={() => setAddOpen(true)}
             className="mt-3 rounded-lg bg-lazur-dim px-4 py-1.5 text-sm font-medium text-bg"
           >
             Add
@@ -366,13 +366,13 @@ export default function Servers() {
         </Card>
       </div>
 
-      {qoshishOchiq && (
-        <QoshishModal
-          onClose={() => setQoshishOchiq(false)}
-          onQoshildi={(server, ulanishXatosi) => {
-            yangila()
-            if (ulanishXatosi) {
-              toast(`${server.name} added, but the check failed: ${ulanishXatosi}`, 'warning')
+      {addOpen && (
+        <AddModal
+          onClose={() => setAddOpen(false)}
+          onAdded={(server, connectionError) => {
+            refresh()
+            if (connectionError) {
+              toast(`${server.name} added, but the check failed: ${connectionError}`, 'warning')
             } else {
               toast(`${server.name} connected — «ssh ${server.name}» now works without a password`, 'success')
             }
@@ -380,13 +380,13 @@ export default function Servers() {
         />
       )}
 
-      {ochirilayotgan && (
-        <OchirishModal
-          server={ochirilayotgan}
-          onClose={() => setOchirilayotgan(null)}
-          onOchirildi={() => {
-            yangila()
-            toast(`${ochirilayotgan.name} deleted`, 'info')
+      {deleting && (
+        <DeleteModal
+          server={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            refresh()
+            toast(`${deleting.name} deleted`, 'info')
           }}
         />
       )}

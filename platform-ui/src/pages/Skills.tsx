@@ -1,79 +1,80 @@
-// Skilllar sahifasi — manba ulash, katalog, o'rnatish.
+// Skills page — connecting sources, the catalog, installing.
 //
-// Uch qatlam foydalanuvchi uchun ham ko'rinadi:
-//   MANBA   — ulangan GitHub repo (yuqorida)
-//   KATALOG — repo'lardan topilgan skilllar (pastda)
-//   QAMROV  — har skill qayerda ishlaydi (global / tanlangan loyihalar)
+// Three layers are visible to the user as well:
+//   SOURCE  — the connected GitHub repos (at the top)
+//   CATALOG — the skills found in those repos (below)
+//   SCOPE   — where each skill runs (globally / in selected projects)
 //
-// O'rnatish modalida qamrov tanlanadi. O'rnatilgan skillda ham o'sha modal
-// ochiladi — qamrovni keyin o'zgartirish uchun alohida oqim kerak emas.
+// The scope is picked in the install modal. The same modal opens for an
+// already-installed skill — no separate flow is needed to change the scope
+// later.
 
 import { useEffect, useMemo, useState } from 'react'
-import type { Project, Skill, SkillManba } from '@platforma/shared'
+import type { Project, Skill, SkillSource } from '@platforma/shared'
 import {
-  ApiXatosi,
-  loyihalarOl,
-  manbaOchir,
-  manbaQosh,
-  manbaSinxronla,
-  skillOrnat,
-  skillOrnatishniBekor,
-  skilllarniOl,
+  ApiError,
+  fetchProjects,
+  deleteSkillSource,
+  addSkillSource,
+  syncSkillSource,
+  installSkill,
+  uninstallSkill,
+  fetchSkills,
 } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { Card, PageHead } from '../ui'
 
 // ---------------------------------------------------------------------------
-// Qamrov modali
+// Scope modal
 // ---------------------------------------------------------------------------
 
-function QamrovModal({
+function ScopeModal({
   skill,
-  loyihalar,
+  projects,
   onClose,
-  onSaqla,
+  onSave,
 }: {
   skill: Skill
-  loyihalar: Project[]
+  projects: Project[]
   onClose: () => void
-  onSaqla: (global: boolean, projectIds: string[]) => Promise<void>
+  onSave: (global: boolean, projectIds: string[]) => Promise<void>
 }) {
-  const [global, setGlobal] = useState(skill.ornatilgan.some((o) => o.qamrov === 'global'))
-  const [tanlangan, setTanlangan] = useState<Set<string>>(
+  const [global, setGlobal] = useState(skill.installs.some((o) => o.scope === 'global'))
+  const [selected, setSelected] = useState<Set<string>>(
     new Set(
-      skill.ornatilgan.filter((o) => o.qamrov === 'loyiha' && o.projectId).map((o) => o.projectId!),
+      skill.installs.filter((o) => o.scope === 'project' && o.projectId).map((o) => o.projectId!),
     ),
   )
-  const [ishlayapti, setIshlayapti] = useState(false)
-  const [xato, setXato] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const hechnima = !global && tanlangan.size === 0
+  const nothing = !global && selected.size === 0
 
-  const saqla = async () => {
-    setIshlayapti(true)
-    setXato(null)
+  const save = async () => {
+    setBusy(true)
+    setError(null)
     try {
-      await onSaqla(global, [...tanlangan])
+      await onSave(global, [...selected])
       onClose()
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not save')
-      setIshlayapti(false)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not save')
+      setBusy(false)
     }
   }
 
   return (
-    // z-60: tafsilot modali ustida ochilsin (u z-50 da)
+    // z-60: it must open above the details modal (which is at z-50)
     <div
       className="fixed inset-0 z-60 flex items-center justify-center bg-bg/70 p-4 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={`${skill.nom} scope`}
+      aria-label={`${skill.name} scope`}
     >
       <Card className="rise-in w-full max-w-md p-6">
         <div onClick={(e) => e.stopPropagation()}>
-          <h2 className="font-display text-lg font-semibold">{skill.nom}</h2>
-          <p className="mt-1.5 text-sm text-muted">{skill.tavsif}</p>
+          <h2 className="font-display text-lg font-semibold">{skill.name}</h2>
+          <p className="mt-1.5 text-sm text-muted">{skill.description}</p>
 
           {skill.allowedTools && skill.allowedTools.length > 0 && (
             <div className="mt-4 rounded-lg border border-line bg-bg p-3">
@@ -87,8 +88,8 @@ function QamrovModal({
                   </span>
                 ))}
               </div>
-              {/* Ochiq aytamiz: bu ro'yxat hozircha MAJBURLANMAYDI. Foydalanuvchi
-                  uni haqiqiy cheklov deb o'ylab qolmasin. */}
+              {/* Said plainly: this list is NOT ENFORCED yet. The user must
+                  not mistake it for a real restriction. */}
               <p className="mt-2 text-[11px] leading-relaxed text-faint">
                 This list is informational. The actual limit is the platform's
                 permission system: dangerous actions still ask for approval.
@@ -116,22 +117,22 @@ function QamrovModal({
               </span>
             </label>
 
-            {loyihalar.length > 0 && (
+            {projects.length > 0 && (
               <>
                 <div className="mt-4 text-xs font-medium uppercase tracking-wider text-faint">
                   Or in selected projects
                 </div>
                 <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
-                  {loyihalar.map((l) => (
+                  {projects.map((l) => (
                     <label key={l.id} className="flex cursor-pointer items-center gap-2.5 text-sm">
                       <input
                         type="checkbox"
-                        checked={tanlangan.has(l.id)}
+                        checked={selected.has(l.id)}
                         onChange={(e) => {
-                          const yangi = new Set(tanlangan)
-                          if (e.target.checked) yangi.add(l.id)
-                          else yangi.delete(l.id)
-                          setTanlangan(yangi)
+                          const fresh = new Set(selected)
+                          if (e.target.checked) fresh.add(l.id)
+                          else fresh.delete(l.id)
+                          setSelected(fresh)
                         }}
                       />
                       <span className="text-muted">{l.name}</span>
@@ -148,7 +149,7 @@ function QamrovModal({
             security rules.
           </p>
 
-          {xato && <p className="mt-3 text-sm text-coral">{xato}</p>}
+          {error && <p className="mt-3 text-sm text-coral">{error}</p>}
 
           <div className="mt-5 flex justify-end gap-2">
             <button
@@ -158,11 +159,11 @@ function QamrovModal({
               Cancel
             </button>
             <button
-              onClick={saqla}
-              disabled={ishlayapti}
+              onClick={save}
+              disabled={busy}
               className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
             >
-              {ishlayapti ? 'Saving…' : hechnima ? 'Uninstall' : 'Save'}
+              {busy ? 'Saving…' : nothing ? 'Uninstall' : 'Save'}
             </button>
           </div>
         </div>
@@ -172,31 +173,31 @@ function QamrovModal({
 }
 
 // ---------------------------------------------------------------------------
-// Tafsilot modali
+// Details modal
 // ---------------------------------------------------------------------------
 
 /**
- * Skillning TO'LIQ ma'lumoti.
+ * The FULL information about a skill.
  *
- * Kartada tavsif ataylab qisqartiriladi (kartalar bir xil balandlikda
- * qolsin), shuning uchun to'liq matnni ko'rishning yo'li kerak. `docx`
- * kabi skilllarda tavsif 900+ belgi bo'ladi.
+ * On the card the description is deliberately truncated (so the cards stay the
+ * same height), which is why there has to be a way to read the whole text. For
+ * skills like `docx` the description runs past 900 characters.
  */
-function TafsilotModal({
+function DetailsModal({
   skill,
-  manbaNomi,
-  loyihaNomi,
+  sourceName,
+  projectName,
   onClose,
-  onQamrov,
+  onScope,
 }: {
   skill: Skill
-  manbaNomi: string
-  loyihaNomi: (id: string) => string
+  sourceName: string
+  projectName: (id: string) => string
   onClose: () => void
-  onQamrov: () => void
+  onScope: () => void
 }) {
-  const global = skill.ornatilgan.some((o) => o.qamrov === 'global')
-  const loyihalar = skill.ornatilgan.filter((o) => o.qamrov === 'loyiha' && o.projectId)
+  const global = skill.installs.some((o) => o.scope === 'global')
+  const projects = skill.installs.filter((o) => o.scope === 'project' && o.projectId)
 
   return (
     <div
@@ -204,18 +205,18 @@ function TafsilotModal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={`${skill.nom} details`}
+      aria-label={`${skill.name} details`}
     >
-      {/* `Card` onClick qabul qilmaydi (umumiy komponent), shuning uchun
-          tashqi div bilan o'raymiz — modal ichiga bosilganda yopilmasin */}
+      {/* `Card` does not accept onClick (it is a shared component), so we wrap
+          it in an outer div — clicking inside the modal must not close it */}
       <div
         className="rise-in flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-panel p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="font-display text-lg font-semibold">{skill.nom}</h2>
-            <p className="mt-0.5 font-mono text-xs text-faint">{manbaNomi}</p>
+            <h2 className="font-display text-lg font-semibold">{skill.name}</h2>
+            <p className="mt-0.5 font-mono text-xs text-faint">{sourceName}</p>
           </div>
           <button
             onClick={onClose}
@@ -226,20 +227,20 @@ function TafsilotModal({
           </button>
         </div>
 
-        {/* Uzun tavsif shu yerda scroll bo'ladi — modal o'zi cho'zilmaydi */}
+        {/* A long description scrolls here — the modal itself does not stretch */}
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted">{skill.tavsif}</p>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted">{skill.description}</p>
 
           <dl className="mt-5 space-y-3 border-t border-line pt-4 text-sm">
             <div>
               <dt className="text-xs font-medium uppercase tracking-wider text-faint">File</dt>
-              <dd className="mt-1 break-all font-mono text-[12px] text-muted">{skill.yol}</dd>
+              <dd className="mt-1 break-all font-mono text-[12px] text-muted">{skill.path}</dd>
             </div>
 
-            {skill.litsenziya && (
+            {skill.license && (
               <div>
                 <dt className="text-xs font-medium uppercase tracking-wider text-faint">License</dt>
-                <dd className="mt-1 text-muted">{skill.litsenziya}</dd>
+                <dd className="mt-1 text-muted">{skill.license}</dd>
               </div>
             )}
 
@@ -262,28 +263,28 @@ function TafsilotModal({
               <dt className="text-xs font-medium uppercase tracking-wider text-faint">Scope</dt>
               <dd className="mt-1 text-muted">
                 {global && <div className="text-mint">✓ Global — everywhere</div>}
-                {loyihalar.map((o) => (
+                {projects.map((o) => (
                   <div key={o.projectId} className="text-mint">
-                    ✓ {loyihaNomi(o.projectId!)}
+                    ✓ {projectName(o.projectId!)}
                   </div>
                 ))}
-                {!global && loyihalar.length === 0 && <span className="text-faint">not installed</span>}
+                {!global && projects.length === 0 && <span className="text-faint">not installed</span>}
               </dd>
             </div>
 
-            {skill.ogohlantirishlar.length > 0 && (
+            {skill.warnings.length > 0 && (
               <div>
                 <dt className="text-xs font-medium uppercase tracking-wider text-gold">
                   Warnings
                 </dt>
                 <dd className="mt-1.5">
                   <ul className="space-y-1 text-[13px] text-muted">
-                    {skill.ogohlantirishlar.map((o, i) => (
+                    {skill.warnings.map((o, i) => (
                       <li key={i}>• {o}</li>
                     ))}
                   </ul>
-                  {/* Ogohlantirish skill ishlashiga to'sqinlik qilmaydi —
-                      buni ochiq aytamiz, aks holda foydalanuvchi xato deb o'ylaydi */}
+                  {/* A warning does not stop the skill from working — we say
+                      so plainly, otherwise the user reads it as an error */}
                   <p className="mt-2 text-[11px] leading-relaxed text-faint">
                     These are mismatches with the spec. The skill still works.
                   </p>
@@ -301,10 +302,10 @@ function TafsilotModal({
             Close
           </button>
           <button
-            onClick={onQamrov}
+            onClick={onScope}
             className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110"
           >
-            {global || loyihalar.length > 0 ? 'Change scope' : 'Install'}
+            {global || projects.length > 0 ? 'Change scope' : 'Install'}
           </button>
         </div>
       </div>
@@ -313,75 +314,75 @@ function TafsilotModal({
 }
 
 // ---------------------------------------------------------------------------
-// Manbalar bo'limi
+// Sources section
 // ---------------------------------------------------------------------------
 
-function Manbalar({
-  manbalar,
-  onYangilandi,
+function Sources({
+  sources,
+  onRefreshed,
 }: {
-  manbalar: SkillManba[]
-  onYangilandi: () => void
+  sources: SkillSource[]
+  onRefreshed: () => void
 }) {
   const [url, setUrl] = useState('')
-  const [ishlayapti, setIshlayapti] = useState(false)
-  const [bandId, setBandId] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const toast = useToast()
 
-  const qosh = async () => {
-    if (!url.trim() || ishlayapti) return
-    setIshlayapti(true)
+  const add = async () => {
+    if (!url.trim() || busy) return
+    setBusy(true)
     try {
-      const natija = await manbaQosh(url.trim())
+      const result = await addSkillSource(url.trim())
       setUrl('')
-      const ogoh = natija.ogohlantirishlar.length
+      const warnCount = result.warnings.length
       toast(
-        `${natija.manba.owner}/${natija.manba.repo}: ${natija.qoshildi} skills found` +
-          (ogoh > 0 ? ` · ${ogoh} warnings` : ''),
-        // Ogohlantirish bo'lsa sariq: skilllar baribir qo'shildi, lekin
-        // foydalanuvchi ularni ko'rib chiqsin
-        ogoh > 0 ? 'warning' : 'success',
+        `${result.source.owner}/${result.source.repo}: ${result.added} skills found` +
+          (warnCount > 0 ? ` · ${warnCount} warnings` : ''),
+        // Gold when there are warnings: the skills were added anyway, but the
+        // user should look them over
+        warnCount > 0 ? 'warning' : 'success',
       )
-      onYangilandi()
-    } catch (x) {
+      onRefreshed()
+    } catch (e) {
       toast(
-        x instanceof ApiXatosi
-          ? [x.message, x.detail].filter(Boolean).join(' — ')
+        e instanceof ApiError
+          ? [e.message, e.detail].filter(Boolean).join(' — ')
           : 'Could not connect',
         'error',
       )
     } finally {
-      setIshlayapti(false)
+      setBusy(false)
     }
   }
 
-  const sinxronla = async (id: string) => {
-    setBandId(id)
+  const sync = async (id: string) => {
+    setBusyId(id)
     try {
-      const n = await manbaSinxronla(id)
+      const n = await syncSkillSource(id)
       toast(
-        `Synced: +${n.qoshildi} new, ${n.yangilandi} updated, -${n.ochirildi}`,
+        `Synced: +${n.added} new, ${n.updated} updated, -${n.deleted}`,
         'success',
       )
-      onYangilandi()
-    } catch (x) {
-      toast(x instanceof ApiXatosi ? x.message : 'Could not sync', 'error')
+      onRefreshed()
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not sync', 'error')
     } finally {
-      setBandId(null)
+      setBusyId(null)
     }
   }
 
-  const ochir = async (m: SkillManba) => {
+  const remove = async (m: SkillSource) => {
     if (!confirm(`Delete the source ${m.owner}/${m.repo} and all of its skills?`)) return
-    setBandId(m.id)
+    setBusyId(m.id)
     try {
-      await manbaOchir(m.id)
+      await deleteSkillSource(m.id)
       toast(`${m.owner}/${m.repo} deleted`, 'success')
-      onYangilandi()
-    } catch (x) {
-      toast(x instanceof ApiXatosi ? x.message : 'Could not delete', 'error')
+      onRefreshed()
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not delete', 'error')
     } finally {
-      setBandId(null)
+      setBusyId(null)
     }
   }
 
@@ -397,51 +398,51 @@ function Manbalar({
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && qosh()}
-          placeholder="anthropics/skills yoki https://github.com/..."
+          onKeyDown={(e) => e.key === 'Enter' && add()}
+          placeholder="anthropics/skills or https://github.com/..."
           className="flex-1 rounded-lg border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
         />
         <button
-          onClick={qosh}
-          disabled={ishlayapti || !url.trim()}
+          onClick={add}
+          disabled={busy || !url.trim()}
           className="rounded-lg bg-lazur-dim px-4 py-2 text-sm font-semibold text-bg transition hover:brightness-110 disabled:opacity-50"
         >
-          {ishlayapti ? 'Scanning…' : 'Connect'}
+          {busy ? 'Scanning…' : 'Connect'}
         </button>
       </div>
 
-      {manbalar.length > 0 && (
+      {sources.length > 0 && (
         <div className="mt-4 space-y-2 border-t border-line pt-4">
-          {manbalar.map((m) => {
-            // Standart manba platforma bilan birga keladi va har ishga
-            // tushishda qayta yaratiladi — uni o'chirish yoki sinxronlash
-            // ma'nosiz bo'lardi (tugma bosilardi, natija o'zgarmasdi).
-            const platformaniki = m.tur === 'platforma'
+          {sources.map((m) => {
+            // The builtin source ships with the platform and is recreated on
+            // every start — deleting or syncing it would be meaningless (the
+            // button would click, nothing would change).
+            const isBuiltin = m.kind === 'builtin'
             return (
               <div key={m.id} className="flex items-center justify-between gap-3 text-sm">
                 <div className="min-w-0">
                   <span className="font-mono text-[13px] text-ink">
-                    {platformaniki ? 'platform' : `${m.owner}/${m.repo}`}
+                    {isBuiltin ? 'platform' : `${m.owner}/${m.repo}`}
                   </span>
                   <span className="ml-2 text-xs text-faint">
-                    {platformaniki ? 'built-in skills' : m.ref}
-                    {!platformaniki &&
-                      m.oxirgiSinxron &&
-                      ` · ${new Date(m.oxirgiSinxron).toLocaleDateString('en-US')}`}
+                    {isBuiltin ? 'built-in skills' : m.ref}
+                    {!isBuiltin &&
+                      m.lastSync &&
+                      ` · ${new Date(m.lastSync).toLocaleDateString('en-US')}`}
                   </span>
                 </div>
-                {!platformaniki && (
+                {!isBuiltin && (
                   <div className="flex shrink-0 gap-2">
                     <button
-                      onClick={() => sinxronla(m.id)}
-                      disabled={bandId === m.id}
+                      onClick={() => sync(m.id)}
+                      disabled={busyId === m.id}
                       className="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:text-ink disabled:opacity-50"
                     >
-                      {bandId === m.id ? '…' : 'Sync'}
+                      {busyId === m.id ? '…' : 'Sync'}
                     </button>
                     <button
-                      onClick={() => ochir(m)}
-                      disabled={bandId === m.id}
+                      onClick={() => remove(m)}
+                      disabled={busyId === m.id}
                       className="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:text-coral disabled:opacity-50"
                     >
                       Delete
@@ -458,123 +459,123 @@ function Manbalar({
 }
 
 // ---------------------------------------------------------------------------
-// Sahifa
+// Page
 // ---------------------------------------------------------------------------
 
 export default function Skills() {
-  const [skilllar, setSkilllar] = useState<Skill[]>([])
-  const [manbalar, setManbalar] = useState<SkillManba[]>([])
-  const [loyihalar, setLoyihalar] = useState<Project[]>([])
-  const [yuklanmoqda, setYuklanmoqda] = useState(true)
-  const [xato, setXato] = useState<string | null>(null)
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [sources, setSources] = useState<SkillSource[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<Skill | null>(null)
-  const [tafsilot, setTafsilot] = useState<Skill | null>(null)
+  const [details, setDetails] = useState<Skill | null>(null)
 
-  // Qidiruv va filtrlar. Bir necha repo ulansa katalog yuzlab skillga
-  // yetadi — ro'yxatni ko'z bilan ko'rib chiqish imkonsiz bo'ladi.
-  const [qidiruv, setQidiruv] = useState('')
-  const [holatFiltri, setHolatFiltri] = useState<'hammasi' | 'ornatilgan' | 'ornatilmagan'>('hammasi')
-  const [manbaFiltri, setManbaFiltri] = useState<string>('hammasi')
+  // Search and filters. Connect a few repos and the catalog reaches hundreds
+  // of skills — scanning the list by eye becomes impossible.
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'installed' | 'not-installed'>('all')
+  const [sourceFilter, setSourceFilter] = useState<string>('all')
 
-  /** Yangi ro'yxatni ham QAYTARADI — chaqiruvchi ochiq modalni yangilay olsin */
-  const yukla = async (): Promise<Skill[] | null> => {
+  /** It also RETURNS the new list — so the caller can refresh an open modal */
+  const load = async (): Promise<Skill[] | null> => {
     try {
-      const [katalog, loyiha] = await Promise.all([skilllarniOl(), loyihalarOl()])
-      setSkilllar(katalog.skills)
-      setManbalar(katalog.manbalar)
-      setLoyihalar(loyiha)
-      setXato(null)
-      return katalog.skills
-    } catch (x) {
-      setXato(x instanceof ApiXatosi ? x.message : 'Could not load the data')
+      const [catalog, projectList] = await Promise.all([fetchSkills(), fetchProjects()])
+      setSkills(catalog.skills)
+      setSources(catalog.sources)
+      setProjects(projectList)
+      setError(null)
+      return catalog.skills
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not load the data')
       return null
     } finally {
-      setYuklanmoqda(false)
+      setLoading(false)
     }
   }
 
   useEffect(() => {
-    void yukla()
+    void load()
   }, [])
 
   /**
-   * Qamrovni saqlaydi: yangi holat bilan eskisi solishtirilib, faqat
-   * FARQ yuboriladi. To'liq qayta yozish ham ishlardi, lekin u har
-   * saqlashda faylni qayta yuklab olishga majbur qilardi.
+   * Saves the scope: the new state is compared with the old one and only the
+   * DIFFERENCE is sent. Rewriting everything would work too, but it would
+   * force the file to be re-downloaded on every save.
    */
-  const qamrovniSaqla = async (skill: Skill, global: boolean, projectIds: string[]) => {
-    const eskiGlobal = skill.ornatilgan.some((o) => o.qamrov === 'global')
-    const eskiLoyihalar = new Set(
-      skill.ornatilgan.filter((o) => o.qamrov === 'loyiha' && o.projectId).map((o) => o.projectId!),
+  const saveScope = async (skill: Skill, global: boolean, projectIds: string[]) => {
+    const wasGlobal = skill.installs.some((o) => o.scope === 'global')
+    const oldProjects = new Set(
+      skill.installs.filter((o) => o.scope === 'project' && o.projectId).map((o) => o.projectId!),
     )
-    const yangiLoyihalar = new Set(projectIds)
+    const newProjects = new Set(projectIds)
 
-    const qoshiladigan = projectIds.filter((id) => !eskiLoyihalar.has(id))
-    const ochiriladigan = [...eskiLoyihalar].filter((id) => !yangiLoyihalar.has(id))
+    const toAdd = projectIds.filter((id) => !oldProjects.has(id))
+    const toRemove = [...oldProjects].filter((id) => !newProjects.has(id))
 
-    if (global && !eskiGlobal) await skillOrnat(skill.id, 'global')
-    if (qoshiladigan.length > 0) await skillOrnat(skill.id, 'loyiha', qoshiladigan)
-    if (!global && eskiGlobal) await skillOrnatishniBekor(skill.id, 'global')
-    if (ochiriladigan.length > 0) await skillOrnatishniBekor(skill.id, 'loyiha', ochiriladigan)
+    if (global && !wasGlobal) await installSkill(skill.id, 'global')
+    if (toAdd.length > 0) await installSkill(skill.id, 'project', toAdd)
+    if (!global && wasGlobal) await uninstallSkill(skill.id, 'global')
+    if (toRemove.length > 0) await uninstallSkill(skill.id, 'project', toRemove)
 
-    const yangi = await yukla()
+    const fresh = await load()
 
-    // Tafsilot modali ochiq bo'lsa uni YANGI obyektga bog'laymiz — aks
-    // holda u eski `ornatilgan` ro'yxatini ko'rsatib turardi
-    setTafsilot((oldingi) =>
-      oldingi ? (yangi?.find((s) => s.id === oldingi.id) ?? oldingi) : null,
+    // If the details modal is open we bind it to the NEW object — otherwise
+    // it would keep showing the old `installs` list
+    setDetails((previous) =>
+      previous ? (fresh?.find((s) => s.id === previous.id) ?? previous) : null,
     )
   }
 
-  const qamrovMatni = (skill: Skill): string => {
-    const global = skill.ornatilgan.some((o) => o.qamrov === 'global')
-    const loyihaSoni = skill.ornatilgan.filter((o) => o.qamrov === 'loyiha').length
-    if (global && loyihaSoni > 0) return `Global + ${loyihaSoni} projects`
+  const scopeText = (skill: Skill): string => {
+    const global = skill.installs.some((o) => o.scope === 'global')
+    const projectCount = skill.installs.filter((o) => o.scope === 'project').length
+    if (global && projectCount > 0) return `Global + ${projectCount} projects`
     if (global) return 'Global'
-    if (loyihaSoni > 0) return `${loyihaSoni} projects`
+    if (projectCount > 0) return `${projectCount} projects`
     return ''
   }
 
-  const manbaNomi = (manbaId: string): string => {
-    const m = manbalar.find((x) => x.id === manbaId)
+  const sourceName = (sourceId: string): string => {
+    const m = sources.find((x) => x.id === sourceId)
     return m ? `${m.owner}/${m.repo}` : ''
   }
 
-  const loyihaNomi = (id: string): string => loyihalar.find((l) => l.id === id)?.name ?? id
+  const projectName = (id: string): string => projects.find((l) => l.id === id)?.name ?? id
 
   /**
-   * Qidiruv + filtrlar.
+   * Search + filters.
    *
-   * Qidiruv NOM va TAVSIF bo'yicha: foydalanuvchi ko'pincha skill nomini
-   * emas, vazifasini eslaydi ("word", "pdf", "prezentatsiya"). Tavsif
-   * ingliz tilida bo'lgani uchun nom bo'yicha qidiruv yolg'iz yetarli emas.
+   * The search covers NAME and DESCRIPTION: users usually remember what a
+   * skill does rather than what it is called ("word", "pdf", "presentation"),
+   * so searching by name alone is not enough.
    *
-   * So'zlar ALOHIDA tekshiriladi (`AND`): "word doc" yozilsa ikkala so'z
-   * ham bo'lgan skill topiladi, tartibi muhim emas.
+   * The words are checked SEPARATELY (`AND`): typing "word doc" finds a skill
+   * containing both words, in any order.
    */
-  const korinadigan = useMemo(() => {
-    const sozlar = qidiruv.toLowerCase().split(/\s+/).filter(Boolean)
+  const visible = useMemo(() => {
+    const words = search.toLowerCase().split(/\s+/).filter(Boolean)
 
-    return skilllar.filter((s) => {
-      if (holatFiltri === 'ornatilgan' && s.ornatilgan.length === 0) return false
-      if (holatFiltri === 'ornatilmagan' && s.ornatilgan.length > 0) return false
-      if (manbaFiltri !== 'hammasi' && s.manbaId !== manbaFiltri) return false
+    return skills.filter((s) => {
+      if (statusFilter === 'installed' && s.installs.length === 0) return false
+      if (statusFilter === 'not-installed' && s.installs.length > 0) return false
+      if (sourceFilter !== 'all' && s.sourceId !== sourceFilter) return false
 
-      if (sozlar.length === 0) return true
-      const matn = `${s.nom} ${s.tavsif}`.toLowerCase()
-      return sozlar.every((soz) => matn.includes(soz))
+      if (words.length === 0) return true
+      const text = `${s.name} ${s.description}`.toLowerCase()
+      return words.every((word) => text.includes(word))
     })
-  }, [skilllar, qidiruv, holatFiltri, manbaFiltri])
+  }, [skills, search, statusFilter, sourceFilter])
 
-  const filtrBor = qidiruv.trim() !== '' || holatFiltri !== 'hammasi' || manbaFiltri !== 'hammasi'
+  const hasFilter = search.trim() !== '' || statusFilter !== 'all' || sourceFilter !== 'all'
 
-  const filtrlarniTozala = () => {
-    setQidiruv('')
-    setHolatFiltri('hammasi')
-    setManbaFiltri('hammasi')
+  const clearFilters = () => {
+    setSearch('')
+    setStatusFilter('all')
+    setSourceFilter('all')
   }
 
-  const ornatilganSoni = skilllar.filter((s) => s.ornatilgan.length > 0).length
+  const installedCount = skills.filter((s) => s.installs.length > 0).length
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -583,21 +584,21 @@ export default function Skills() {
         sub="SKILL.md packages: connected from GitHub, running globally or in selected projects"
       />
 
-      <Manbalar manbalar={manbalar} onYangilandi={yukla} />
+      <Sources sources={sources} onRefreshed={load} />
 
-      {xato && (
+      {error && (
         <Card className="mb-6 border-coral/40 p-4">
-          <p className="text-sm text-coral">{xato}</p>
+          <p className="text-sm text-coral">{error}</p>
         </Card>
       )}
 
-      {/* Qidiruv paneli — katalog bo'sh bo'lmaganda ko'rinadi */}
-      {!yuklanmoqda && skilllar.length > 0 && (
+      {/* Search panel — shown when the catalog is not empty */}
+      {!loading && skills.length > 0 && (
         <div className="mb-5 flex flex-wrap items-center gap-2">
           <div className="relative min-w-55 flex-1">
             <input
-              value={qidiruv}
-              onChange={(e) => setQidiruv(e.target.value)}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Search: name or task (word, pdf, deploy…)"
               aria-label="Search skills"
               className="w-full rounded-lg border border-line bg-bg py-2 pl-9 pr-8 text-sm outline-none placeholder:text-faint focus:border-lazur-dim"
@@ -605,9 +606,9 @@ export default function Skills() {
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-faint" aria-hidden>
               ⌕
             </span>
-            {qidiruv && (
+            {search && (
               <button
-                onClick={() => setQidiruv('')}
+                onClick={() => setSearch('')}
                 aria-label="Clear search"
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-faint transition hover:text-ink"
               >
@@ -617,40 +618,40 @@ export default function Skills() {
           </div>
 
           <select
-            value={holatFiltri}
-            onChange={(e) => setHolatFiltri(e.target.value as typeof holatFiltri)}
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
             aria-label="Filter by status"
             className="rounded-lg border border-line bg-bg px-3 py-2 text-sm text-muted outline-none focus:border-lazur-dim"
           >
-            <option value="hammasi">All ({skilllar.length})</option>
-            <option value="ornatilgan">Installed ({ornatilganSoni})</option>
-            <option value="ornatilmagan">Not installed ({skilllar.length - ornatilganSoni})</option>
+            <option value="all">All ({skills.length})</option>
+            <option value="installed">Installed ({installedCount})</option>
+            <option value="not-installed">Not installed ({skills.length - installedCount})</option>
           </select>
 
-          {/* Manba filtri faqat bir nechta repo ulanganda ma'noli */}
-          {manbalar.length > 1 && (
+          {/* The source filter only makes sense with several repos connected */}
+          {sources.length > 1 && (
             <select
-              value={manbaFiltri}
-              onChange={(e) => setManbaFiltri(e.target.value)}
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
               aria-label="Filter by source"
               className="max-w-50 rounded-lg border border-line bg-bg px-3 py-2 text-sm text-muted outline-none focus:border-lazur-dim"
             >
-              <option value="hammasi">All sources</option>
-              {manbalar.map((m) => (
+              <option value="all">All sources</option>
+              {sources.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.tur === 'platforma' ? 'platform (built-in)' : `${m.owner}/${m.repo}`}
+                  {m.kind === 'builtin' ? 'platform (built-in)' : `${m.owner}/${m.repo}`}
                 </option>
               ))}
             </select>
           )}
 
-          {filtrBor && (
+          {hasFilter && (
             <>
               <span className="text-sm text-faint">
-                {korinadigan.length} / {skilllar.length}
+                {visible.length} / {skills.length}
               </span>
               <button
-                onClick={filtrlarniTozala}
+                onClick={clearFilters}
                 className="rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:text-ink"
               >
                 Clear
@@ -660,67 +661,66 @@ export default function Skills() {
         </div>
       )}
 
-      {yuklanmoqda ? (
+      {loading ? (
         <p className="text-sm text-muted">Loading…</p>
-      ) : skilllar.length === 0 ? (
+      ) : skills.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-sm text-muted">
             The catalog is empty. Connect a GitHub repo above — for example{' '}
             <code className="font-mono text-xs text-ink">anthropics/skills</code>.
           </p>
         </Card>
-      ) : korinadigan.length === 0 ? (
-        // Filtr hech narsa topmadi — bu bo'sh katalogdan BOSHQA holat,
-        // shuning uchun xabar ham boshqacha
+      ) : visible.length === 0 ? (
+        // The filter found nothing — a DIFFERENT case from an empty catalog,
+        // so the message differs too
         <Card className="p-8 text-center">
           <p className="text-sm text-muted">Nothing found.</p>
           <button
-            onClick={filtrlarniTozala}
+            onClick={clearFilters}
             className="mt-3 text-sm text-lazur transition hover:brightness-125"
           >
             Clear filters
           </button>
         </Card>
       ) : (
-        // `items-start` YO'Q: grid hujayralari cho'zilib, bir qatordagi
-        // kartalar bir xil balandlikda qoladi. Tavsif esa 4 qatorga
-        // qisqartiriladi (`line-clamp-4`) — `docx` ning 900 belgilik matni
-        // butun qatorni cho'zib yubormasin.
+        // NO `items-start`: the grid cells stretch so cards in a row stay the
+        // same height. The description is clamped to 4 lines (`line-clamp-4`)
+        // — so `docx`'s 900-character text does not stretch the whole row.
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {korinadigan.map((s) => {
-            const qamrov = qamrovMatni(s)
+          {visible.map((s) => {
+            const scope = scopeText(s)
             return (
               <Card key={s.id} className="flex flex-col p-5">
                 <div className="flex items-start justify-between gap-2">
-                  <h2 className="font-display text-[15px] font-semibold">{s.nom}</h2>
-                  {s.ogohlantirishlar.length > 0 && (
+                  <h2 className="font-display text-[15px] font-semibold">{s.name}</h2>
+                  {s.warnings.length > 0 && (
                     <span
                       className="shrink-0 rounded-md bg-panel2 px-2 py-0.5 text-[10px] text-gold"
-                      title={s.ogohlantirishlar.join('\n')}
+                      title={s.warnings.join('\n')}
                     >
-                      {s.ogohlantirishlar.length} warn.
+                      {s.warnings.length} warn.
                     </span>
                   )}
                 </div>
 
-                {/* `flex-1` bo'sh joyni yeydi — pastki qator hamma kartada
-                    bir xil balandlikda tursin */}
+                {/* `flex-1` eats the free space — so the bottom row sits at
+                    the same height on every card */}
                 <div className="mt-2 flex-1">
-                  <p className="line-clamp-4 text-sm leading-relaxed text-muted">{s.tavsif}</p>
+                  <p className="line-clamp-4 text-sm leading-relaxed text-muted">{s.description}</p>
                   <button
-                    onClick={() => setTafsilot(s)}
+                    onClick={() => setDetails(s)}
                     className="mt-1.5 text-xs text-lazur transition hover:brightness-125"
                   >
                     Details →
                   </button>
                 </div>
 
-                <div className="mt-3 font-mono text-[11px] text-faint">{manbaNomi(s.manbaId)}</div>
+                <div className="mt-3 font-mono text-[11px] text-faint">{sourceName(s.sourceId)}</div>
 
                 <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3">
-                  {qamrov ? (
-                    <span className="truncate text-sm text-mint" title={qamrov}>
-                      ✓ {qamrov}
+                  {scope ? (
+                    <span className="truncate text-sm text-mint" title={scope}>
+                      ✓ {scope}
                     </span>
                   ) : (
                     <span className="text-xs text-faint">not installed</span>
@@ -728,12 +728,12 @@ export default function Skills() {
                   <button
                     onClick={() => setModal(s)}
                     className={
-                      qamrov
+                      scope
                         ? 'shrink-0 rounded-lg border border-line px-3 py-1.5 text-sm text-muted transition hover:text-ink'
                         : 'shrink-0 rounded-lg border border-lazur-dim px-3 py-1.5 text-sm text-lazur transition hover:bg-lazur-dim hover:text-bg'
                     }
                   >
-                    {qamrov ? 'Change' : 'Install'}
+                    {scope ? 'Change' : 'Install'}
                   </button>
                 </div>
               </Card>
@@ -742,24 +742,24 @@ export default function Skills() {
         </div>
       )}
 
-      {/* Tafsilot ostida turadi: undan "O'rnatish" bosilsa qamrov modali
-          ustiga ochiladi va yopilgach tafsilot ko'rinib qoladi */}
-      {tafsilot && (
-        <TafsilotModal
-          skill={tafsilot}
-          manbaNomi={manbaNomi(tafsilot.manbaId)}
-          loyihaNomi={loyihaNomi}
-          onClose={() => setTafsilot(null)}
-          onQamrov={() => setModal(tafsilot)}
+      {/* It sits under the details modal: pressing "Install" there opens the
+          scope modal on top, and closing it reveals the details again */}
+      {details && (
+        <DetailsModal
+          skill={details}
+          sourceName={sourceName(details.sourceId)}
+          projectName={projectName}
+          onClose={() => setDetails(null)}
+          onScope={() => setModal(details)}
         />
       )}
 
       {modal && (
-        <QamrovModal
+        <ScopeModal
           skill={modal}
-          loyihalar={loyihalar}
+          projects={projects}
           onClose={() => setModal(null)}
-          onSaqla={(global, ids) => qamrovniSaqla(modal, global, ids)}
+          onSave={(global, ids) => saveScope(modal, global, ids)}
         />
       )}
     </div>

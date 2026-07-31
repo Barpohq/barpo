@@ -1,346 +1,346 @@
-// @platforma/ai — platformaning AI qatlami.
+// @platforma/ai — the platform's AI layer.
 //
-// Server bu paketdan faqat ikkita narsani ishlatadi:
-//   modellarniAniqla()  — PC'da qaysi providerlar ishlatishga tayyor
-//   suhbatOqimi()       — tanlangan model bilan streaming javob
+// The server uses only two things from this package:
+//   detectModels()       — which providers on this machine are ready to use
+//   conversationStream() — a streaming reply from the selected model
 //
-// Barcha provider tafsilotlari (kalitlar, OAuth, Ollama) shu paket ichida
-// qoladi — server ularni bilmaydi. Keyingi bosqichda tool'lar ham shu yerga
-// qo'shiladi.
+// All the provider details (keys, OAuth, Ollama) stay inside this package —
+// the server does not know about them. In the next stage the tools will be
+// added here as well.
 
 export {
-  keshdagiNatija,
-  keshniOrnat,
-  keshniTozala,
-  modellarniAniqla,
-  modelsKolleksiyasi,
-  MUDDAT_ZAXIRASI,
-  STANDART_KREDENSIAL_YOLI,
-  type AniqlashNatijasi,
-  type AniqlashSozlamalari,
-} from './aniqlash.ts'
+  cachedResult,
+  setCache,
+  clearCache,
+  detectModels,
+  modelsCollection,
+  EXPIRY_MARGIN,
+  DEFAULT_CREDENTIALS_PATH,
+  type DetectResult,
+  type DetectOptions,
+} from './detect.ts'
 
-export { codexGaYoz, type SinxronNatija } from './manba-sinxron.ts'
+export { writeToCodex, type SyncResult } from './source-sync.ts'
 
-export { FaylKredensialOmbori, XotiraKredensialOmbori } from './kredensial.ts'
+export { FileCredentialStore, MemoryCredentialStore } from './credentials.ts'
 
 export {
   claudeCodeAuth,
   codexAuth,
-  mahalliyAuthlar,
-  type MahalliyNatija,
-  type MahalliyTopilma,
-} from './mahalliy-auth.ts'
+  localAuths,
+  type LocalAuthResult,
+  type LocalAuthFound,
+} from './local-auth.ts'
 
 export {
   OLLAMA_ID,
-  OLLAMA_MANBA,
-  ollamaManzili,
-  ollamaModellari,
+  OLLAMA_SOURCE,
+  ollamaBaseUrl,
+  ollamaModels,
   ollamaProvider,
 } from './ollama.ts'
 
 export {
-  STANDART_SISTEM_PROMPT,
-  suhbatOqimi,
-  type Sarflov,
-  type SuhbatHodisasi,
-  type SuhbatSozlamalari,
-  type SuhbatXabari,
-} from './suhbat.ts'
+  DEFAULT_SYSTEM_PROMPT,
+  conversationStream,
+  type Usage,
+  type ConversationEvent,
+  type ConversationOptions,
+  type ConversationMessage,
+} from './conversation.ts'
 
-// --- Tool ishlatadigan agent qatlami ---
+// --- The tool-using agent layer ---
 
 export {
-  AGENT_SISTEM_PROMPT,
-  agentOqimi,
-  biriktirmaEslatmasi,
-  klassifikatorTarixi,
-  matnsizBloklar,
-  oxirgiUserIndeksi,
-  type AgentHodisasi,
-  type AgentSozlamalari,
-  type McpManbasi,
+  AGENT_SYSTEM_PROMPT,
+  agentStream,
+  attachmentNote,
+  classifierHistory,
+  nonTextBlocks,
+  lastUserIndex,
+  type AgentEvent,
+  type AgentOptions,
+  type McpProvider,
 } from './agent.ts'
 
 export {
-  buyruqNomi,
-  buyruqRoyxatlari,
-  buyruqniBahola,
-  buyruqniBolaklarga,
-  taqiqlanganmi,
-  type BuyruqBahosi,
-  type BuyruqToifasi,
-} from './buyruq-tahlil.ts'
+  commandName,
+  commandLists,
+  assessCommand,
+  splitCommand,
+  isForbidden,
+  type CommandAssessment,
+  type CommandCategory,
+} from './command-analysis.ts'
 
-export { chegaraMi, chegaralarniAjrat } from './chegara.ts'
+export { isConstraint, extractConstraints } from './constraints.ts'
 
-// --- Loyiha konteksti: ish papkasidagi AGENTS.md / CLAUDE.md ---
-
-export {
-  KONTEKST_CHEGARASI,
-  KONTEKST_FAYLLARI,
-  kontekstniPromptga,
-  loyihaKontekstiniOqi,
-  type LoyihaKonteksti,
-} from './loyiha-konteksti.ts'
-
-// --- Skilllar: SKILL.md tahlili va promptga ulash ---
+// --- Project context: the AGENTS.md / CLAUDE.md in the working directory ---
 
 export {
-  NOM_CHEGARASI,
-  skillFayliniTahlil,
-  TAVSIF_CHEGARASI,
-  type SkillFayl,
-} from './skill-fayl.ts'
+  CONTEXT_LIMIT,
+  CONTEXT_FILES,
+  contextToPrompt,
+  readProjectContext,
+  type ProjectContext,
+} from './project-context.ts'
+
+// --- Skills: parsing SKILL.md and wiring it into the prompt ---
 
 export {
-  SKILL_PAPKASI,
-  SKILL_SONI_CHEGARASI,
-  skilllarniOqi,
-  skilllarniPromptga,
-  type YuklanganSkill,
-} from './skill-yuklash.ts'
-
-// --- Loyiha xotirasi: agent o'zi yozadigan uzoq muddatli faktlar ---
+  NAME_LIMIT,
+  parseSkillFile,
+  DESCRIPTION_LIMIT,
+  type SkillFile,
+} from './skill-file.ts'
 
 export {
-  indeksniOqi,
-  XOTIRA_FAYL_CHEGARASI,
-  XOTIRA_INDEKS_CHEGARASI,
-  XOTIRA_INDEKSI,
-  XOTIRA_PAPKASI,
-  XOTIRA_SONI_CHEGARASI,
-  XOTIRA_TURLARI,
-  xotiralarniOqi,
-  xotiralarniPromptga,
-  type Xotira,
-} from './xotira.ts'
+  SKILL_DIR,
+  SKILL_COUNT_LIMIT,
+  readSkills,
+  skillsToPrompt,
+  type LoadedSkill,
+} from './skill-load.ts'
 
-// --- Kontekst: tool natijalari saqlanishi va siqish ---
+// --- Project memory: the long-lived facts the agent writes itself ---
 
 export {
-  eskilarniTashla,
-  kesishNuqtasi,
-  kontekstniQur,
-  kontekstTokenlari,
-  siq,
-  siqishKerakmi,
-  toolNatijalariniQisqart,
-  type SaqlanganXabar,
-  type SiqishNatijasi,
-  type SiqishSozlamalari,
-  type TarixSozlamalari,
-  type XabarBiriktirmasi,
-} from './kontekst.ts'
+  readMemoryIndex,
+  MEMORY_FILE_LIMIT,
+  MEMORY_INDEX_LIMIT,
+  MEMORY_INDEX,
+  MEMORY_DIR,
+  MEMORY_COUNT_LIMIT,
+  MEMORY_KINDS,
+  readMemories,
+  memoriesToPrompt,
+  type Memory,
+} from './memory.ts'
 
-// --- Tool hook'lari ---
+// --- Context: persisting tool results, and compaction ---
 
 export {
-  keyinZanjiri,
-  kuzatuvHooki,
-  maxfiyniYashir,
-  maxfiyniYashirHooki,
-  oldinZanjiri,
-  qoshimchaTaqiqHooki,
-  uzunlikHooki,
-  type KeyinNatijasi,
-  type OldinNatijasi,
-  type ToolChaqiruvKonteksti,
-  type ToolHooki,
-  type ToolNatijaKonteksti,
-} from './hooklar.ts'
+  dropOldest,
+  cutPoint,
+  buildContext,
+  contextTokens,
+  compact,
+  needsCompaction,
+  truncateToolResults,
+  type StoredMessage,
+  type CompactionResult,
+  type CompactionOptions,
+  type HistoryOptions,
+  type MessageAttachment,
+} from './context.ts'
+
+// --- Tool hooks ---
 
 export {
-  amalniBahola,
-  KLASSIFIKATOR_PROMPT,
-  KLASSIFIKATOR_TIMEOUT_MS,
-  klassifikatorModeliniTanla,
-  sorovniMatnga,
-  type KlassifikatorNatijasi,
-  type KlassifikatorSorovi,
-  type KlassifikatorXabari,
-} from './klassifikator.ts'
+  afterChain,
+  observerHook,
+  redactSecrets,
+  redactSecretsHook,
+  beforeChain,
+  extraDenyHook,
+  lengthHook,
+  type AfterResult,
+  type BeforeResult,
+  type ToolCallContext,
+  type ToolHook,
+  type ToolResultContext,
+} from './hooks.ts'
 
 export {
-  JAMI_BLOK_CHEGARASI,
-  KETMA_KET_BLOK_CHEGARASI,
-  RejimBoshqaruvchi,
-  rejimBoshqaruvchilarSoni,
-  rejimBoshqaruvchisi,
-  rejimBoshqaruvchisiniYop,
-  rejimlarniTozala,
-  type RejimKuzatuvchi,
-  type RejimOzgarishi,
-} from './rejim.ts'
+  assessAction,
+  CLASSIFIER_PROMPT,
+  CLASSIFIER_TIMEOUT_MS,
+  pickClassifierModel,
+  requestToText,
+  type ClassifierResult,
+  type ClassifierRequest,
+  type ClassifierMessage,
+} from './classifier.ts'
 
 export {
-  ChegaralanganMuhit,
-  STANDART_BUYRUQ_TIMEOUT_MS,
-  type ChegaralanganMuhitSozlamalari,
-} from './muhit.ts'
+  TOTAL_BLOCK_LIMIT,
+  CONSECUTIVE_BLOCK_LIMIT,
+  ModeManager,
+  modeManagerCount,
+  modeManager,
+  closeModeManager,
+  clearModes,
+  type ModeListener,
+  type ModeChange,
+} from './mode.ts'
 
 export {
-  RUXSAT_KUTISH_MS,
-  RuxsatBoshqaruvchi,
-  ruxsatBoshqaruvchilarSoni,
-  ruxsatBoshqaruvchisi,
-  ruxsatBoshqaruvchisiniYop,
-  ruxsatlarniTozala,
-  type KlassifikatorKonteksti,
-  type QarorKuzatuvchi,
-  type RuxsatSorash,
-  type SorovKuzatuvchi,
-} from './ruxsat.ts'
+  RestrictedEnv,
+  DEFAULT_COMMAND_TIMEOUT_MS,
+  type RestrictedEnvOptions,
+} from './environment.ts'
 
 export {
-  REESTR_CHEGARASI,
-  REESTR_TTL_MS,
-  SessiyaReestri,
-  type Yopiladigan,
-} from './reestr.ts'
-
-// --- Qidiruv tool'lari: grep / find / ls ---
-
-export {
-  chegaraniTekshir,
-  FIND_CHEGARASI,
-  globMosKeladimi,
-  globniRegexpga,
-  GREP_CHEGARASI,
-  ichkarimi,
-  ikkilikmi,
-  LS_CHEGARASI,
-  moslikTartibi,
-  nisbiyYol,
-  QATOR_CHEGARASI,
-  qatorniTayyorla,
-  rgKeshiniOrnat,
-  rgMavjudmi,
-  TASHLANADIGAN_PAPKALAR,
-  yolTartibi,
-  type ChegaraNatijasi,
-  type GrepMosligi,
-  type PapkaElementi,
-  type QidiruvNatijasi,
-} from './qidiruv-asos.ts'
+  PERMISSION_WAIT_MS,
+  PermissionManager,
+  permissionManagerCount,
+  permissionManager,
+  closePermissionManager,
+  clearPermissions,
+  type ClassifierContext,
+  type VerdictListener,
+  type PermissionAsk,
+  type RequestListener,
+} from './permission.ts'
 
 export {
-  ChegaraXatosi,
+  REGISTRY_LIMIT,
+  REGISTRY_TTL_MS,
+  SessionRegistry,
+  type Closable,
+} from './registry.ts'
+
+// --- Search tools: grep / find / ls ---
+
+export {
+  checkBoundary,
+  FIND_LIMIT,
+  globMatches,
+  globToRegExp,
+  GREP_LIMIT,
+  isInside,
+  isBinary,
+  LS_LIMIT,
+  matchOrder,
+  relativePath,
+  ROW_LIMIT,
+  prepareLine,
+  setRgCache,
+  rgAvailable,
+  SKIPPED_DIRS,
+  pathOrder,
+  type BoundaryResult,
+  type GrepMatch,
+  type DirEntry,
+  type SearchResult,
+} from './search-core.ts'
+
+export {
+  BoundaryError,
   findNode,
-  findQidir,
+  findSearch,
   findRg,
   grepNode,
-  grepQidir,
+  grepSearch,
   grepRg,
-  lsRoyxat,
-  NaqshXatosi,
-  type FindSozlamalari,
-  type GrepSozlamalari,
-  type LsSozlamalari,
-} from './qidiruv-motor.ts'
+  lsList,
+  PatternError,
+  type FindOptions,
+  type GrepOptions,
+  type LsOptions,
+} from './search-engine.ts'
 
 export {
-  findNatijasiniMatnga,
-  findToolYarat,
-  grepNatijasiniMatnga,
-  grepToolYarat,
-  lsNatijasiniMatnga,
-  lsToolYarat,
-  olchamniMatnga,
-  QIDIRUV_PROMPT_QISMI,
-  qidiruvToollari,
-  qidiruvToollariXom,
-  type FindToolKirishi,
-  type GrepToolKirishi,
-  type LsToolKirishi,
-  type QidiruvTafsiloti,
-  type QidiruvTooli,
-} from './qidiruv-toollari.ts'
+  findResultToText,
+  createFindTool,
+  grepResultToText,
+  createGrepTool,
+  lsResultToText,
+  createLsTool,
+  sizeToText,
+  SEARCH_PROMPT_SECTION,
+  searchTools,
+  searchToolsRaw,
+  type FindToolInput,
+  type GrepToolInput,
+  type LsToolInput,
+  type SearchDetail,
+  type SearchTool,
+} from './search-tools.ts'
 
 export {
-  DASHBOARD_PROMPT_QISMI,
-  appPublishToolYarat,
-  dashboardToollari,
-  dashboardToollariXom,
-  natijaniMatnga,
-  type AppPublishKirishi,
-  type DashboardManbasi,
-  type DashboardNatijasi,
-  type DashboardTafsiloti,
-} from './dashboard-toollari.ts'
+  DASHBOARD_PROMPT_SECTION,
+  createAppPublishTool,
+  dashboardTools,
+  dashboardToolsRaw,
+  resultToText,
+  type AppPublishInput,
+  type DashboardSink,
+  type DashboardResult,
+  type DashboardDetail,
+} from './dashboard-tools.ts'
 
 export {
-  SERVER_PROMPT_QISMI,
-  serverListToolYarat,
-  serverlarniMatnga,
-  serverToollari,
-  serverToollariXom,
-  type ServerListKirishi,
-  type ServerManbasi,
-  type ServerTafsiloti,
-  type ServerYozuvi,
-} from './server-toollari.ts'
+  SERVER_PROMPT_SECTION,
+  createServerListTool,
+  serversToText,
+  serverTools,
+  serverToolsRaw,
+  type ServerListInput,
+  type ServerProvider,
+  type ServerDetail,
+  type ServerRecord,
+} from './server-tools.ts'
 
-// --- MCP (Model Context Protocol) klienti ---
+// --- The MCP (Model Context Protocol) client ---
 //
-// Server bu qatlamdan `McpKlient` ni TO'G'RIDAN-TO'G'RI ishlatmaydi — u
-// `agentOqimi()` ga `mcpManbasi` funksiyasini beradi, qolganini shu paket
-// hal qiladi (`serverManbasi`/`dashboardManbasi` bilan bir xil inversiya).
-// Eksportlar testlar va diagnostika uchun ochiq.
+// The server does not use `McpClient` from this layer DIRECTLY — it hands
+// `agentStream()` an `mcpProvider` function and this package handles the rest
+// (the same inversion as `serverProvider`/`dashboardSink`). The exports are
+// open for tests and diagnostics.
 
 export {
-  javobmi,
-  MCP_PROTOKOL_VERSIYASI,
-  natijaniAjrat,
-  toollarniAjrat,
-  type JsonRpcJavob,
-  type JsonRpcKelgan,
-  type JsonRpcSorov,
-  type JsonRpcXabarnoma,
-  type JsonRpcXato,
-  type McpServerMalumoti,
-  type McpToolNatijasi,
-  type McpToolTarifi,
-} from './mcp-protokol.ts'
+  isResponse,
+  MCP_PROTOCOL_VERSION,
+  parseCallResult,
+  parseTools,
+  type JsonRpcResponse,
+  type JsonRpcIncoming,
+  type JsonRpcRequest,
+  type JsonRpcNotification,
+  type JsonRpcError,
+  type McpServerInfo,
+  type McpToolResult,
+  type McpToolSpec,
+} from './mcp-protocol.ts'
 
 export {
-  envniTozala,
-  hammaMcpJarayoniniOldir,
+  sanitiseEnv,
+  killAllMcpProcesses,
   HTTP_TIMEOUT_MS,
-  httpTransportYarat,
-  jarayonYaratuvchiniOrnat,
-  OLDIRISH_KUTISH_MS,
-  sseXabarlariniAjrat,
-  stdioTransportYarat,
-  tirikJarayonlarSoni,
-  type JarayonYaratuvchi,
-  type McpJarayon,
+  createHttpTransport,
+  setProcessSpawner,
+  KILL_GRACE_MS,
+  parseSseMessages,
+  createStdioTransport,
+  liveProcessCount,
+  type ProcessSpawner,
+  type McpProcess,
   type McpTransport,
 } from './mcp-transport.ts'
 
 export {
-  MCP_CHAQIRUV_TIMEOUT_MS,
+  MCP_CALL_TIMEOUT_MS,
   MCP_HANDSHAKE_TIMEOUT_MS,
-  McpKlient,
-  type McpUlanishSozlamalari,
-} from './mcp-klient.ts'
+  McpClient,
+  type McpConnectionOptions,
+} from './mcp-client.ts'
 
 export {
-  argumentlarniNishonga,
-  McpBoshqaruvchi,
-  mcpNaqshi,
-  type McpRoyxatYozuvi,
-  type McpUlanadiganServer,
-} from './mcp-boshqaruvchi.ts'
+  argsToTarget,
+  McpManager,
+  mcpPattern,
+  type McpToolListEntry,
+  type McpConnectableServer,
+} from './mcp-manager.ts'
 
 export {
-  MCP_PROMPT_QISMI,
-  MCP_TOOL_PREFIKSI,
-  mcpTooliMi,
-  mcpToollari,
-  mcpToollariXom,
-  mcpToolNomi,
-  xavfsizToolNomi,
-  type McpToolTafsiloti,
-} from './mcp-toollari.ts'
+  MCP_PROMPT_SECTION,
+  MCP_TOOL_PREFIX,
+  isMcpTool,
+  mcpTools,
+  mcpToolsRaw,
+  mcpToolName,
+  safeToolName,
+  type McpToolDetail,
+} from './mcp-tools.ts'

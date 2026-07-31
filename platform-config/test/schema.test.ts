@@ -1,78 +1,79 @@
-// JSON Schema generatsiyasi testlari.
+// Tests for JSON Schema generation.
 //
-// Eng muhim test — `schema.json` fayli eskirmaganini tekshirish. `sxema.ts`
-// o'zgartirilib `bun run schema` unutilsa, tahrirlagichlar eski sxemani
-// ko'rsatadi va foydalanuvchi to'g'ri yozgan sozlamani "xato" deb belgilaydi.
+// The most important test is the one checking that `schema.json` is not
+// stale. If `schema.ts` is edited and `bun run schema` is forgotten,
+// editors show the old schema and flag a correctly written setting as an
+// "error".
 
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { MAYDONLAR } from '../src/sxema.ts'
-import { schemaYasa } from '../src/schema-yasa.ts'
-import { yoldanOqi } from '../src/tekshir.ts'
+import { FIELDS } from '../src/schema.ts'
+import { buildSchema } from '../src/schema-build.ts'
+import { readByPath } from '../src/validate.ts'
 
-describe('schema generatsiyasi', () => {
-  test('har maydon sxemada properties orqali mavjud', () => {
-    const sxema = schemaYasa()
-    for (const m of MAYDONLAR) {
-      // `agent.siqish.yoqilgan` → properties.agent.properties.siqish.properties.yoqilgan
-      const sxemaYoli = m.yol.split('.').join('.properties.')
-      const tugun = yoldanOqi(sxema.properties, sxemaYoli)
-      expect(tugun, `${m.yol} sxemada yo'q`).toBeDefined()
+describe('schema generation', () => {
+  test('every field is present in the schema via properties', () => {
+    const schema = buildSchema()
+    for (const f of FIELDS) {
+      // `agent.compaction.enabled` → properties.agent.properties.compaction.properties.enabled
+      const schemaPath = f.path.split('.').join('.properties.')
+      const node = readByPath(schema.properties, schemaPath)
+      expect(node, `${f.path} is missing from the schema`).toBeDefined()
     }
   })
 
-  test('izohlar sxemaga o\'tadi (tahrirlagich shuni ko\'rsatadi)', () => {
-    const sxema = schemaYasa()
-    const tugun = yoldanOqi(sxema.properties, 'agent.properties.siqish.properties.yoqilgan') as {
+  test('hints carry over into the schema (the editor shows them)', () => {
+    const schema = buildSchema()
+    const node = readByPath(schema.properties, 'agent.properties.compaction.properties.enabled') as {
       description?: string
     }
-    expect(tugun.description).toBeTruthy()
-    expect(tugun.description).toBe(MAYDONLAR.find((m) => m.yol === 'agent.siqish.yoqilgan')!.izoh)
+    expect(node.description).toBeTruthy()
+    expect(node.description).toBe(FIELDS.find((f) => f.path === 'agent.compaction.enabled')!.hint)
   })
 
-  test('son chegaralari sxemaga o\'tadi', () => {
-    const sxema = schemaYasa()
-    const tugun = yoldanOqi(
-      sxema.properties,
-      'agent.properties.siqish.properties.zaxiraTokenlar',
+  test('number ranges carry over into the schema', () => {
+    const schema = buildSchema()
+    const node = readByPath(
+      schema.properties,
+      'agent.properties.compaction.properties.reserveTokens',
     ) as { minimum?: number; maximum?: number }
-    expect(tugun.minimum).toBe(1000)
-    expect(tugun.maximum).toBe(200_000)
+    expect(node.minimum).toBe(1000)
+    expect(node.maximum).toBe(200_000)
   })
 
-  test('tanlov maydonida enum bor', () => {
-    const sxema = schemaYasa()
-    const tugun = yoldanOqi(sxema.properties, 'ruxsat.properties.rejim') as { enum?: string[] }
-    expect(tugun.enum).toEqual(['tasdiq', 'auto'])
+  test('a select field has an enum', () => {
+    const schema = buildSchema()
+    const node = readByPath(schema.properties, 'permission.properties.mode') as { enum?: string[] }
+    expect(node.enum).toEqual(['confirm', 'auto'])
   })
 
-  test('null ruxsat berilgan maydon ikki turli', () => {
-    const sxema = schemaYasa()
-    const tugun = yoldanOqi(sxema.properties, 'agent.properties.siqish.properties.modeli') as {
+  test('a field that allows null has two types', () => {
+    const schema = buildSchema()
+    const node = readByPath(schema.properties, 'agent.properties.compaction.properties.model') as {
       type?: string[]
     }
-    expect(tugun.type).toEqual(['string', 'null'])
+    expect(node.type).toEqual(['string', 'null'])
   })
 
-  test('notanish maydon taqiqlanadi (imlo xatosi ko\'rinsin)', () => {
-    expect(schemaYasa().additionalProperties).toBe(false)
+  test('an unknown field is forbidden (so a typo is visible)', () => {
+    expect(buildSchema().additionalProperties).toBe(false)
   })
 
-  test('$schema maydoniga ruxsat berilgan', () => {
-    const sxema = schemaYasa()
-    expect((sxema.properties as Record<string, unknown>).$schema).toBeDefined()
+  test('the $schema field is allowed', () => {
+    const schema = buildSchema()
+    expect((schema.properties as Record<string, unknown>).$schema).toBeDefined()
   })
 })
 
-describe('schema.json fayli', () => {
-  test('fayl generatsiya natijasiga mos (eskirmagan)', () => {
-    // Bu test `sxema.ts` o'zgartirilib `bun run schema` unutilganini ushlaydi
-    const yol = new URL('../schema.json', import.meta.url).pathname
-    const fayldagi = readFileSync(yol, 'utf8')
-    const kutilgan = `${JSON.stringify(schemaYasa(), null, 2)}\n`
+describe('the schema.json file', () => {
+  test('the file matches the generated output (not stale)', () => {
+    // This test catches `schema.ts` being edited with `bun run schema` forgotten
+    const path = new URL('../schema.json', import.meta.url).pathname
+    const onDisk = readFileSync(path, 'utf8')
+    const expected = `${JSON.stringify(buildSchema(), null, 2)}\n`
     expect(
-      fayldagi,
-      "schema.json eskirgan — `bun run schema` ni ishga tushiring",
-    ).toBe(kutilgan)
+      onDisk,
+      'schema.json is stale — run `bun run schema`',
+    ).toBe(expected)
   })
 })

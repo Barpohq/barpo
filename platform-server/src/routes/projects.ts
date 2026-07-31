@@ -1,51 +1,51 @@
-// Loyihalar (project / workspace) — nomlangan ish papkasi.
+// Projects (project / workspace) — a named work directory.
 //
-// Loyiha = nom + platforma yaratadigan papka. Chat sessiyasi loyihaga
-// ulansa, agent tool'lari o'sha papkada ishlaydi va bir loyihaning hamma
-// suhbatlari bitta fayllar to'plamini ko'radi.
+// A project = a name plus a folder the platform creates. When a chat session
+// is bound to a project the agent's tools run inside that folder, and every
+// conversation of a project sees the same set of files.
 //
-// FOYDALANUVCHI YO'L BERMAYDI — faqat nom. Yo'l qabul qilinsa, agent
-// tool'larining chegarasi `/` yoki `~` ga ham qo'yilishi mumkin bo'lardi;
-// platforma o'zi `~/.platforma/loyihalar/<slug>/` ni yaratadi.
+// THE USER DOES NOT SUPPLY A PATH — only a name. If a path were accepted, the
+// boundary of the agent's tools could end up pointing at `/` or `~`; the
+// platform creates `~/.platforma/projects/<slug>/` itself.
 //
-// Papkani O'CHIRISH hozircha yo'q: papkani ham o'chirish kerakmi degan savol
-// (va uning tasdiq oqimi) alohida bosqichda hal qilinadi.
+// DELETING a folder is not supported yet: whether the folder should be removed
+// as well (and the confirmation flow that goes with it) is a separate step.
 
 import { Hono } from 'hono'
-import { loyihaPapkasiniYarat, loyihaSlugi } from '../ish-papkasi.ts'
-import { loyihalarOqi, loyihaNomBoyicha, loyihaYarat } from '../repo.ts'
+import { createProjectDir, projectSlug } from '../work-dir.ts'
+import { readProjects, projectByName, createProject } from '../repo.ts'
 
 export const projectsRoutes = new Hono()
 
-/** Nom uzunligi chegarasi — UI'da ham, papka nomida ham amaliy chegara */
-const NOM_MAX = 80
+/** Name length limit — a practical bound both in the UI and in the folder name */
+const NAME_MAX = 80
 
 projectsRoutes.get('/projects', (c) => {
-  return c.json({ projects: loyihalarOqi() })
+  return c.json({ projects: readProjects() })
 })
 
 projectsRoutes.post('/projects', async (c) => {
-  let nom: unknown
+  let name: unknown
   try {
-    const tana = (await c.req.json()) as { name?: unknown }
-    nom = tana?.name
+    const body = (await c.req.json()) as { name?: unknown }
+    name = body?.name
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
-  if (typeof nom !== 'string' || nom.trim().length === 0) {
+  if (typeof name !== 'string' || name.trim().length === 0) {
     return c.json({ error: 'Project name is required' }, 400)
   }
-  const toza = nom.trim()
-  if (toza.length > NOM_MAX) {
-    return c.json({ error: `Project name must not exceed ${NOM_MAX} characters` }, 400)
+  const clean = name.trim()
+  if (clean.length > NAME_MAX) {
+    return c.json({ error: `Project name must not exceed ${NAME_MAX} characters` }, 400)
   }
 
-  // Papka nomi faqat xavfsiz belgilardan quriladi. Bo'sh qolsa — nom
-  // butunlay papka nomiga yaramaydigan belgilardan iborat (masalan faqat
-  // emoji yoki kirill). Zaxira nom bermaymiz: ikkita boshqa loyiha bitta
-  // papkani bo'lishib qolardi.
-  const slug = loyihaSlugi(toza)
+  // The folder name is built only from safe characters. If it comes out empty
+  // the name consists entirely of characters unusable in a folder name (only
+  // emoji, or cyrillic, for instance). We do not fall back to a generated
+  // name: two different projects would then end up sharing one folder.
+  const slug = projectSlug(clean)
   if (!slug) {
     return c.json(
       {
@@ -56,38 +56,38 @@ projectsRoutes.post('/projects', async (c) => {
     )
   }
 
-  if (loyihaNomBoyicha(toza)) {
+  if (projectByName(clean)) {
     return c.json(
-      { error: 'A project with this name already exists', detail: toza },
+      { error: 'A project with this name already exists', detail: clean },
       409,
     )
   }
 
-  // Papka avval yaratiladi: fayl tizimi xato bersa (ruxsat yo'q, disk to'la)
-  // bazada "papkasi yo'q loyiha" yozuvi qolib ketmasin.
-  let papka: string
+  // The folder is created first: if the file system fails (no permission, disk
+  // full) we must not leave a "project without a folder" row in the database.
+  let folder: string
   try {
-    papka = loyihaPapkasiniYarat(slug)
-  } catch (xato) {
+    folder = createProjectDir(slug)
+  } catch (error) {
     return c.json(
       {
         error: 'Could not create the project folder',
-        detail: xato instanceof Error ? xato.message : String(xato),
+        detail: error instanceof Error ? error.message : String(error),
       },
       500,
     )
   }
 
-  // UNIQUE indeks — `loyihaNomBoyicha` tekshiruvidan keyin ham poyga holati
-  // bo'lishi mumkin (ikkita so'rov bir vaqtda). Baza qatlamidagi kafolat
-  // asosiy, yuqoridagi tekshiruv faqat chiroyliroq xato uchun.
+  // The UNIQUE index — even after the `projectByName` check there can be a
+  // race (two requests at once). The guarantee at the database layer is the
+  // real one; the check above only exists to produce a nicer error.
   try {
-    return c.json({ project: loyihaYarat(toza, papka) }, 201)
-  } catch (xato) {
-    const xabar = xato instanceof Error ? xato.message : String(xato)
-    if (xabar.includes('UNIQUE')) {
-      return c.json({ error: 'A project with this name already exists', detail: toza }, 409)
+    return c.json({ project: createProject(clean, folder) }, 201)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('UNIQUE')) {
+      return c.json({ error: 'A project with this name already exists', detail: clean }, 409)
     }
-    throw xato
+    throw error
   }
 })

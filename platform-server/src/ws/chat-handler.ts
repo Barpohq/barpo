@@ -1,56 +1,56 @@
-// WS orqali kelgan `chat.send` eventini orchestratorga uzatadi.
+// Passes a `chat.send` event arriving over WS on to the orchestrator.
 //
-// REST `POST /api/chat/send` bilan AYNAN bir xil mantiqdan o'tadi
-// (`chat-yuborish.ts`: `xabarniQabulQil`) — farqi faqat xatoni qanday
-// ifodalashda: HTTP status kodi o'rniga `chat.error` eventi.
+// It goes through EXACTLY the same logic as REST `POST /api/chat/send`
+// (`chat-send.ts`: `acceptMessage`) — the only difference is how an error is
+// expressed: a `chat.error` event instead of an HTTP status code.
 //
-// Ilgari bu fayl model qulfi tekshiruvini o'zi takrorlardi va ikki nusxa
-// bir-biridan uzoqlashishi mumkin edi. Endi qoidalar bitta joyda.
+// This file used to repeat the model-lock check itself and the two copies were
+// free to drift apart. The rules now live in one place.
 
 import type { ClientEvent } from '@platforma/shared'
-import { xabarniQabulQil } from '../chat-yuborish.ts'
-import { javobOqizi, rejimOrnat, ruxsatJavobi } from '../orchestrator.ts'
-import { hub, type PlatformaWS } from './hub.ts'
+import { acceptMessage } from '../chat-send.ts'
+import { streamReply, setMode, answerPermission } from '../orchestrator.ts'
+import { hub, type PlatformWS } from './hub.ts'
 
-export function chatSendHandleri(event: ClientEvent, ws: PlatformaWS): void {
+export function chatSendHandler(event: ClientEvent, ws: PlatformWS): void {
   if (event.type === 'chat.permission.reply') {
-    ruxsatJavobi(event.sessionId, event.sorovId, event.javob)
+    answerPermission(event.sessionId, event.requestId, event.answer)
     return
   }
-  if (event.type === 'chat.rejim.set') {
-    void rejimOrnat(event.sessionId, event.rejim)
+  if (event.type === 'chat.mode.set') {
+    void setMode(event.sessionId, event.mode)
     return
   }
   if (event.type !== 'chat.send') return
-  void chatSendniBajar(event, ws)
+  void runChatSend(event, ws)
 }
 
-async function chatSendniBajar(
+async function runChatSend(
   event: Extract<ClientEvent, { type: 'chat.send' }>,
-  ws: PlatformaWS,
+  ws: PlatformWS,
 ): Promise<void> {
-  const natija = xabarniQabulQil({
+  const result = acceptMessage({
     sessionId: event.sessionId,
-    matn: event.text ?? '',
-    tanlangan: event.model,
-    biriktirmalar: event.biriktirmalar,
+    text: event.text ?? '',
+    model: event.model,
+    attachments: event.attachments,
   })
 
-  if (!natija.ok) {
-    // `messageId` shu yerda yaratiladi: rad etilgan xabarga ham id kerak,
-    // aks holda mijoz xatoni qaysi yuborishga bog'lashni bilmaydi.
-    const xabar = natija.tafsilot ? `${natija.xato} — ${natija.tafsilot}` : natija.xato
-    hub.yubor(ws, {
+  if (!result.ok) {
+    // `messageId` is generated here: a rejected message needs an id too,
+    // otherwise the client cannot tell which send the error belongs to.
+    const message = result.detail ? `${result.error} — ${result.detail}` : result.error
+    hub.send(ws, {
       type: 'chat.error',
       sessionId: event.sessionId,
       messageId: crypto.randomUUID(),
-      error: xabar,
+      error: message,
     })
     return
   }
 
-  // REST'dan FARQ: bu yerda kutamiz. WS ulanishi ochiq turadi va oqim
-  // tugashini kutish hech kimni bloklamaydi (`javobOqizi` o'zi WS orqali
-  // tarqatadi). REST esa 202 qaytarish uchun kutmaydi.
-  await javobOqizi(event.sessionId, natija.messageId, natija.tanlov)
+  // DIFFERENT FROM REST: here we wait. The WS connection stays open and
+  // waiting for the stream to finish blocks nobody (`streamReply` fans the
+  // events out over WS itself). REST does not wait, because it returns 202.
+  await streamReply(event.sessionId, result.messageId, result.model)
 }

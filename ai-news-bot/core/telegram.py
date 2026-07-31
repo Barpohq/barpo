@@ -1,14 +1,14 @@
-"""Telegram transport qatlami — xabar yuborish va tekshirish.
+"""Telegram transport layer — sending messages and running checks.
 
-Ikkala agent ham shu modul orqali Telegram'ga chiqadi: bot postlarni
-kanalga va tasdiqqa yuboradi, monitor alertlarni admin chatga.
+Both agents reach Telegram through this module: the bot sends posts to
+the channel and to approval, the monitor sends alerts to the admin chat.
 
-aiogram asinxron, qolgan kod sinxron — shuning uchun bu yerda ko'prik
-funksiyalar bor (`run_sync`, `with_client`), kod bazasining qolgan
-qismi asinxron bo'lishga majbur emas.
+aiogram is async while the rest of the code is sync, so this module
+provides bridge functions (`run_sync`, `with_client`) that keep the rest
+of the codebase from having to go async.
 
-Approval tugmalari va ularning callback formati bu yerda emas —
-ular botning domeniga tegishli (`bot/publisher/telegram.py`).
+Approval buttons and their callback format do not live here — they
+belong to the bot's domain (`bot/publisher/telegram.py`).
 """
 
 from __future__ import annotations
@@ -32,24 +32,24 @@ log = get_logger(__name__)
 
 
 class TelegramError(RuntimeError):
-    """Telegram bilan bog'liq xato."""
+    """A Telegram-related error."""
 
 
 class NotConfigured(TelegramError):
-    """Token yoki kanal belgilanmagan."""
+    """The token or channel is not configured."""
 
 
 def has_token() -> bool:
-    """Bot tokeni bormi.
+    """Whether a bot token is set.
 
-    Admin chatga xabar yuborish uchun shu yetadi — kanal faqat
-    postlar uchun kerak (`bot.publisher.telegram.is_configured`).
+    That is enough to send messages to the admin chat — the channel is
+    only needed for posts (`bot.publisher.telegram.is_configured`).
     """
     return bool(env_str("TELEGRAM_BOT_TOKEN"))
 
 
 def admin_chat_id() -> str:
-    """Xabarlar (approval, alert, hisobot) keladigan shaxsiy chat."""
+    """The private chat that receives messages (approvals, alerts, reports)."""
     return env_str("TELEGRAM_ADMIN_CHAT_ID")
 
 
@@ -58,31 +58,31 @@ def channel_id() -> str:
 
 
 def run_sync(coro: Any) -> Any:
-    """Asinxron funksiyani sinxron koddan chaqirish.
+    """Call an async function from synchronous code.
 
-    Pipeline sinxron (APScheduler, SQLite), aiogram esa asinxron.
-    Har chaqiruv uchun yangi event loop ochiladi — scheduler turli
-    threadlarda ishlagani uchun global loop ishonchsiz.
+    The pipeline is sync (APScheduler, SQLite) while aiogram is async.
+    A fresh event loop is opened for each call — a global loop would be
+    unreliable because the scheduler runs across different threads.
     """
     return asyncio.run(coro)
 
 
 @dataclass(slots=True)
 class SentMessage:
-    """Yuborilgan xabar haqidagi ma'lumot."""
+    """Details about a message that was sent."""
 
     message_id: int
     chat_id: int
 
 
 class TelegramClient:
-    """Telegram Bot API bilan ishlash."""
+    """Wrapper around the Telegram Bot API."""
 
     def __init__(self, token: str | None = None) -> None:
         resolved = token or env_str("TELEGRAM_BOT_TOKEN")
         if not resolved:
             raise NotConfigured(
-                "TELEGRAM_BOT_TOKEN belgilanmagan. .env.example dan nusxa oling."
+                "TELEGRAM_BOT_TOKEN is not set. Copy it from .env.example."
             )
         self._bot = Bot(token=resolved)
 
@@ -93,7 +93,7 @@ class TelegramClient:
     def bot(self) -> Bot:
         return self._bot
 
-    # ─────────────────────── Yuborish ───────────────────────
+    # ─────────────────────── Sending ────────────────────────
 
     async def send_post(
         self,
@@ -104,10 +104,10 @@ class TelegramClient:
         keyboard: InlineKeyboardMarkup | None = None,
         parse_mode: str = "HTML",
     ) -> SentMessage:
-        """Xabarni yuborish. Rasm bo'lsa caption sifatida.
+        """Send a message. If there is an image, the text becomes its caption.
 
-        Rasm yuklanmasa matn sifatida qayta urinadi — rasm yo'qligi
-        postni butunlay to'xtatmasligi kerak.
+        If the image fails to load, it retries as plain text — a missing
+        image must not block the post entirely.
         """
         if image_url:
             try:
@@ -120,8 +120,8 @@ class TelegramClient:
                 )
                 return SentMessage(message_id=message.message_id, chat_id=message.chat.id)
             except TelegramAPIError as exc:
-                # Rasm URL yaroqsiz yoki juda katta — matn bilan davom etamiz
-                log.warning("Rasm yuborilmadi (%s), matn sifatida yuborilmoqda", exc)
+                # The image URL is invalid or too large — fall back to text
+                log.warning("Image could not be sent (%s), sending as text instead", exc)
 
         message = await self._bot.send_message(
             chat_id=chat_id,
@@ -138,17 +138,17 @@ class TelegramClient:
         message_id: int,
         keyboard: InlineKeyboardMarkup | None = None,
     ) -> None:
-        """Xabar tugmalarini yangilash (masalan tasdiqlangandan keyin olib tashlash)."""
+        """Update a message's buttons (e.g. remove them after approval)."""
         try:
             await self._bot.edit_message_reply_markup(
                 chat_id=chat_id, message_id=message_id, reply_markup=keyboard
             )
         except TelegramAPIError as exc:
-            # Xabar o'chirilgan yoki o'zgarmagan bo'lishi mumkin — halokatli emas
-            log.debug("Tugmalarni yangilab bo'lmadi: %s", exc)
+            # The message may have been deleted or left unchanged — not fatal
+            log.debug("Could not update buttons: %s", exc)
 
     async def send_notice(self, chat_id: str | int, text: str) -> None:
-        """Oddiy xabar (holat, xato, hisobot, alert)."""
+        """A plain message (status, error, report, alert)."""
         try:
             await self._bot.send_message(
                 chat_id=chat_id,
@@ -157,21 +157,21 @@ class TelegramClient:
                 link_preview_options={"is_disabled": True},
             )
         except TelegramAPIError as exc:
-            log.warning("Xabar yuborilmadi: %s", exc)
+            log.warning("Message could not be sent: %s", exc)
 
     async def delete(self, chat_id: str | int, message_id: int) -> None:
         try:
             await self._bot.delete_message(chat_id=chat_id, message_id=message_id)
         except TelegramAPIError as exc:
-            log.debug("Xabarni o'chirib bo'lmadi: %s", exc)
+            log.debug("Could not delete message: %s", exc)
 
-    # ─────────────────────── Tekshiruv ───────────────────────
+    # ─────────────────────── Checks ─────────────────────────
 
     async def check_access(self) -> dict[str, Any]:
-        """Bot, kanal va admin chat sozlamalarini tekshirish (CLI uchun).
+        """Verify the bot, channel and admin chat settings (for the CLI).
 
-        Kanal belgilanmagan bo'lsa o'sha qism o'tkazib yuboriladi —
-        monitor agentga kanal kerak emas.
+        If no channel is configured that part is skipped — the monitor
+        agent does not need a channel.
         """
         me = await self._bot.get_me()
         result: dict[str, Any] = {
@@ -202,7 +202,7 @@ class TelegramClient:
                 result["admin_ok"] = True
             except TelegramForbiddenError:
                 result["admin_error"] = (
-                    "Bot bu chatga yoza olmaydi — Telegram'da botga /start bosing"
+                    "The bot cannot write to this chat — send /start to the bot in Telegram"
                 )
             except TelegramAPIError as exc:
                 result["admin_error"] = str(exc)
@@ -211,10 +211,10 @@ class TelegramClient:
 
 
 async def with_client(func: Any) -> Any:
-    """Klientni ochib, ish bajarib, yopish.
+    """Open a client, run the work, then close it.
 
-    Har chaqiruvda sessiya yopilishi kerak — aks holda aiogram
-    "Unclosed client session" ogohlantirishi chiqadi.
+    The session must be closed on every call — otherwise aiogram emits
+    an "Unclosed client session" warning.
     """
     client = TelegramClient()
     try:
@@ -224,7 +224,7 @@ async def with_client(func: Any) -> Any:
 
 
 def retry_after_seconds(exc: BaseException) -> float | None:
-    """Flood control xatosidan kutish vaqtini olish."""
+    """Extract the wait time from a flood control error."""
     if isinstance(exc, TelegramRetryAfter):
         return float(exc.retry_after)
     return None

@@ -1,66 +1,65 @@
-// Skilllar API — manba ulash, katalog skanerlash, o'rnatish.
+// The skills API — connecting a source, scanning the catalog, installing.
 //
-// Model: manba (GitHub repo) → skill (katalog yozuvi) → o'rnatish (qamrov).
-// Batafsil: migrations/006-skilllar.ts va skill-ombor.ts.
+// The model: source (a GitHub repo) → skill (a catalog entry) → install
+// (a scope). In detail: migrations/006-skills.ts and skill-store.ts.
 //
-// TARMOQ SO'ROVLARI shu qatlamda: GitHub API va tarball yuklash. Ular
-// sekin bo'lishi mumkin (repo katta), shuning uchun har biriga timeout
-// qo'yilgan (`github.ts`).
+// NETWORK REQUESTS live in this layer: the GitHub API and tarball downloads.
+// They can be slow (a large repo), so each of them has a timeout (`github.ts`).
 
 import { Hono } from 'hono'
-import { auditYoz } from '../audit.ts'
-import { manzilniAjrat } from '../github.ts'
+import { auditWrite } from '../audit.ts'
+import { parseGithubRef } from '../github.ts'
 import {
-  loyihaOqi,
-  manbaOchir,
-  manbalarOqi,
-  manbaOqi,
-  manbaYarat,
-  skillOqi,
-  skillOrnat,
-  skillOrnatishniOchir,
-  skilllarniSinxronla,
-  skilllarOqi,
+  readProject,
+  deleteSkillSource,
+  readSkillSources,
+  readSkillSource,
+  createSkillSource,
+  readSkill,
+  installSkill,
+  uninstallSkill,
+  syncSkills,
+  readSkills,
 } from '../repo.ts'
 import {
-  manbaniOmbordanOchir,
-  manbaniSkanerla,
-  skillniOmborga,
-  skillniOmbordanOchir,
-  skillOmborYoli,
-} from '../skill-ombor.ts'
-import { standartniOmborga } from '../standart-skilllar.ts'
+  deleteSourceFromStore,
+  scanSource,
+  skillToStore,
+  deleteSkillFromStore,
+  skillStorePath,
+} from '../skill-store.ts'
+import { builtinToStore } from '../builtin-skills.ts'
 import { rmSync } from 'node:fs'
 export const skillsRoutes = new Hono()
 
 // ---------------------------------------------------------------------------
-// Katalog
+// Catalog
 // ---------------------------------------------------------------------------
 
 skillsRoutes.get('/skills', (c) => {
-  return c.json({ skills: skilllarOqi(), manbalar: manbalarOqi() })
+  return c.json({ skills: readSkills(), sources: readSkillSources() })
 })
 
 // ---------------------------------------------------------------------------
-// Manbalar
+// Sources
 // ---------------------------------------------------------------------------
 
-skillsRoutes.get('/skills/manbalar', (c) => {
-  return c.json({ manbalar: manbalarOqi() })
+skillsRoutes.get('/skills/sources', (c) => {
+  return c.json({ sources: readSkillSources() })
 })
 
 /**
- * Yangi manba ulash — repo skanerlanadi va katalogga yoziladi.
+ * Connecting a new source — the repo is scanned and written into the catalog.
  *
- * O'RNATMAYDI: skilllar faqat katalogda paydo bo'ladi. Diskka yuklash
- * alohida qadam (`/skills/:id/ornat`), chunki foydalanuvchi qaysi skillni
- * qayerda ishlatishini o'zi tanlaydi.
+ * IT DOES NOT INSTALL: the skills only appear in the catalog. Downloading them
+ * to disk is a separate step (`/skills/:id/install`), because the user decides
+ * for themselves which skill they want where.
  */
-skillsRoutes.post('/skills/manba', async (c) => {
+skillsRoutes.post('/skills/source', async (c) => {
   let url: unknown
   try {
-    const tana = (await c.req.json()) as { url?: unknown }
-    url = tana?.url
+    const body = (await c.req.json()) as { url?: unknown }
+    url = body?.url
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
@@ -69,8 +68,8 @@ skillsRoutes.post('/skills/manba', async (c) => {
     return c.json({ error: 'Repository URL is required' }, 400)
   }
 
-  const manzil = manzilniAjrat(url)
-  if (!manzil) {
+  const ref = parseGithubRef(url)
+  if (!ref) {
     return c.json(
       {
         error: 'Could not parse the URL',
@@ -80,213 +79,214 @@ skillsRoutes.post('/skills/manba', async (c) => {
     )
   }
 
-  let skaner: Awaited<ReturnType<typeof manbaniSkanerla>>
+  let scan: Awaited<ReturnType<typeof scanSource>>
   try {
-    skaner = await manbaniSkanerla(manzil)
-  } catch (xato) {
-    return c.json({ error: xato instanceof Error ? xato.message : 'Scan failed' }, 502)
+    scan = await scanSource(ref)
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Scan failed' }, 502)
   }
 
-  const manba = manbaYarat({
-    tur: 'github',
+  const source = createSkillSource({
+    kind: 'github',
     url: url.trim(),
-    owner: manzil.owner,
-    repo: manzil.repo,
-    ref: skaner.ref,
+    owner: ref.owner,
+    repo: ref.repo,
+    ref: scan.ref,
   })
 
-  const natija = skilllarniSinxronla(manba.id, skaner.skilllar, skaner.sha)
+  const result = syncSkills(source.id, scan.skills, scan.sha)
 
-  auditYoz(
+  auditWrite(
     'user',
     'Skill source connected',
-    `${manzil.owner}/${manzil.repo} — ${natija.qoshildi} skill`,
-    "o'zgartirish",
+    `${ref.owner}/${ref.repo} — ${result.added} skill`,
+    'write',
   )
 
-  return c.json({ manba, ...natija, ogohlantirishlar: skaner.ogohlantirishlar }, 201)
+  return c.json({ source, ...result, warnings: scan.warnings }, 201)
 })
 
-/** Qayta skanerlash — repo'da yangi skill paydo bo'lgan bo'lsa katalogga tushadi */
-skillsRoutes.post('/skills/manba/:id/sinxron', async (c) => {
-  const manba = manbaOqi(c.req.param('id'))
-  if (!manba) return c.json({ error: 'Source not found' }, 404)
+/** Re-scan — a skill newly added to the repo lands in the catalog */
+skillsRoutes.post('/skills/source/:id/sync', async (c) => {
+  const source = readSkillSource(c.req.param('id'))
+  if (!source) return c.json({ error: 'Source not found' }, 404)
 
-  let skaner: Awaited<ReturnType<typeof manbaniSkanerla>>
+  let scan: Awaited<ReturnType<typeof scanSource>>
   try {
-    skaner = await manbaniSkanerla({ owner: manba.owner, repo: manba.repo, ref: manba.ref })
-  } catch (xato) {
-    return c.json({ error: xato instanceof Error ? xato.message : 'Scan failed' }, 502)
+    scan = await scanSource({ owner: source.owner, repo: source.repo, ref: source.ref })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Scan failed' }, 502)
   }
 
-  const natija = skilllarniSinxronla(manba.id, skaner.skilllar, skaner.sha)
+  const result = syncSkills(source.id, scan.skills, scan.sha)
 
-  auditYoz(
+  auditWrite(
     'user',
     'Skill source synced',
-    `${manba.owner}/${manba.repo} — +${natija.qoshildi} / -${natija.ochirildi}`,
-    "o'zgartirish",
+    `${source.owner}/${source.repo} — +${result.added} / -${result.deleted}`,
+    'write',
   )
 
-  return c.json({ ...natija, ogohlantirishlar: skaner.ogohlantirishlar })
+  return c.json({ ...result, warnings: scan.warnings })
 })
 
-/** Manba, uning skilllari (CASCADE) va ombor papkasi o'chadi */
-skillsRoutes.delete('/skills/manba/:id', (c) => {
+/** The source, its skills (CASCADE) and its store folder are removed */
+skillsRoutes.delete('/skills/source/:id', (c) => {
   const id = c.req.param('id')
-  const manba = manbaOqi(id)
-  if (!manba) return c.json({ error: 'Source not found' }, 404)
+  const source = readSkillSource(id)
+  if (!source) return c.json({ error: 'Source not found' }, 404)
 
-  manbaOchir(id)
-  manbaniOmbordanOchir(id)
+  deleteSkillSource(id)
+  deleteSourceFromStore(id)
 
-  auditYoz(
+  auditWrite(
     'user',
     'Skill source removed',
-    `${manba.owner}/${manba.repo}`,
-    "o'zgartirish",
+    `${source.owner}/${source.repo}`,
+    'write',
   )
 
   return c.json({ ok: true })
 })
 
 // ---------------------------------------------------------------------------
-// O'rnatish
+// Installing
 // ---------------------------------------------------------------------------
 
-interface OrnatTana {
-  /** `global` — hamma joyda; `loyiha` — faqat `projectIds` dagi loyihalarda */
-  qamrov?: unknown
+interface InstallBody {
+  /** `global` — everywhere; `project` — only in the projects in `projectIds` */
+  scope?: unknown
   projectIds?: unknown
 }
 
 /**
- * Skillni o'rnatadi: fayllar ombor ga tushadi, qamrov bazaga yoziladi.
+ * Installs the skill: the files land in the store, the scope goes into the
+ * database.
  *
- * Bir chaqiruvda BIR NECHA loyihaga o'rnatish mumkin — fayllar baribir
- * bitta nusxada yotadi, faqat `skill_ornatish` qatorlari ko'payadi.
- * Loyiha papkalariga nusxa sessiya boshida tushadi (`loyihagaSinxronla`).
+ * A single call can install into SEVERAL projects — the files still sit there
+ * in one copy, only the `skill_installs` rows multiply. The copy into the
+ * project folders happens at the start of a session (`syncToProject`).
  */
-skillsRoutes.post('/skills/:id/ornat', async (c) => {
-  const skill = skillOqi(c.req.param('id'))
+skillsRoutes.post('/skills/:id/install', async (c) => {
+  const skill = readSkill(c.req.param('id'))
   if (!skill) return c.json({ error: 'Skill not found' }, 404)
 
-  const manba = manbaOqi(skill.manbaId)
-  if (!manba) return c.json({ error: 'Skill source not found' }, 404)
+  const source = readSkillSource(skill.sourceId)
+  if (!source) return c.json({ error: 'Skill source not found' }, 404)
 
-  let tana: OrnatTana
+  let body: InstallBody
   try {
-    tana = (await c.req.json()) as OrnatTana
+    body = (await c.req.json()) as InstallBody
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
-  const qamrov = tana.qamrov
-  if (qamrov !== 'global' && qamrov !== 'loyiha') {
-    return c.json({ error: "qamrov must be 'global' or 'loyiha'" }, 400)
+  const scope = body.scope
+  if (scope !== 'global' && scope !== 'project') {
+    return c.json({ error: "scope must be 'global' or 'project'" }, 400)
   }
 
-  let loyihalar: string[] = []
-  if (qamrov === 'loyiha') {
-    if (!Array.isArray(tana.projectIds) || tana.projectIds.length === 0) {
+  let projects: string[] = []
+  if (scope === 'project') {
+    if (!Array.isArray(body.projectIds) || body.projectIds.length === 0) {
       return c.json({ error: 'Project scope needs at least one project selected' }, 400)
     }
-    loyihalar = tana.projectIds.filter((x): x is string => typeof x === 'string')
-    for (const id of loyihalar) {
-      if (!loyihaOqi(id)) return c.json({ error: `Project not found: ${id}` }, 404)
+    projects = body.projectIds.filter((x): x is string => typeof x === 'string')
+    for (const id of projects) {
+      if (!readProject(id)) return c.json({ error: `Project not found: ${id}` }, 404)
     }
   }
 
-  // Fayllarni ombor ga tushiramiz. Allaqachon o'rnatilgan bo'lsa ham qayta
-  // yuklaymiz — manba yangilangan bo'lishi mumkin.
+  // The files go into the store. Even if it is already installed we download
+  // again — the source may have been updated.
   //
-  // Manba turi shu yerda tarmoqlanadi: standart skilllar diskdan
-  // nusxalanadi (tarmoq kerak emas), GitHub'dagilar tarball orqali
-  // yuklanadi. Ombordagi natija ikkalasida ham bir xil — shuning uchun
-  // bundan keyingi hamma qadam umumiy.
-  if (manba.tur === 'platforma') {
-    const nishon = skillOmborYoli(manba.id, skill.id)
-    // Qayta o'rnatishda eski holat qolmasin (GitHub yo'lidagi bilan bir xil)
-    rmSync(nishon, { recursive: true, force: true })
-    if (!standartniOmborga(skill.yol, nishon)) {
+  // The source kind branches here: builtin skills are copied from disk (no
+  // network needed), GitHub ones are downloaded as a tarball. The result in
+  // the store is identical either way — which is why every step after this is
+  // shared.
+  if (source.kind === 'builtin') {
+    const target = skillStorePath(source.id, skill.id)
+    // On a re-install the old state must not linger (same as on the GitHub path)
+    rmSync(target, { recursive: true, force: true })
+    if (!builtinToStore(skill.path, target)) {
       return c.json({ error: 'Built-in skill folder not found' }, 500)
     }
   } else {
     try {
-      await skillniOmborga(
-        { owner: manba.owner, repo: manba.repo, ref: manba.ref },
-        manba.ref,
-        skill.yol,
-        manba.id,
+      await skillToStore(
+        { owner: source.owner, repo: source.repo, ref: source.ref },
+        source.ref,
+        skill.path,
+        source.id,
         skill.id,
       )
-    } catch (xato) {
+    } catch (error) {
       return c.json(
-        { error: xato instanceof Error ? xato.message : 'Download failed' },
+        { error: error instanceof Error ? error.message : 'Download failed' },
         502,
       )
     }
   }
 
-  if (qamrov === 'global') {
-    skillOrnat(skill.id, 'global', null)
+  if (scope === 'global') {
+    installSkill(skill.id, 'global', null)
   } else {
-    for (const projectId of loyihalar) skillOrnat(skill.id, 'loyiha', projectId)
+    for (const projectId of projects) installSkill(skill.id, 'project', projectId)
   }
 
-  auditYoz(
+  auditWrite(
     'user',
     'Skill installed',
-    `${skill.nom} — ${qamrov === 'global' ? 'global' : `${loyihalar.length} loyiha`}`,
-    "o'zgartirish",
+    `${skill.name} — ${scope === 'global' ? 'global' : `${projects.length} project`}`,
+    'write',
   )
 
-  return c.json({ skill: skillOqi(skill.id) })
+  return c.json({ skill: readSkill(skill.id) })
 })
 
 /**
- * O'rnatishni bekor qiladi.
+ * Removes an installation.
  *
- * Oxirgi o'rnatish olib tashlanganda ombordagi fayllar ham o'chiriladi —
- * hech qayerda ishlatilmaydigan skill diskda joy egallab yotmasin. Katalog
- * yozuvi qoladi, ya'ni qayta o'rnatish bir bosishda.
+ * When the last installation goes, the files in the store are deleted too — a
+ * skill used nowhere should not sit on disk taking up space. The catalog entry
+ * stays, so re-installing is one click away.
  */
-skillsRoutes.delete('/skills/:id/ornat', async (c) => {
-  const skill = skillOqi(c.req.param('id'))
+skillsRoutes.delete('/skills/:id/install', async (c) => {
+  const skill = readSkill(c.req.param('id'))
   if (!skill) return c.json({ error: 'Skill not found' }, 404)
 
-  let tana: OrnatTana
+  let body: InstallBody
   try {
-    tana = (await c.req.json()) as OrnatTana
+    body = (await c.req.json()) as InstallBody
   } catch {
     return c.json({ error: 'Request body must be JSON' }, 400)
   }
 
-  const qamrov = tana.qamrov
-  if (qamrov !== 'global' && qamrov !== 'loyiha') {
-    return c.json({ error: "qamrov must be 'global' or 'loyiha'" }, 400)
+  const scope = body.scope
+  if (scope !== 'global' && scope !== 'project') {
+    return c.json({ error: "scope must be 'global' or 'project'" }, 400)
   }
 
-  const projectIds = Array.isArray(tana.projectIds)
-    ? tana.projectIds.filter((x): x is string => typeof x === 'string')
+  const projectIds = Array.isArray(body.projectIds)
+    ? body.projectIds.filter((x): x is string => typeof x === 'string')
     : []
 
-  if (qamrov === 'global') {
-    skillOrnatishniOchir(skill.id, 'global', null)
+  if (scope === 'global') {
+    uninstallSkill(skill.id, 'global', null)
   } else {
     if (projectIds.length === 0) {
       return c.json({ error: 'No project selected' }, 400)
     }
-    for (const projectId of projectIds) skillOrnatishniOchir(skill.id, 'loyiha', projectId)
+    for (const projectId of projectIds) uninstallSkill(skill.id, 'project', projectId)
   }
 
-  // Hech qayerda qolmagan bo'lsa fayllarni ham tozalaymiz
-  const yangilangan = skillOqi(skill.id)
-  if (yangilangan && yangilangan.ornatilgan.length === 0) {
-    skillniOmbordanOchir(skill.manbaId, skill.id)
+  // If it is left nowhere, clean up the files as well
+  const updated = readSkill(skill.id)
+  if (updated && updated.installs.length === 0) {
+    deleteSkillFromStore(skill.sourceId, skill.id)
   }
 
-  auditYoz('user', 'Skill installation removed', skill.nom, "o'zgartirish")
+  auditWrite('user', 'Skill installation removed', skill.name, 'write')
 
-  return c.json({ skill: yangilangan })
+  return c.json({ skill: updated })
 })

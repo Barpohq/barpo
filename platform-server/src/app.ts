@@ -1,11 +1,11 @@
-// Hono ilovasi — barcha REST route'lar shu yerda yig'iladi.
+// The Hono application — every REST route is assembled here.
 //
-// YANGI ROUTE QO'SHISH (keyingi agentlar uchun):
-//   1) `src/routes/<nom>.ts` faylida `export const <nom>Routes = new Hono()`,
-//   2) shu faylga bitta import qatori,
-//   3) pastdagi ro'yxatga `api.route('/', <nom>Routes)` qatori.
-// Boshqa hech narsani o'zgartirish shart emas. Hamma route `/api` prefiksi
-// ostida turadi — vite proxy ham shu prefiksni serverga uzatadi.
+// ADDING A NEW ROUTE (for the agents that come next):
+//   1) in `src/routes/<name>.ts` put `export const <name>Routes = new Hono()`,
+//   2) one import line in this file,
+//   3) an `api.route('/', <name>Routes)` line in the list below.
+// Nothing else needs changing. Every route sits under the `/api` prefix — the
+// vite proxy forwards that same prefix to the server.
 
 import { Hono } from 'hono'
 import { appsRoutes } from './routes/apps.ts'
@@ -18,7 +18,7 @@ import { projectsRoutes } from './routes/projects.ts'
 import { serversRoutes } from './routes/servers.ts'
 import { skillsRoutes } from './routes/skills.ts'
 
-export function appYarat(): Hono {
+export function createApp(): Hono {
   const app = new Hono()
   const api = new Hono()
 
@@ -31,18 +31,18 @@ export function appYarat(): Hono {
   api.route('/', chatRoutes)
   api.route('/', modelsRoutes)
   api.route('/', projectsRoutes)
-  // ↑ yangi route modullari shu yerga qo'shiladi
+  // ↑ new route modules are added here
 
   app.route('/api', api)
 
   app.notFound((c) => c.json({ error: 'Not found', path: c.req.path }, 404))
 
-  app.onError((xato, c) => {
-    console.error('[xato]', c.req.method, c.req.path, xato)
-    return c.json({ error: 'Internal server error', detail: String(xato) }, 500)
+  app.onError((error, c) => {
+    console.error('[error]', c.req.method, c.req.path, error)
+    return c.json({ error: 'Internal server error', detail: String(error) }, 500)
   })
 
   return app
 }
 
-export const app = appYarat()
+export const app = createApp()

@@ -1,128 +1,131 @@
-// MCP transport qatlami — xabarlar qanday yetkaziladi.
+// The MCP transport layer — how messages get delivered.
 //
-// Klient (`mcp-klient.ts`) transport tafsilotini BILMAYDI: u faqat JSON-RPC
-// xabar yuboradi va kelganini tinglaydi. Shu tufayli stdio va HTTP bir xil
-// klient kodi bilan ishlaydi.
+// The client (`mcp-client.ts`) KNOWS NOTHING about transport details: it only
+// sends JSON-RPC messages and listens for incoming ones. That is why stdio and
+// HTTP work with the same client code.
 //
-// stdio — mahalliy jarayon (`npx`/`uvx`/`docker`), newline-delimited JSON
-//         stdin/stdout orqali. Ekotizimning katta qismi shunday.
-// http  — masofaviy server (`streamable-http`/`sse`), bosqich 3 da qo'shiladi.
+// stdio — a local process (`npx`/`uvx`/`docker`), newline-delimited JSON over
+//         stdin/stdout. Most of the ecosystem works this way.
+// http  — a remote server (`streamable-http`/`sse`), added in stage 3.
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ SHELL ISHLATILMAYDI. `Bun.spawn(argv)` argv MASSIVINI oladi —        │
-// │ buyruq satri emas. Ya'ni argument ichidagi `;rm -rf ~` kabi matn     │
-// │ oddiy satr bo'lib qoladi, hech qachon bajarilmaydi.                  │
+// │ NO SHELL IS USED. `Bun.spawn(argv)` takes an argv ARRAY — not a      │
+// │ command line. Meaning text like `;rm -rf ~` inside an argument stays │
+// │ a plain string and is never executed.                                │
 // │                                                                      │
-// │ Bu rasmiy MCP spec tavsiyasi. `Argument` ta'rifidagi ogohlantirish:  │
-// │ "Clients should prefer non-shell execution methods (e.g. posix_spawn)│
-// │ when possible to eliminate injection risks entirely."                │
+// │ This is the official MCP spec recommendation. The warning in the     │
+// │ `Argument` definition: "Clients should prefer non-shell execution    │
+// │ methods (e.g. posix_spawn) when possible to eliminate injection      │
+// │ risks entirely."                                                     │
 // │                                                                      │
-// │ Registry'dan kelgan argumentlarda `{token}` kabi o'rin egallovchilar │
-// │ bo'ladi — ular ham SHU MASSIV ichida, `String.replace` bilan         │
-// │ almashtiriladi (`mcp-registry.ts`), ya'ni shell'ga yaqinlashmaydi.   │
+// │ Arguments coming from the registry contain placeholders such as      │
+// │ `{token}` — those too live INSIDE THIS ARRAY and are substituted     │
+// │ with `String.replace` (`mcp-registry.ts`), so they never go near a   │
+// │ shell.                                                               │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import type { JsonRpcKelgan, JsonRpcSorov, JsonRpcXabarnoma } from './mcp-protokol.ts'
+import type { JsonRpcIncoming, JsonRpcRequest, JsonRpcNotification } from './mcp-protocol.ts'
 
 export interface McpTransport {
-  /** Bitta JSON-RPC xabar yuboradi (so'rov yoki xabarnoma) */
-  yubor(xabar: JsonRpcSorov | JsonRpcXabarnoma): Promise<void>
-  /** Kelayotgan xabarlarni tinglaydi. Bekor qiluvchi funksiya qaytaradi. */
-  tingla(fn: (xabar: JsonRpcKelgan) => void): () => void
+  /** Sends a single JSON-RPC message (a request or a notification) */
+  send(message: JsonRpcRequest | JsonRpcNotification): Promise<void>
+  /** Listens for incoming messages. Returns a cancel function. */
+  listen(fn: (message: JsonRpcIncoming) => void): () => void
   /**
-   * Transportni yopadi — jarayonni o'ldiradi yoki ulanishni uzadi.
+   * Closes the transport — kills the process or drops the connection.
    *
-   * XATO TASHLAMAYDI: yopish har qanday holatda oxirigacha borishi kerak,
-   * aks holda jarayon yetim qolardi.
+   * NEVER THROWS: closing must run to completion in every case, otherwise the
+   * process would be left orphaned.
    */
-  yop(): Promise<void>
+  close(): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Jarayon abstraksiyasi (testlarda almashtiriladi)
+// Process abstraction (swapped out in tests)
 // ---------------------------------------------------------------------------
 
 /**
- * Ko'tarilgan jarayonning bizga kerak bo'lgan yuzasi.
+ * The surface of a spawned process that we actually need.
  *
- * `Bun.spawn` natijasining TOR qismi. Ataylab tor: testdagi soxta jarayon
- * `Subprocess` ning o'nlab maydonini emas, faqat shu beshtasini bajarishi
- * kerak.
+ * A NARROW slice of what `Bun.spawn` returns. Deliberately narrow: the fake
+ * process in a test has to implement only these five members, not the dozens
+ * of fields on `Subprocess`.
  */
-export interface McpJarayon {
-  /** Serverga yozish (stdin) */
-  yoz(matn: string): void
-  /** Serverdan kelgan matn (stdout) — qatorlarga ajratilmagan xom oqim */
-  chiqishniTingla(fn: (bolak: string) => void): void
-  /** Diagnostika oqimi (stderr) — protokol qismi EMAS */
-  xatoOqiminiTingla(fn: (bolak: string) => void): void
-  /** Muloyim to'xtatish (SIGTERM) */
-  toxtat(): void
-  /** Majburiy o'ldirish (SIGKILL) */
-  old(): void
-  /** Jarayon tugaganini kutish */
-  tugadi: Promise<number>
+export interface McpProcess {
+  /** Write to the server (stdin) */
+  write(text: string): void
+  /** Text coming from the server (stdout) — a raw stream, not split into lines */
+  onStdout(fn: (chunk: string) => void): void
+  /** The diagnostic stream (stderr) — NOT part of the protocol */
+  onStderr(fn: (chunk: string) => void): void
+  /** Graceful stop (SIGTERM) */
+  stop(): void
+  /** Forced kill (SIGKILL) */
+  kill(): void
+  /** Wait for the process to finish */
+  exited: Promise<number>
 }
 
-export type JarayonYaratuvchi = (
+export type ProcessSpawner = (
   argv: string[],
   env: Record<string, string>,
-) => McpJarayon
+) => McpProcess
 
 /**
- * Jarayon xulqini o'zgartira oladigan env o'zgaruvchilari — TAQIQLANGAN.
+ * Env variables that can alter process behaviour — DENIED.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ NEGA BU RO'YXAT KERAK — HAQIQIY HUJUM YO'LI.                         │
+ * │ WHY THIS LIST IS NEEDED — A REAL ATTACK PATH.                        │
  * │                                                                      │
- * │ MCP serverning `server.json` fayli o'zi qanday env o'zgaruvchilari    │
- * │ so'rashini E'LON QILADI (`environmentVariables[].name`) va bu fayl    │
- * │ UCHINCHI TOMON yozgan: u rasmiy registry'dan yoki skanerlangan        │
- * │ GitHub repo'dan keladi.                                              │
+ * │ An MCP server's `server.json` file DECLARES which env variables it   │
+ * │ asks for (`environmentVariables[].name`), and that file is written   │
+ * │ by a THIRD PARTY: it comes from the official registry or from a      │
+ * │ scanned GitHub repo.                                                 │
  * │                                                                      │
- * │ Ro'yxatsiz hujum shunday bo'lardi: zararli yozuv muallifi ISHONCHLI   │
- * │ paketni (masalan rasmiy MCP serverni) `buyruq`/`argumentlar` da       │
- * │ ko'rsatadi — foydalanuvchi UI'da buyruqni ko'rib ishonadi. Lekin      │
- * │ yozuvda `{"name": "NODE_OPTIONS", "default": "--require=/tmp/x.js"}` │
- * │ degan "sozlama" ham bo'ladi. Standart qiymat UI'da inputga           │
- * │ TO'LDIRILIB kelardi va "majburiy maydon" tekshiruvidan ham o'tardi,   │
- * │ ya'ni foydalanuvchi bitta tugma bosishi bilan begona kod ishga        │
- * │ tushardi — ishonchli paketning jarayoni ichida.                      │
+ * │ Without the list the attack would go like this: the author of a      │
+ * │ malicious entry points `command`/`args` at a TRUSTED package         │
+ * │ (an official MCP server, say) — the user sees the command in the UI  │
+ * │ and trusts it. But the entry also carries a "setting" that reads     │
+ * │ `{"name": "NODE_OPTIONS", "default": "--require=/tmp/x.js"}`. The    │
+ * │ default value would arrive PRE-FILLED into the UI input and would    │
+ * │ even pass the "required field" check, meaning one button press by    │
+ * │ the user would launch foreign code — inside the process of a         │
+ * │ trusted package.                                                     │
  * │                                                                      │
- * │ Bu platformaning "qanday buyruq ishga tushishini ko'rsatamiz" degan   │
- * │ shaffoflik kafolatini buzardi: buyruq ko'rinadi, env esa YO'Q.        │
+ * │ That would break the platform's transparency guarantee of "we show   │
+ * │ you which command runs": the command is visible, the env is NOT.     │
  * │                                                                      │
- * │ TEKSHIRUV AYNAN SHU YERDA — `spawn` dan oldingi oxirgi nuqta.        │
- * │ Yuqoridagi qatlamlarda (`mcp-ulash.ts`, `routes/mcp.ts`) ham filtr    │
- * │ bor, lekin ular chetlab o'tilishi mumkin; bu yerdan o'tolmaydi       │
- * │ (`muhit.ts` dagi "tekshiruv metod ichida" qoidasi bilan bir xil).     │
+ * │ THE CHECK LIVES EXACTLY HERE — the last point before `spawn`. The    │
+ * │ layers above (`mcp-connect.ts`, `routes/mcp.ts`) filter too, but     │
+ * │ they can be bypassed; this one cannot (the same rule as "the check   │
+ * │ goes inside the method" in `environment.ts`).                        │
  * └──────────────────────────────────────────────────────────────────────┘
  */
-const TAQIQLANGAN_ENV = new Set([
-  // Dinamik yuklovchi — ixtiyoriy kod ishga tushiradi
+const FORBIDDEN_ENV = new Set([
+  // Dynamic loader — runs arbitrary code
   'LD_PRELOAD',
   'LD_LIBRARY_PATH',
   'LD_AUDIT',
   'DYLD_INSERT_LIBRARIES',
   'DYLD_LIBRARY_PATH',
   'DYLD_FRAMEWORK_PATH',
-  // Node/Bun: `--require` bilan modul yuklaydi
+  // Node/Bun: loads a module via `--require`
   'NODE_OPTIONS',
   'BUN_INSPECT',
   'BUN_INSPECT_CONNECT_TO',
-  // Python: `-c` kabi kod, yoki import yo'lini almashtirish
+  // Python: code such as `-c`, or swapping the import path
   'PYTHONSTARTUP',
   'PYTHONPATH',
   'PYTHONHOME',
-  // Bajariladigan fayl qidiruvi — soxta `npx` ni ko'rsatish
+  // Executable lookup — pointing at a fake `npx`
   'PATH',
   'NODE_PATH',
-  // Shell ishga tushsa boshlang'ich fayl orqali kod
+  // Code via a startup file if a shell is launched
   'BASH_ENV',
   'ENV',
   'SHELL',
   'IFS',
-  // Perl/Ruby yuklovchilari
+  // Perl/Ruby loaders
   'PERL5OPT',
   'PERL5LIB',
   'RUBYOPT',
@@ -130,417 +133,416 @@ const TAQIQLANGAN_ENV = new Set([
 ])
 
 /**
- * Xavfli env kalitlarini olib tashlaydi.
+ * Strips dangerous env keys.
  *
- * Solishtirish KATTA HARFDA: `ld_preload` va `LD_PRELOAD` ba'zi
- * tizimlarda bir xil ishlaydi, shuning uchun harf registriga tayanmaymiz.
+ * The comparison is UPPERCASED: `ld_preload` and `LD_PRELOAD` behave the same
+ * way on some systems, so we do not rely on letter case.
  *
- * Eksport qilingan — test aynan shu funksiyani tekshiradi.
+ * Exported — the test checks this exact function.
  */
-export function envniTozala(env: Record<string, string>): {
-  toza: Record<string, string>
-  tashlangan: string[]
+export function sanitiseEnv(env: Record<string, string>): {
+  clean: Record<string, string>
+  dropped: string[]
 } {
-  const toza: Record<string, string> = {}
-  const tashlangan: string[] = []
-  for (const [nom, qiymat] of Object.entries(env)) {
-    if (TAQIQLANGAN_ENV.has(nom.toUpperCase())) {
-      tashlangan.push(nom)
+  const clean: Record<string, string> = {}
+  const dropped: string[] = []
+  for (const [name, value] of Object.entries(env)) {
+    if (FORBIDDEN_ENV.has(name.toUpperCase())) {
+      dropped.push(name)
       continue
     }
-    toza[nom] = qiymat
+    clean[name] = value
   }
-  return { toza, tashlangan }
+  return { clean, dropped }
 }
 
 /**
- * `Bun.spawn` ustidagi standart implementatsiya.
+ * The default implementation on top of `Bun.spawn`.
  *
- * `env` PROCESS ENV BILAN BIRLASHTIRILADI: MCP serverlar odatda `PATH`
- * (npx/uvx topilishi uchun) va `HOME` ga tayanadi. Faqat berilgan qiymatlar
- * bilan ishga tushirsak, ular umuman ko'tarilmasdi.
+ * `env` IS MERGED WITH THE PROCESS ENV: MCP servers usually rely on `PATH`
+ * (so that npx/uvx can be found) and on `HOME`. If we launched them with only
+ * the given values, they would not come up at all.
  *
- * LEKIN jarayon xulqini o'zgartiradigan kalitlar OLIB TASHLANADI
- * (`TAQIQLANGAN_ENV` izohiga q.) — ular `process.env` dagi haqiqiy
- * qiymatda qoladi.
+ * BUT the keys that alter process behaviour ARE STRIPPED (see the
+ * `FORBIDDEN_ENV` note) — they keep their real value from `process.env`.
  */
-const standartJarayonYaratuvchi: JarayonYaratuvchi = (argv, env) => {
-  const { toza, tashlangan } = envniTozala(env)
-  if (tashlangan.length > 0) {
-    // Jimgina tashlamaymiz: foydalanuvchi nega sozlamasi ishlamaganini
-    // bilishi kerak va bu yozuv zararli yozuvni aniqlashga yordam beradi.
+const defaultProcessSpawner: ProcessSpawner = (argv, env) => {
+  const { clean, dropped } = sanitiseEnv(env)
+  if (dropped.length > 0) {
+    // We do not drop them silently: the user needs to know why their setting
+    // had no effect, and this log line helps spot a malicious entry.
     console.warn(
-      `[mcp] xavfli env o'zgaruvchilari e'tiborsiz qoldirildi: ${tashlangan.join(', ')}`,
+      `[mcp] dangerous env variables ignored: ${dropped.join(', ')}`,
     )
   }
 
   const proc = Bun.spawn(argv, {
-    env: { ...process.env, ...toza },
+    env: { ...process.env, ...clean },
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
   })
 
-  const yozuvchi = proc.stdin
+  const writer = proc.stdin
 
   return {
-    yoz(matn) {
-      yozuvchi.write(matn)
-      yozuvchi.flush()
+    write(text) {
+      writer.write(text)
+      writer.flush()
     },
-    chiqishniTingla(fn) {
-      void oqimniOqi(proc.stdout, fn)
+    onStdout(fn) {
+      void readStream(proc.stdout, fn)
     },
-    xatoOqiminiTingla(fn) {
-      void oqimniOqi(proc.stderr, fn)
+    onStderr(fn) {
+      void readStream(proc.stderr, fn)
     },
-    toxtat() {
+    stop() {
       proc.kill('SIGTERM')
     },
-    old() {
+    kill() {
       proc.kill('SIGKILL')
     },
-    tugadi: proc.exited,
+    exited: proc.exited,
   }
 }
 
-/** ReadableStream'ni matn bo'laklariga aylantiradi */
-async function oqimniOqi(oqim: ReadableStream<Uint8Array>, fn: (b: string) => void): Promise<void> {
-  const dekoder = new TextDecoder()
+/** Turns a ReadableStream into text chunks */
+async function readStream(stream: ReadableStream<Uint8Array>, fn: (b: string) => void): Promise<void> {
+  const decoder = new TextDecoder()
   try {
-    for await (const bolak of oqim) {
-      fn(dekoder.decode(bolak, { stream: true }))
+    for await (const chunk of stream) {
+      fn(decoder.decode(chunk, { stream: true }))
     }
   } catch {
-    // Jarayon yopilganda oqim uziladi — bu normal holat, xato emas
+    // The stream breaks when the process closes — that is normal, not an error
   }
 }
 
-let jarayonYaratuvchi: JarayonYaratuvchi = standartJarayonYaratuvchi
+let processSpawner: ProcessSpawner = defaultProcessSpawner
 
 /**
- * Testlar uchun: jarayon yaratuvchini almashtirish (`null` — standart).
+ * For tests: swap the process spawner (`null` — the default).
  *
- * `ssh.ts` dagi `bajaruvchiOrnat()` bilan bir xil uslub.
+ * The same style as `setCommandRunner()` in `ssh.ts`.
  */
-export function jarayonYaratuvchiniOrnat(y: JarayonYaratuvchi | null): void {
-  jarayonYaratuvchi = y ?? standartJarayonYaratuvchi
+export function setProcessSpawner(s: ProcessSpawner | null): void {
+  processSpawner = s ?? defaultProcessSpawner
 }
 
 // ---------------------------------------------------------------------------
-// Tirik jarayonlar reestri — oxirgi himoya qatlami
+// The live process registry — the last line of defence
 // ---------------------------------------------------------------------------
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ NEGA KERAK. Jarayonlar UCH QATLAMDA yopiladi:                        │
-// │   1) `McpKlient.uz()` — normal yo'l;                                  │
-// │   2) `agent.ts` dagi `tozala()` — oqim tugaganda/bekor qilinganda;   │
-// │   3) SHU REESTR — server `SIGTERM` olganda.                          │
+// │ WHY IT IS NEEDED. Processes are closed at THREE LAYERS:              │
+// │   1) `McpClient.disconnect()` — the normal path;                             │
+// │   2) `cleanup()` in `agent.ts` — when the stream ends or is           │
+// │      cancelled;                                                      │
+// │   3) THIS REGISTRY — when the server receives `SIGTERM`.             │
 // │                                                                      │
-// │ Uchinchisi zarur, chunki `process.exit()` bola jarayonlarni           │
-// │ O'LDIRMAYDI: ular yetim qolib, `npx` bilan ko'tarilgan node          │
-// │ jarayonlari fonda ishlab turadi. Ishlab chiqarishda bu asta-sekin     │
-// │ o'nlab yetim jarayonga aylanadi.                                     │
+// │ The third one is essential, because `process.exit()` DOES NOT KILL   │
+// │ child processes: they are orphaned, and the node processes spawned   │
+// │ by `npx` keep running in the background. In production this slowly   │
+// │ turns into dozens of orphaned processes.                             │
 // └──────────────────────────────────────────────────────────────────────┘
 
-const tirikJarayonlar = new Set<McpJarayon>()
+const liveProcesses = new Set<McpProcess>()
 
-/** Hozir tirik deb hisoblanadigan MCP jarayonlari soni — diagnostika uchun */
-export function tirikJarayonlarSoni(): number {
-  return tirikJarayonlar.size
+/** How many MCP processes are currently considered live — for diagnostics */
+export function liveProcessCount(): number {
+  return liveProcesses.size
 }
 
 /**
- * Hamma tirik MCP jarayonini majburan o'ldiradi.
+ * Force-kills every live MCP process.
  *
- * `platform-server/src/index.ts` dagi `toxtat()` shuni chaqiradi.
- * SIGTERM'ni KUTMAYDI: jarayon o'chishi oldidan qo'limizda vaqt yo'q,
- * shuning uchun to'g'ridan-to'g'ri SIGKILL.
+ * `stop()` in `platform-server/src/index.ts` calls this. It DOES NOT WAIT
+ * for SIGTERM: we have no time on our hands before the process goes down, so
+ * it goes straight to SIGKILL.
  */
-export function hammaMcpJarayoniniOldir(): void {
-  for (const jarayon of tirikJarayonlar) {
+export function killAllMcpProcesses(): void {
+  for (const proc of liveProcesses) {
     try {
-      jarayon.old()
+      proc.kill()
     } catch {
-      // allaqachon o'lgan bo'lishi mumkin
+      // it may already be dead
     }
   }
-  tirikJarayonlar.clear()
+  liveProcesses.clear()
 }
 
 // ---------------------------------------------------------------------------
 // stdio transport
 // ---------------------------------------------------------------------------
 
-/** SIGTERM dan keyin SIGKILL gacha beriladigan muddat */
-export const OLDIRISH_KUTISH_MS = 2000
+/** The grace period allowed between SIGTERM and SIGKILL */
+export const KILL_GRACE_MS = 2000
 
 /**
- * stderr dan saqlanadigan eng ko'p belgi.
+ * The maximum number of characters kept from stderr.
  *
- * Server stderr ga cheksiz log yozishi mumkin (ba'zilari har chaqiruvni
- * yozadi). Uni to'liq saqlash xotira sizmasi bo'lardi, shuning uchun faqat
- * OXIRGI qism qoladi — ulanish xatosini tushuntirish uchun aynan oxirgi
- * satrlar kerak.
+ * A server may write unbounded logs to stderr (some log every call). Keeping
+ * all of it would be a memory leak, so only the LAST slice is retained — it is
+ * exactly the final lines that are needed to explain a connection error.
  */
-const MAKS_STDERR = 4000
+const MAX_STDERR = 4000
 
-export function stdioTransportYarat(
-  buyruq: string,
-  argumentlar: string[],
+export function createStdioTransport(
+  command: string,
+  args: string[],
   env: Record<string, string> = {},
-): McpTransport & { xatoMatni(): string } {
-  const jarayon = jarayonYaratuvchi([buyruq, ...argumentlar], env)
-  tirikJarayonlar.add(jarayon)
-  // Jarayon o'z-o'zidan o'lsa ham reestrdan chiqsin — aks holda `Set` uzoq
-  // ishlaydigan serverda o'lik yozuvlar bilan to'lib borardi.
-  void jarayon.tugadi.then(
-    () => tirikJarayonlar.delete(jarayon),
-    () => tirikJarayonlar.delete(jarayon),
+): McpTransport & { errorText(): string } {
+  const proc = processSpawner([command, ...args], env)
+  liveProcesses.add(proc)
+  // Drop it from the registry even when the process dies on its own —
+  // otherwise the `Set` would fill up with dead entries on a long-running
+  // server.
+  void proc.exited.then(
+    () => liveProcesses.delete(proc),
+    () => liveProcesses.delete(proc),
   )
 
-  const tinglovchilar = new Set<(x: JsonRpcKelgan) => void>()
-  let bufer = ''
-  let stderrMatni = ''
-  let yopilgan = false
+  const listeners = new Set<(x: JsonRpcIncoming) => void>()
+  let buffer = ''
+  let stderrText = ''
+  let closed = false
 
-  jarayon.chiqishniTingla((bolak) => {
-    bufer += bolak
-    // Newline-delimited JSON: har to'liq qator bitta xabar.
-    // Oxirgi (tugallanmagan) bo'lak buferda qoladi.
+  proc.onStdout((chunk) => {
+    buffer += chunk
+    // Newline-delimited JSON: every complete line is one message.
+    // The last (unfinished) chunk stays in the buffer.
     let nl: number
-    while ((nl = bufer.indexOf('\n')) >= 0) {
-      const qator = bufer.slice(0, nl).trim()
-      bufer = bufer.slice(nl + 1)
-      if (!qator) continue
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, nl).trim()
+      buffer = buffer.slice(nl + 1)
+      if (!line) continue
 
-      let xabar: JsonRpcKelgan
+      let message: JsonRpcIncoming
       try {
-        xabar = JSON.parse(qator) as JsonRpcKelgan
+        message = JSON.parse(line) as JsonRpcIncoming
       } catch {
-        // JSON bo'lmagan qator — server stdout'ga log yozgan bo'lishi
-        // mumkin. Protokolni buzmaydi, o'tkazib yuboramiz.
+        // A non-JSON line — the server may have written a log to stdout. It
+        // does not break the protocol, so we skip it.
         continue
       }
 
-      for (const fn of tinglovchilar) {
+      for (const fn of listeners) {
         try {
-          fn(xabar)
+          fn(message)
         } catch {
-          // Tinglovchi xatosi oqimni buzmasin
+          // A listener error must not break the stream
         }
       }
     }
   })
 
-  jarayon.xatoOqiminiTingla((bolak) => {
-    stderrMatni = (stderrMatni + bolak).slice(-MAKS_STDERR)
+  proc.onStderr((chunk) => {
+    stderrText = (stderrText + chunk).slice(-MAX_STDERR)
   })
 
   return {
-    async yubor(xabar) {
-      if (yopilgan) throw new Error('The MCP transport is closed')
-      jarayon.yoz(`${JSON.stringify(xabar)}\n`)
+    async send(message) {
+      if (closed) throw new Error('The MCP transport is closed')
+      proc.write(`${JSON.stringify(message)}\n`)
     },
 
-    tingla(fn) {
-      tinglovchilar.add(fn)
+    listen(fn) {
+      listeners.add(fn)
       return () => {
-        tinglovchilar.delete(fn)
+        listeners.delete(fn)
       }
     },
 
     /**
-     * Jarayonni to'xtatadi: SIGTERM → kutish → SIGKILL.
+     * Stops the process: SIGTERM → wait → SIGKILL.
      *
-     * NEGA IKKI QADAM. SIGTERM serverga o'z resurslarini tozalash imkonini
-     * beradi (ba'zilari o'z bola jarayonlarini yopadi). Lekin unga
-     * javob bermaydigan server ham bor — shuning uchun 2 soniyadan keyin
-     * SIGKILL. Faqat SIGKILL bo'lsa server nevara jarayonlarni yetim
-     * qoldirishi mumkin; faqat SIGTERM bo'lsa jarayon abadiy turib qolardi.
+     * WHY TWO STEPS. SIGTERM gives the server a chance to clean up its own
+     * resources (some of them close their child processes). But there are
+     * servers that never respond to it — hence SIGKILL after 2 seconds. With
+     * SIGKILL alone the server might orphan its grandchild processes; with
+     * SIGTERM alone the process could hang around forever.
      */
-    async yop() {
-      if (yopilgan) return
-      yopilgan = true
-      tinglovchilar.clear()
-      tirikJarayonlar.delete(jarayon)
+    async close() {
+      if (closed) return
+      closed = true
+      listeners.clear()
+      liveProcesses.delete(proc)
 
       try {
-        jarayon.toxtat()
+        proc.stop()
       } catch {
-        // allaqachon o'lgan bo'lishi mumkin
+        // it may already be dead
       }
 
-      const oldirish = setTimeout(() => {
+      const killTimer = setTimeout(() => {
         try {
-          jarayon.old()
+          proc.kill()
         } catch {
-          // shu payt o'lgan bo'lsa ham mayli
+          // fine if it died in the meantime
         }
-      }, OLDIRISH_KUTISH_MS)
-      // Node/Bun'da taymer jarayonni ushlab turmasin
-      oldirish.unref?.()
+      }, KILL_GRACE_MS)
+      // Do not let the timer hold the process alive on Node/Bun
+      killTimer.unref?.()
 
       try {
-        await jarayon.tugadi
+        await proc.exited
       } catch {
-        // tugash xatosi ham yopishni to'xtatmasin
+        // an exit error must not stop closing either
       } finally {
-        clearTimeout(oldirish)
+        clearTimeout(killTimer)
       }
     },
 
-    /** Ulanish xatosini tushuntirish uchun — stderr ning oxirgi qismi */
-    xatoMatni() {
-      return stderrMatni.trim()
+    /** To explain a connection error — the last slice of stderr */
+    errorText() {
+      return stderrText.trim()
     },
   }
 }
 
 // ---------------------------------------------------------------------------
-// HTTP transport (streamable-http va sse)
+// HTTP transport (streamable-http and sse)
 // ---------------------------------------------------------------------------
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ STDIO'DAN TUB FARQI: OQIM YO'Q, SO'ROV-JAVOB BOR.                    │
+// │ THE FUNDAMENTAL DIFFERENCE FROM STDIO: NO STREAM, REQUEST-RESPONSE.  │
 // │                                                                      │
-// │ stdio'da bitta uzluksiz oqim bor va javoblar `id` bo'yicha            │
-// │ moslashtiriladi. HTTP'da esa har `yubor()` — alohida POST va javob   │
-// │ AYNAN SHU so'rovning javobi bo'lib qaytadi.                          │
+// │ With stdio there is one continuous stream and responses are matched  │
+// │ by `id`. Over HTTP every `send()` is a separate POST and the        │
+// │ response comes back as the answer to EXACTLY THAT request.           │
 // │                                                                      │
-// │ Klient interfeysi bir xil qolishi uchun javobni POST ichida o'qiymiz │
-// │ va `tingla()` tinglovchilariga uzatamiz — klient uchun bu stdio'dan  │
-// │ farq qilmaydi. Shu tufayli `mcp-klient.ts` ga bitta ham shart        │
-// │ qo'shilmadi.                                                         │
+// │ To keep the client interface identical we read the response inside   │
+// │ the POST and hand it to the `listen()` listeners — for the client    │
+// │ this is indistinguishable from stdio. That is why not a single       │
+// │ conditional had to be added to `mcp-client.ts`.                      │
 // └──────────────────────────────────────────────────────────────────────┘
 //
-// IKKI VARIANT BITTA SINFDA. `streamable-http` (yangi) va `sse` (eski)
-// farqi — javob formati: birinchisi oddiy JSON, ikkinchisi
-// `text/event-stream`. Buni `Content-Type` dan aniqlaymiz, ya'ni alohida
-// sinf ochish kerak emas. Registry'da ikkala tur ham uchraydi.
+// TWO VARIANTS IN ONE CLASS. The difference between `streamable-http` (new)
+// and `sse` (old) is the response format: the first is plain JSON, the second
+// is `text/event-stream`. We detect it from `Content-Type`, so there is no
+// need for a separate class. Both kinds show up in the registry.
 
-/** HTTP so'rovi uchun standart kutish muddati */
+/** The default timeout for an HTTP request */
 export const HTTP_TIMEOUT_MS = 30_000
 
 /**
- * SSE javobidan JSON-RPC xabarlarini ajratadi.
+ * Extracts JSON-RPC messages from an SSE response.
  *
- * Format: `data: {...}` qatorlari, bo'sh qator bilan ajratilgan hodisalar.
- * Bizga faqat `data` kerak — `event`/`id`/`retry` maydonlari MCP'da
- * ishlatilmaydi.
+ * Format: `data: {...}` lines, events separated by a blank line. We only need
+ * `data` — the `event`/`id`/`retry` fields are not used in MCP.
  *
- * Eksport qilingan, chunki alohida test qilinadi (SSE tahlili — xatoga eng
- * moyil joy).
+ * Exported because it is tested separately (SSE parsing is the most
+ * error-prone spot).
  */
-export function sseXabarlariniAjrat(matn: string): JsonRpcKelgan[] {
-  const xabarlar: JsonRpcKelgan[] = []
-  for (const qator of matn.split('\n')) {
-    const tozalangan = qator.trimStart()
-    if (!tozalangan.startsWith('data:')) continue
-    const mazmun = tozalangan.slice(5).trim()
-    if (!mazmun || mazmun === '[DONE]') continue
+export function parseSseMessages(text: string): JsonRpcIncoming[] {
+  const messages: JsonRpcIncoming[] = []
+  for (const line of text.split('\n')) {
+    const trimmed = line.trimStart()
+    if (!trimmed.startsWith('data:')) continue
+    const payload = trimmed.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
     try {
-      xabarlar.push(JSON.parse(mazmun) as JsonRpcKelgan)
+      messages.push(JSON.parse(payload) as JsonRpcIncoming)
     } catch {
-      // JSON bo'lmagan `data` — o'tkazib yuboramiz (stdio bilan bir xil qoida)
+      // Non-JSON `data` — we skip it (the same rule as with stdio)
     }
   }
-  return xabarlar
+  return messages
 }
 
-export function httpTransportYarat(
+export function createHttpTransport(
   url: string,
-  sarlavhalar: Record<string, string> = {},
+  headers: Record<string, string> = {},
   timeoutMs: number = HTTP_TIMEOUT_MS,
-): McpTransport & { xatoMatni(): string } {
-  const tinglovchilar = new Set<(x: JsonRpcKelgan) => void>()
-  let yopilgan = false
-  let oxirgiXato = ''
+): McpTransport & { errorText(): string } {
+  const listeners = new Set<(x: JsonRpcIncoming) => void>()
+  let closed = false
+  let lastError = ''
   /**
-   * Server bergan sessiya id'si.
+   * The session id handed out by the server.
    *
-   * Spec: server `initialize` javobida `Mcp-Session-Id` sarlavhasini
-   * qaytarsa, KEYINGI hamma so'rov shu bilan yuborilishi kerak. Usiz
-   * server "sessiya yo'q" deb 400 qaytaradi.
+   * Spec: if the server returns an `Mcp-Session-Id` header in the `initialize`
+   * response, EVERY subsequent request must carry it. Without it the server
+   * answers 400 with "no session".
    */
-  let sessiyaId: string | undefined
+  let sessionId: string | undefined
 
-  const tarqat = (xabar: JsonRpcKelgan) => {
-    for (const fn of tinglovchilar) {
+  const dispatch = (message: JsonRpcIncoming) => {
+    for (const fn of listeners) {
       try {
-        fn(xabar)
+        fn(message)
       } catch {
-        // Tinglovchi xatosi transportni buzmasin
+        // A listener error must not break the transport
       }
     }
   }
 
   return {
-    async yubor(xabar) {
-      if (yopilgan) throw new Error('The MCP transport is closed')
+    async send(message) {
+      if (closed) throw new Error('The MCP transport is closed')
 
-      const javob = await fetch(url, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // Ikkala formatni ham qabul qilamiz — server o'zi tanlaydi
+          // We accept both formats — the server picks
           Accept: 'application/json, text/event-stream',
-          ...(sessiyaId ? { 'Mcp-Session-Id': sessiyaId } : {}),
-          ...sarlavhalar,
+          ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
+          ...headers,
         },
-        body: JSON.stringify(xabar),
+        body: JSON.stringify(message),
         signal: AbortSignal.timeout(timeoutMs),
       })
 
-      const yangiSessiya = javob.headers.get('Mcp-Session-Id')
-      if (yangiSessiya) sessiyaId = yangiSessiya
+      const newSession = response.headers.get('Mcp-Session-Id')
+      if (newSession) sessionId = newSession
 
-      if (!javob.ok) {
-        // Tana xato sababini o'z ichiga olishi mumkin — diagnostika uchun saqlaymiz
-        oxirgiXato = (await javob.text().catch(() => '')).slice(0, 500)
-        throw new Error(`MCP HTTP error: ${javob.status} ${javob.statusText}`)
+      if (!response.ok) {
+        // The body may carry the reason for the error — we keep it for diagnostics
+        lastError = (await response.text().catch(() => '')).slice(0, 500)
+        throw new Error(`MCP HTTP error: ${response.status} ${response.statusText}`)
       }
 
-      // Xabarnoma (`id` yo'q) uchun server 202 va bo'sh tana qaytaradi
-      if (javob.status === 204 || !javob.body) return
+      // For a notification (no `id`) the server returns 202 and an empty body
+      if (response.status === 204 || !response.body) return
 
-      const turi = javob.headers.get('Content-Type') ?? ''
-      const matn = await javob.text()
-      if (!matn.trim()) return
+      const contentType = response.headers.get('Content-Type') ?? ''
+      const text = await response.text()
+      if (!text.trim()) return
 
-      if (turi.includes('text/event-stream')) {
-        for (const x of sseXabarlariniAjrat(matn)) tarqat(x)
+      if (contentType.includes('text/event-stream')) {
+        for (const x of parseSseMessages(text)) dispatch(x)
         return
       }
 
       try {
-        const xom = JSON.parse(matn) as JsonRpcKelgan | JsonRpcKelgan[]
-        // Server to'plam (batch) qaytarishi mumkin
-        for (const x of Array.isArray(xom) ? xom : [xom]) tarqat(x)
+        const raw = JSON.parse(text) as JsonRpcIncoming | JsonRpcIncoming[]
+        // The server may return a batch
+        for (const x of Array.isArray(raw) ? raw : [raw]) dispatch(x)
       } catch {
-        oxirgiXato = matn.slice(0, 500)
+        lastError = text.slice(0, 500)
         throw new Error('The MCP response is not JSON')
       }
     },
 
-    tingla(fn) {
-      tinglovchilar.add(fn)
+    listen(fn) {
+      listeners.add(fn)
       return () => {
-        tinglovchilar.delete(fn)
+        listeners.delete(fn)
       }
     },
 
     /**
-     * HTTP'da o'ldiriladigan jarayon yo'q — faqat tinglovchilarni tozalaymiz
-     * va yangi so'rovlarni to'xtatamiz.
+     * Over HTTP there is no process to kill — we only clear the listeners and
+     * stop accepting new requests.
      */
-    async yop() {
-      yopilgan = true
-      tinglovchilar.clear()
+    async close() {
+      closed = true
+      listeners.clear()
     },
 
-    xatoMatni() {
-      return oxirgiXato.trim()
+    errorText() {
+      return lastError.trim()
     },
   }
 }

@@ -1,0 +1,47 @@
+{
+  "$schema": "./schema.json",
+
+  "agent": {
+    "history": {
+      "maxMessages": 200,
+      "toolResultLimit": 4000
+    },
+    "compaction": {
+      "enabled": true,
+      "reserveTokens": 16384,
+      "keptTokens": 20000,
+      "model": null
+    },
+    "tools": {
+      "enabled": ["read", "write", "edit", "bash", "grep", "find", "ls", "serverList", "appPublish"],
+      "bashTimeoutSeconds": 120,
+      "resultLimit": 2000
+    }
+  },
+
+  "permission": {
+    "mode": "confirm",
+    "waitSeconds": 300,
+    "classifierModel": null,
+    "consecutiveBlockLimit": 3,
+    "totalBlockLimit": 20,
+    "extraDenyList": []
+  },
+
+  "mcp": {
+    "connectTimeoutSeconds": 10,
+    "callTimeoutSeconds": 30
+  },
+
+  "chat": {
+    "attachment": {
+      "maxFileMb": 20,
+      "maxCount": 10
+    }
+  },
+
+  "session": {
+    "workDir": null,
+    "idleMinutes": 60
+  }
+}

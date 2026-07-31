@@ -1,7 +1,7 @@
 // Ollama aniqlash — asosiy talab: server ishlamasa ham yiqilmaslik.
 
 import { afterEach, describe, expect, test } from 'bun:test'
-import { ollamaManzili, ollamaModellari, ollamaProvider } from '../src/ollama.ts'
+import { ollamaBaseUrl, ollamaModels, ollamaProvider } from '../src/ollama.ts'
 
 const ASL_HOST = process.env.OLLAMA_HOST
 
@@ -10,33 +10,33 @@ afterEach(() => {
   else process.env.OLLAMA_HOST = ASL_HOST
 })
 
-describe('ollamaManzili', () => {
+describe('ollamaBaseUrl', () => {
   test('standart manzil', () => {
     delete process.env.OLLAMA_HOST
-    expect(ollamaManzili()).toBe('http://127.0.0.1:11434')
+    expect(ollamaBaseUrl()).toBe('http://127.0.0.1:11434')
   })
 
   test('OLLAMA_HOST sxemasiz berilsa http qo\'shiladi', () => {
     process.env.OLLAMA_HOST = 'localhost:9999'
-    expect(ollamaManzili()).toBe('http://localhost:9999')
+    expect(ollamaBaseUrl()).toBe('http://localhost:9999')
   })
 
   test('sxemali manzil o\'zgarmaydi, oxirgi slash olib tashlanadi', () => {
     process.env.OLLAMA_HOST = 'https://ollama.ichki:443/'
-    expect(ollamaManzili()).toBe('https://ollama.ichki:443')
+    expect(ollamaBaseUrl()).toBe('https://ollama.ichki:443')
   })
 
   test('bo\'sh qiymat standartga qaytadi', () => {
     process.env.OLLAMA_HOST = '   '
-    expect(ollamaManzili()).toBe('http://127.0.0.1:11434')
+    expect(ollamaBaseUrl()).toBe('http://127.0.0.1:11434')
   })
 })
 
-describe('ollamaModellari', () => {
+describe('ollamaModels', () => {
   test('server javob bermasa bo\'sh massiv, throw yo\'q', async () => {
     // Hech kim tinglamaydigan port
     process.env.OLLAMA_HOST = '127.0.0.1:1'
-    expect(await ollamaModellari(200)).toEqual([])
+    expect(await ollamaModels(200)).toEqual([])
   })
 
   test('provider ham undefined qaytaradi', async () => {
@@ -48,7 +48,7 @@ describe('ollamaModellari', () => {
 describe('ollamaProvider (haqiqiy server bo\'lsa)', () => {
   test('ishlab turgan Ollama modellar bilan provider beradi', async () => {
     delete process.env.OLLAMA_HOST
-    const nomlar = await ollamaModellari(1000)
+    const nomlar = await ollamaModels(1000)
     if (nomlar.length === 0) {
       // Ollama ishlamayapti — bu test shartli, o'tkazib yuboriladi
       expect(await ollamaProvider()).toBeUndefined()

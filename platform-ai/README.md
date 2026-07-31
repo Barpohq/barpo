@@ -1,341 +1,647 @@
 # @platforma/ai
 
-Platformaning AI qatlami. Server bu paketdan uchta narsani ishlatadi:
+The platform's AI layer. Everything the server needs to run a chat that can
+actually do work — provider detection, the tool-using agent loop, and the
+security layer that decides what the agent is allowed to do.
 
 ```ts
-import { agentOqimi, modellarniAniqla, ruxsatBoshqaruvchisi } from '@platforma/ai'
+import { agentStream, detectModels, permissionManager, modeManager } from '@platforma/ai'
 
-// 1) PC'da qaysi providerlar ishlatishga tayyor
-const { models, providers, ogohlantirishlar } = await modellarniAniqla()
+// 1) Which providers are ready to use on this machine
+const { models, providers, warnings } = await detectModels()
 
-// 2) Tool bilan ishlaydigan agent (read/write/edit/bash)
-for await (const h of agentOqimi({ provider: 'ollama', model: 'qwen3:8b' }, xabarlar, {
-  sessionId,
-  ishPapkasi,
-  ruxsat: ruxsatBoshqaruvchisi(sessionId),
-})) {
-  if (h.tur === 'delta') process.stdout.write(h.matn)
-  if (h.tur === 'tool_boshlandi') console.log(`[${h.nom}] ${h.args}`)
-  if (h.tur === 'ruxsat_kerak') console.log('ruxsat kerak:', h.sorov.sabab)
-  if (h.tur === 'tugadi') console.log(h.sarflov)
+// 2) An agent that works with tools (read/write/edit/grep/find/ls/bash)
+for await (const event of agentStream(
+  { provider: 'ollama', model: 'qwen3:8b' },
+  messages,
+  {
+    sessionId,
+    workDir,
+    permission: permissionManager(sessionId),
+    mode: modeManager(sessionId),
+  },
+)) {
+  switch (event.kind) {
+    case 'delta':
+      process.stdout.write(event.text)
+      break
+    case 'tool_start':
+      console.log(`[${event.name}] ${event.args}`)
+      break
+    case 'permission_required':
+      console.log('permission needed:', event.request.reason)
+      break
+    case 'done':
+      // `event.messages` is the full context WITH TOOL RESULTS — store it and
+      // pass it back on the next turn, or the agent forgets what it read
+      console.log(event.usage, event.contextTokens)
+      break
+  }
 }
 
-// 3) Tool'siz oddiy suhbat — `suhbatOqimi` (xuddi shu shakl, sozlamasiz)
+// 3) A plain tool-less conversation — `conversationStream` (delta/done/error only)
 ```
 
-Provider tafsilotlari (kalitlar, OAuth, Ollama, model kataloglari) va tool
-xavfsizligi shu paket ichida qoladi — server ularni bilmaydi.
+`agentStream` never throws: a problem comes back as `{ kind: 'error' }`.
 
-Asosi:
+Provider details (API keys, OAuth, Ollama, model catalogues), tool security and
+the MCP client all stay inside this package — the server knows nothing about
+them.
+
+Built on:
 - [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi/tree/main/packages/ai)
-  — 38 provider, 1100+ model uchun yagona API
+  — one API for 38 providers and 1100+ models
 - [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi/tree/main/packages/agent)
-  — agent loop, tool chaqiruv, tayyor `read`/`write`/`edit`/`bash` tool'lari
+  — the agent loop, tool calls, and ready-made `read`/`write`/`edit`/`bash` tools
 
-## Providerlar qanday aniqlanadi
+## What the caller supplies
 
-Uch manba, uchtasi ham mustaqil — biri ishlamasa qolganlari ishlayveradi.
+`AgentOptions` is more than a session id and a working directory. Three of its
+fields are **inversions**: the data lives in `platform-server`'s SQLite, but
+this package does not depend on the server — so the server hands in a function
+instead.
 
-### 1. Muhit o'zgaruvchilari
-
-pi-ai o'zi biladigan barcha providerlar: `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`,
-`XAI_API_KEY` va boshqalar (to'liq ro'yxat pi-ai README'sida). Amazon Bedrock
-`~/.aws` dan, Vertex AI gcloud ADC'dan ham foydalanadi.
-
-### 2. Ollama (mahalliy)
-
-`http://127.0.0.1:11434/api/tags` so'raladi (`OLLAMA_HOST` qo'llab-quvvatlanadi).
-Topilgan har model OpenAI-mos model sifatida ro'yxatdan o'tadi — narxi 0.
-Server ishlamasa jimgina o'tkazib yuboriladi.
-
-### 3. Boshqa dasturlarning obuna tokenlari
-
-| Fayl | Provider | Nima beradi |
-|---|---|---|
-| `~/.claude/.credentials.json` | `anthropic` | Claude Pro/Max obunasi |
-| `~/.codex/auth.json` | `openai-codex` | ChatGPT Plus/Pro obunasi |
-
-Bu fayllar **faqat o'qiladi**. Token muddati tugasa pi-ai uni yangilaydi va
-natijani platformaning o'z faylida saqlaydi
-(`platform-server/data/ai-auth.json`, ruxsat `600`, gitignore'da) — asl
-fayllar hech qachon o'zgartirilmaydi.
-
-Bu fayllarning formati boshqa dasturlar tomonidan belgilanadi va istalgan
-payt o'zgarishi mumkin. Shuning uchun `mahalliy-auth.ts` hech qachon xato
-tashlamaydi: shakl tanilmasa provider oddiygina ro'yxatda ko'rinmaydi va
-sabab `ogohlantirishlar` ro'yxatiga tushadi.
-
-## Tool'lar va xavfsizlik
-
-Agent to'rtta tool ishlatadi — hammasi pi-agent-core dan tayyor keladi:
-`read`, `write`, `edit`, `bash`. Ular truncation, streaming, abort va
-timeout'ni o'zi hal qiladi.
-
-**pi ning `NodeExecutionEnv` da sandbox yo'q** — sinovda u `/etc/passwd` ni
-o'qidi va `bash` `cd /` qila oldi. Bu pi uchun to'g'ri qaror (ishonchli lokal
-CLI), lekin platformada LLM o'qigan matn ishonchsiz. Shuning uchun ikkita
-himoya qatlami qo'shilgan:
-
-### `muhit.ts` — ChegaralanganMuhit
-
-`ExecutionEnv` ni o'raydi. Har fayl amali oldidan yo'l tekshiriladi:
-
-| Holat | Natija |
+| Option | What it does |
 |---|---|
-| ish papkasi ichida | avtomatik o'tadi |
-| tashqarida | ruxsat so'raladi |
-| rad etilsa | `FileError("permission_denied")` |
+| `permission` | the `PermissionManager` for the session — files, commands and MCP calls all share it |
+| `mode` | the `ModeManager` — `confirm`/`auto`, block counters, fallback. Without it, confirm mode |
+| `config` | `@platforma/config` settings. Defaults are used if omitted |
+| `classifierHistory` | the TEXT-ONLY history for the classifier — better supplied by the caller (two layers instead of one) |
+| `serverProvider` | ↩ the SSH servers connected to the platform → the `serverList` tool |
+| `dashboardSink` | ↩ where a published app manifest is stored → the `appPublish` tool |
+| `mcpProvider` | ↩ which MCP servers to connect for this session → the `mcp__*` tools |
+| `toolObserver` | called before every tool call, for the audit log. Does not block |
+| `hooks` | extra hooks, appended to the ones from the config |
 
-Symlink orqali chiqib ketish `canonicalPath` bilan ushlanadi: ish papkasidagi
-symlink `/etc` ga qarab tursa ham bloklanadi. `exists()` tashqaridagi fayl
-uchun har doim `false` qaytaradi — agent fayl tizimini paypaslay olmasin.
+**A provider that is not given means the tool is not declared at all** — and the
+system prompt does not mention it either. The prompt flags are derived from the
+tool list that was actually built, so the two cannot drift apart into
+"instructions about a tool that is not there".
 
-### `buyruq-tahlil.ts` — bash buyruqlari
+`platform-server/src/orchestrator.ts` is the real caller and uses every one of
+these.
 
-Buyruq `;`, `&&`, `||`, `|`, `$(...)`, backtick bo'yicha bo'laklarga
-ajratiladi va har bo'lak alohida baholanadi (eng xavflisi g'olib):
+## How providers are detected
 
-| Toifa | Misol | Natija |
+Three sources, all three independent — if one fails, the rest keep working.
+
+### 1. Environment variables
+
+Every provider pi-ai knows about: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY` and
+others (the full list is in the pi-ai README). Amazon Bedrock also uses
+`~/.aws`, and Vertex AI uses the gcloud ADC.
+
+### 2. Ollama (local)
+
+`http://127.0.0.1:11434/api/tags` is queried (`OLLAMA_HOST` is supported).
+Every model found is registered as an OpenAI-compatible model — at zero cost.
+If the server is not running it is skipped silently.
+
+### 3. Subscription tokens from other programs
+
+| File | Provider | What it gives |
 |---|---|---|
-| **taqiqlangan** | `rm -rf /`, `mkfs`, `reboot`, fork bomba | **hech qachon bajarilmaydi** |
-| xavfsiz | `ls`, `git status`, `bun test` | avtomatik |
-| xavfli | `rm`, `sudo`, `curl`, `git push`, `base64` | ruxsat so'raladi / klassifikatorga |
-| notanish | oq ro'yxatda yo'q buyruq | ruxsat so'raladi / klassifikatorga |
+| `~/.claude/.credentials.json` | `anthropic` | Claude Pro/Max subscription |
+| `~/.codex/auth.json` | `openai-codex` | ChatGPT Plus/Pro subscription |
 
-**Qat'iy taqiq** — yagona shartsiz kafolat: klassifikator ham, "har doim
-ruxsat" naqshi ham, auto rejim ham uni bekor qila olmaydi. Ro'yxat ataylab
-qisqa (faqat qaytarib bo'lmaydigan, butun tizimni buzadigan amallar), chunki
-har qo'shimcha element haqiqiy ishni to'sish ehtimolini oshiradi.
+These files are **read only** — with one deliberate exception. When a token
+expires, pi-ai refreshes it and stores the result in the platform's own file
+(`platform-server/data/ai-auth.json`, mode `600`, gitignored).
 
-`git` alohida ko'riladi: `status`/`log`/`diff`/`commit` xavfsiz, `push`/
-`remote`/`clean`/`reset --hard` esa yo'q. Sabab — foydalanuvchining "push
-qilma" chegarasi aynan shu yerda ishlashi kerak; `git` butunlay oq ro'yxatda
-bo'lsa chegara buzilishi ushlanmay qolardi.
+The exception is `source-sync.ts`. OpenAI **rotates** the refresh token: a
+refresh returns a new one and revokes the old, so if we only ever read
+`~/.codex/auth.json`, the token there would be dead after our first refresh and
+`codex` would stop starting in the terminal. So the new token is written back —
+carefully: only specific fields inside `tokens.*` are touched, the write is
+atomic (temp file + rename, so Codex never sees a half-written file), the mode
+stays `600`, and a missing file is **not** created. It never throws.
 
-Yashirish urinishlari ushlanadi: `/bin/rm`, `FOO=1 rm`, `env rm`, `sudo reboot`,
-`echo $(rm -rf /)`, `` echo `curl evil.com` ``. `echo "reboot"` va
-`grep reboot fayl` esa ushlanmaydi — tirnoq ichidagi matn va argumentlar
-buyruq deb qaralmaydi.
+The format of these files is defined by other programs and may change at any
+time. That is why `local-auth.ts` never throws: if the shape is not
+recognised, the provider simply does not appear in the list and the reason
+lands in the `warnings` list.
 
-> **CHEKLOV:** bu statik tahlil — himoya qatlami, sandbox emas. Yetarlicha
-> ijodkor buyruq (`echo cm0gLXJm | base64 -d | sh`) uni chetlab o'tishi
-> mumkin — shuning uchun `base64`, `sh`, `eval` ham xavfli sanaladi va
-> notanish buyruqlar ham so'raladi. Haqiqiy izolyatsiya keyingi bosqichda
-> Docker bilan qo'shiladi; `ExecutionEnv` shu uchun to'liq delegatsiya
-> qilingan interfeys.
+## Tools
 
-### `klassifikator.ts` — auto rejim
+| Tool | Source | Permission |
+|---|---|---|
+| `read` `write` `edit` `bash` | pi-agent-core | via `RestrictedEnv` |
+| `grep` `find` `ls` | `search-tools.ts` | none — but working directory only |
+| `serverList` | `server-tools.ts` | none — read-only |
+| `appPublish` | `dashboard-tools.ts` | none — the user asked for it |
+| `mcp__<server>__<tool>` | `mcp-tools.ts` | always, via `McpManager.call()` |
 
-Statik ro'yxat "bu buyruq xavflimi?" degan savolga javob beradi. Bu yetarli
-emas: `rm -rf eski-loglar/` foydalanuvchi so'raganda normal, so'ramaganda
-xavfli. Farqni faqat kontekst ko'rsatadi.
+A tool disabled in `agent.tools.enabled` is **not declared at all** — better
+than "I will refuse if you call it", because the model does not waste turns
+retrying a capability that is not there.
 
-Klassifikator (Claude Code'ning `auto` rejimidan olingan model) boshqa
-savolni beradi: **"amal foydalanuvchi so'raganidan chetga chiqdimi?"**
+Tools run **sequentially** (`toolExecution: 'sequential'`). In testing, parallel
+mode had `write` and `read` going at the same time and `read` hit an ENOENT on a
+file that was still being written.
+
+**Why `grep`/`find`/`ls` exist when `bash` could do it.** Searching through
+`bash` goes through `command-analysis.ts` and asks for permission in many cases
+(a pattern containing `/`, a command off the allowlist). But searching is by
+nature a read operation. Waking the user for every `grep` is permission fatigue
+— the user learns to press "yes" without reading, and waves through a genuinely
+dangerous request too. So these three ask nothing, **but never look outside the
+working directory**: a path outside comes back as `BoundaryError`, with no
+permission prompt offered. If the user really wants to search outside, `bash` is
+there and the full permission mechanism applies. The paths they emit are always
+relative — an absolute path is never disclosed.
+
+## Security
+
+**pi's `NodeExecutionEnv` has no sandbox** — in testing it read `/etc/passwd`
+and `bash` was able to `cd /`. That is the right decision for pi (a trusted
+local CLI), but on the platform the text an LLM has read is untrusted. So
+several layers of defence were added.
+
+### `environment.ts` — RestrictedEnv
+
+Wraps `ExecutionEnv`. Every file operation is preceded by a path check:
+
+| Case | Result |
+|---|---|
+| inside the working directory | passes automatically |
+| outside it | permission is requested |
+| if denied | `FileError("permission_denied")` |
+
+Escaping through a symlink is caught by `canonicalPath`: a symlink inside the
+working directory pointing at `/etc` is blocked too. `exists()` always
+returns `false` for a file outside — so the agent cannot probe the filesystem.
+
+The check is **inside the method**, not in the caller — a tool cannot route
+around it.
+
+### `command-analysis.ts` — bash commands
+
+The command is split into parts on `;`, `&&`, `||`, `|`, `$(...)` and
+backticks, and each part is assessed separately (the most dangerous one wins):
+
+| Category | Example | Result |
+|---|---|---|
+| **forbidden** | `rm -rf /`, `mkfs`, `reboot`, fork bomb | **never runs** |
+| safe | `ls`, `git status`, `bun test` | automatic |
+| dangerous | `rm`, `sudo`, `curl`, `git push`, `base64` | permission requested / classifier |
+| unknown | a command not on the allowlist | permission requested / classifier |
+
+**The hard deny list** is the one unconditional guarantee: neither the
+classifier, nor an "always allow" pattern, nor auto mode can override it. The
+list is deliberately short (only irreversible, system-destroying operations),
+because every extra entry raises the chance of blocking real work.
+
+`git` is treated specially: `status`/`log`/`diff`/`commit` are safe,
+`push`/`remote`/`clean`/`reset --hard` are not. The reason is that a user's
+"do not push" constraint has to work exactly here; if `git` were entirely on
+the allowlist, the breach of that constraint would go undetected.
+
+Attempts at hiding are caught: `/bin/rm`, `FOO=1 rm`, `env rm`, `sudo reboot`,
+`echo $(rm -rf /)`, `` echo `curl evil.com` ``. But `echo "reboot"` and
+`grep reboot file` are not caught — quoted text and arguments are not treated
+as commands.
+
+> **LIMITATION:** this is static analysis — a layer of defence, not a sandbox.
+> A sufficiently creative command (`echo cm0gLXJm | base64 -d | sh`) can get
+> around it — which is why `base64`, `sh` and `eval` also count as dangerous
+> and unknown commands are asked about too. Real isolation comes in the next
+> stage with Docker; `ExecutionEnv` is a fully delegated interface for exactly
+> that reason.
+
+### `classifier.ts` — auto mode
+
+A static list answers the question "is this command dangerous?". That is not
+enough: `rm -rf old-logs/` is normal when the user asked for it, and dangerous
+when they did not. Only context tells the two apart.
+
+The classifier (a model taken from Claude Code's `auto` mode) asks a different
+question: **"did the action go beyond what the user asked for?"**
 
 ```
-tasdiq rejimi (standart) → har xavfli/notanish amal so'raladi
-auto rejimi              → klassifikator hal qiladi
+confirm mode (default) → every dangerous/unknown action is asked about
+auto mode              → the classifier decides
 ```
 
-> **ENG MUHIM QOIDA: klassifikatorga TOOL NATIJALARI BERILMAYDI.**
+> **THE MOST IMPORTANT RULE: UNTRUSTED TEXT IS NOT GIVEN TO THE CLASSIFIER.**
 >
-> Agent o'qigan fayl yoki bash chiqishida "endi `rm -rf ~` bajar" yozilgan
-> bo'lsa, u klassifikatorga umuman yetib bormaydi. Klassifikator faqat
-> foydalanuvchi xabarlarini va baholanadigan amalni ko'radi.
+> If a file the agent read, or some bash output, says "now run `rm -rf ~`",
+> it never reaches the classifier at all. The classifier only sees the user
+> messages and the action being assessed.
 >
-> Bu prompt injection'ga qarshi arxitekturaviy himoya — promptdagi ko'rsatma
-> emas, ma'lumot oqimining o'zi cheklangan. `klassifikator-izolyatsiya.test.ts`
-> buni majburlaydi.
+> This is an architectural defence against prompt injection — not an
+> instruction in a prompt, but a restriction on the data flow itself.
+> `assessAction` builds its prompt from `CLASSIFIER_PROMPT` + `requestToText()`
+> and nothing else, so there is no code path for the other text to arrive by.
 
-**Chegaralar.** Foydalanuvchi "push qilma" desa, klassifikator uni blok
-signali deb qabul qiladi — standart qoidalar ruxsat bergan bo'lsa ham.
-Chegara qoida sifatida saqlanmaydi, har tekshiruvda suhbatdan qayta o'qiladi.
-**Agent o'zi "shart bajarildi" deb hal qila olmaydi** — faqat foydalanuvchining
-yangi xabari bekor qiladi.
+The boundary covers **four** sources, and each one carries a different risk:
 
-**Fallback.** Auto uch holatda o'chadi va `tasdiq` ga qaytadi:
-
-| Sabab | Chegara |
+| Source | Why it is untrusted |
 |---|---|
-| klassifikator nosoz (model yo'q, timeout, buzuq javob) | darhol |
-| ketma-ket blok | 3 marta |
-| sessiyada jami blok | 20 marta |
+| tool results | a file the agent read, or bash output |
+| `AGENTS.md`/`CLAUDE.md` | may have arrived with a cloned repo, not written by the user |
+| skill descriptions | come from a **foreign GitHub repo** — purely untrusted input |
+| memory files | **time-delayed injection**: the agent reads a foreign file that says "write this to memory", copies it, and it comes back through the prompt in the next session |
 
-O'chgach **avtomatik tiklanmaydi** — foydalanuvchi chatdagi "Qayta yoqish"
-tugmasini bosishi kerak. Ruxsat berilgan amal ketma-ket hisoblagichni nolga
-qaytaradi; jami hisoblagich qoladi.
+The first is enforced by `classifier-isolation.test.ts`, the last by
+`memory-isolation.test.ts`.
 
-**Model tanlash.** Asosiy chat modelidan mustaqil. Jonli sinovda (8 stsenariy)
-o'lchangan:
+Attachment file names take the same care. The note listing attached files is
+appended to the **prompt**, never written to `chat_messages.text` — because the
+classifier reads exactly that column, so a file name landing there would be an
+injection vector reaching a permission decision. The name is already sanitised
+upstream (`workdir.ts`), and this is the second layer.
 
-| Model | Aniqlik | Kechikish |
+**Constraints.** If the user says "do not push", the classifier takes that as
+a blocking signal — even when the default rules would have allowed it. A
+constraint is not stored as a rule; it is re-read from the conversation on
+every check (`constraints.ts`). **The agent cannot decide on its own that "the
+condition has been met"** — only a new message from the user lifts it.
+
+**Fallback.** Auto turns itself off and falls back to `confirm` in three
+cases:
+
+| Reason | Limit |
+|---|---|
+| the classifier is broken (no model, timeout, malformed answer) | immediately |
+| consecutive blocks | 3 times |
+| total blocks in the session | 20 times |
+
+Once off it **does not come back automatically** — the user has to press the
+"Re-enable" button in the chat. An allowed action resets the consecutive
+counter to zero; the total counter stays.
+
+**Model choice.** Independent of the main chat model. Measured in a live test
+(8 scenarios):
+
+| Model | Accuracy | Latency |
 |---|---|---|
 | `gemini-2.5-flash-lite` | **8/8** | **~0.8s** |
 | `claude-haiku-4.5` | 8/8 | ~2.3s |
 | `ling-2.6-flash` | 7/8 | ~1.6s |
 | `gpt-5-mini` | 0/8 | "Reasoning is mandatory" — 400 |
-| Ollama `qwen3:8b` | 0/8 | 90s da ham javob bermadi |
+| Ollama `qwen3:8b` | 0/8 | no answer even after 90s |
 
-Shuning uchun tanlov "eng arzon" emas: o'ylash **majburiy** modellar
-(qwen3, GPT-5/o-oilasi, deepseek-r1) va eskirgan avlodlar chiqarib
-tashlanadi, sinalgan modellar ustuvor. `PLATFORMA_KLASSIFIKATOR_MODEL`
-env bilan majburiy belgilash mumkin (`provider/model` shaklida).
+So the choice is not "the cheapest": models where reasoning is **mandatory**
+(qwen3, the GPT-5/o family, deepseek-r1) and older generations are excluded,
+and tested models take priority. It can be forced with the
+`PLATFORM_CLASSIFIER_MODEL` env var or the `permission.classifierModel` setting
+(both in `provider/model` form; the env var wins).
 
-### `ruxsat.ts` — RuxsatBoshqaruvchi
+### `permission.ts` — PermissionManager
 
-So'rov `Promise` qaytaradi va javob kelguncha kutadi — pi-agent-core ning
-tool bajarilishi o'zi to'xtab turadi, alohida holat mashinasi kerak emas.
+A request returns a `Promise` and waits for the answer — the tool execution
+in pi-agent-core suspends itself, so no separate state machine is needed.
 
-- `hardoim` javobi naqshni sessiya davomida eslab qoladi (bazaga yozilmaydi)
-- naqsh ataylab tor: `git` emas, `git push` — bitta tasdiq keng yo'l ochmasin
-- javob kelmasa **5 daqiqada rad** etiladi, agent osilib qolmaydi
+- an `always` answer remembers the pattern for the rest of the session (it is
+  not written to the database)
+- the pattern is deliberately narrow: `git push`, not `git` — one confirmation
+  must not open a wide door
+- if no answer arrives it is **denied after 5 minutes**, so the agent does not
+  hang
 
-## Modullar
+There are three kinds of request — `file`, `command` and `mcp` — and one
+manager handles all three. The kind matters to the classifier: an MCP call is
+neither a file nor a local command, and its effect is invisible in the local
+file system, so looking for command text in it would only confuse the model.
 
-| Fayl | Vazifa |
-|---|---|
-| `aniqlash.ts` | uch manbani birlashtiradi, natijani keshlaydi |
-| `ollama.ts` | mahalliy Ollama'ni dinamik provider sifatida quradi |
-| `mahalliy-auth.ts` | `~/.claude` va `~/.codex` tokenlarini o'qiydi |
-| `kredensial.ts` | `CredentialStore` — fayl va xotira versiyalari |
-| `suhbat.ts` | tool'siz oqim: `delta` / `tugadi` / `xato` |
-| `agent.ts` | tool'li oqim + klassifikator uchun izolyatsiyalangan tarix |
-| `muhit.ts` | ChegaralanganMuhit — fayl chegarasi |
-| `buyruq-tahlil.ts` | bash buyruqlarini baholash, qat'iy taqiq |
-| `ruxsat.ts` | ruxsat so'rovlari, javoblari va qaror zanjiri |
-| `klassifikator.ts` | auto rejim: "so'ralganidan chetga chiqdimi?" |
-| `chegara.ts` | suhbatdagi cheklovlarni ajratish |
-| `rejim.ts` | tasdiq/auto, blok hisoblagichlari, fallback |
-| `kontekst.ts` | tool natijalari saqlanishi + kontekst siqish |
-| `hooklar.ts` | tool oldi/keyin hook zanjiri |
-| `qidiruv-*.ts` | `grep`/`find`/`ls` tool'lari (rg + Node backend) |
+Every resolution reports **where the decision came from** (`PermissionOrigin`):
+`always`, `auto`, `auto-block`, `user`, `user-always`, `denied`, `timeout`,
+`cancelled`, `forbidden`. This arrives as a separate `permission_decision`
+event, because `ask()` only ever returned `allow`/`deny` and the answer to "why
+did this command run?" was stored nowhere. `cancelled` and `denied` are kept
+apart deliberately: in the first the user stopped the whole reply, in the second
+they rejected this specific action — showing both as "you denied this" would be
+a lie.
 
-## Kontekst: tool natijalari va siqish
+### The decision chain
 
-Ikki muammo `kontekst.ts` da yechiladi.
-
-### 1. Tool natijalari tarixda saqlanadi
-
-Ilgari tarix `{role, text}` juftliklaridan iborat edi — tool natijalari
-LLM'ga qaytmasdi va agent **har turn xotirasini yo'qotardi**:
+Every dangerous action goes through this sequence — the first match wins:
 
 ```
-1-xabar: "package.json ni o'qi"  → agent read qiladi, javob beradi
-2-xabar: "versiyani ayt"          → agent faylni QAYTA o'qishga majbur
+1. Hard deny list             → blocked (no classifier, ever)
+2. Working directory + allowlist → automatic
+3. An "always" pattern        → automatic
+4. mode = confirm             → the user is asked
+5. mode = auto                → CLASSIFIER
+   ├─ allow → it runs
+   ├─ block → the agent gets an error, the block counter goes +1
+   └─ broken → auto turns off, the user is asked about the action
 ```
 
-Endi `AgentMessage[]` xom holda bazada saqlanadi (`chat_messages.agent_messages`,
-004-migratsiya) va keyingi turn'da qaytariladi. Eski xabarlarda bu ustun
-`NULL` — u holda tarix `text` dan quriladi, ya'ni mavjud suhbatlar buzilmaydi.
+## MCP (Model Context Protocol)
 
-### 2. Kontekst cheksiz o'smaydi
+The agent can use tools from third-party MCP servers — over `stdio` (a local
+`npx`/`uvx`/`docker` process) or `http`.
 
-`contextWindow - zaxiraTokenlar` dan oshsa siqish boshlanadi:
+The layer is off unless it is used: if `mcpProvider` is absent **or returns an
+empty list**, no manager is created, no tool is declared, and the prompt does
+not mention MCP at all. So there is deliberately **no "MCP enabled" config
+flag** — installing a server is itself the control. Adding a flag on top would
+only drop the user into the "I installed it, why isn't it working" state.
 
-| Bosqich | Nima bo'ladi |
+| File | Role |
 |---|---|
-| 1. LLM xulosasi | eski qism xulosalanadi, yangisi o'zgarishsiz qoladi |
-| 2. Zaxira yo'l | xulosalash ishlamasa eng eskilari tashlanadi |
-| 3. Qattiq chegara | `maksXabar` har holda qo'llanadi |
+| `mcp-protocol.ts` | the JSON-RPC shapes — only the `tools/*` part we need |
+| `mcp-transport.ts` | how bytes move: stdio process, HTTP/SSE |
+| `mcp-client.ts` | one connection: handshake, `tools/list`, `tools/call` |
+| `mcp-manager.ts` | several servers as one tool list — **and the permission gate** |
+| `mcp-tools.ts` | declaring those tools to the agent |
 
-**Kesish hech qachon `toolResult` dan boshlanmaydi** — u o'zini chaqirgan
-assistant xabari bilan birga qolishi shart, aks holda providerga "javobi bor,
-savoli yo'q" kontekst boradi va so'rov rad etiladi. Bu test bilan majburlanadi.
+**Permission lives in `McpManager.call()`, not in the tool wrapper.** The rule
+is the same one `RestrictedEnv` follows: the check goes *inside* the method the
+tool must call, so there is no way to route around it. A hook would not do — a
+hook can only add extra restrictions and cannot *ask*, so an MCP tool guarded by
+a hook would mean "it runs first, then its result is filtered", which
+contradicts the platform's principle that a dangerous action is asked about
+beforehand. Arguments shown in the request are passed through the same
+`redactSecrets` filter the hooks use, so a token passed as an argument does not
+reach the screen or the audit log.
 
-Siqish uchun standart holatda **asosiy chat modeli** ishlatiladi: yomon xulosa
-jimgina noto'g'ri xulqqa olib keladi, arzon model bilan tejash bu xavfga
-arzimaydi. `agent.siqish.modeli` bilan almashtirsa bo'ladi.
+**One broken server does not break the session.** `McpClient` is independent:
+its failure comes back as an `Error`, `McpManager` marks that server as not
+working, and the rest carry on. The user must not lose a chat because one server
+failed to start.
 
-## Hook'lar
+**Tool names are prefixed** — `mcp__<server>__<tool>`. Two servers may well both
+offer a `search`, and without the prefix the model could not say which one it
+called. Registry names are reverse-DNS (`io.github.owner/repo`), so `.` and `/`
+are replaced with `_`.
 
-`hooklar.ts` — tool chaqiruvidan oldin va keyin aralashish nuqtasi.
+**No shell is ever used.** `Bun.spawn(argv)` takes an argv *array*, so text like
+`;rm -rf ~` inside an argument stays a plain string. This is the MCP spec's own
+recommendation. Registry placeholders (`{token}`) are substituted with
+`String.replace` inside that array and never go near a shell. Env keys that
+alter process behaviour (`LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PERL5OPT`
+and friends) are stripped by `sanitiseEnv` — case-insensitively, since some
+systems honour `ld_preload` too.
+
+**No zombie processes.** `cleanup()` in `agent.ts` closes the manager on every
+exit path, including a cancelled stream. It is synchronous while closing is
+async, so the close is kicked off rather than awaited, and its error is
+swallowed — cleanup has to run to the end in every case.
+
+> **Why not `@modelcontextprotocol/sdk`:** 4.1 MB, 693 files, 17 dependencies
+> (`express`, `cors`, `hono`, `jose`, …), almost all of them for the *server*
+> side or OAuth. The decisive reason was testing: the SDK's
+> `StdioClientTransport` uses `cross-spawn` and cannot be swapped out with this
+> project's injection pattern, and the process spawn has to be fakeable. The
+> cost is explicit: as the spec grows we track it by hand, only `tools/*` is
+> implemented, and **OAuth servers do not work** — static credentials only (env
+> or an HTTP header).
+
+## What the agent knows about the project
+
+Three sources feed the system prompt, all read from the working directory at the
+start of every stream. **None of them reaches the classifier** (see above).
+
+### `project-context.ts` — AGENTS.md / CLAUDE.md
+
+So the user does not have to restate their project instructions (code style,
+which command runs the tests, what not to touch) in every conversation. The
+first file found wins; `AGENTS.md` is preferred as the more widely adopted
+agent-oriented standard, `CLAUDE.md` is the fallback for existing projects.
+Capped at 16 000 characters (~4000 tokens) because it is appended on **every**
+request. It is placed at the very end of the prompt, after the platform's own
+rules — there is no law that later text weighs more with a model, but the order
+states the intent: the platform rules are the foundation, the project's
+instructions sit on top.
+
+### `skill-load.ts` / `skill-file.ts` — Skills
+
+`.platforma/skills/*/SKILL.md`, in the Agent Skills format (frontmatter with
+`name`, `description`, `license`, `allowed-tools`). Only **name + description +
+path** go into the prompt — progressive disclosure; the model fetches the full
+text itself with `read` when it decides it needs it. The full text of 20 skills
+would fill the context window on its own. Up to 100 skills.
+
+This is exactly why skill files must live **inside the working directory**:
+otherwise `read` would trip the boundary check and ask permission every time.
+`platform-server/src/skill-store.ts` does the copying.
+
+`skill-file.ts` is a hand-written minimal YAML parse of the frontmatter rather
+than a dependency: only four fields are needed, all of them a string or a list
+of strings. (The `yaml` package is in `node_modules`, but only as a transitive
+dependency of pi — it could vanish on a pi upgrade.) Block scalars (`|`, `>`)
+*are* supported, and that matters: `anthropics/skills` uses `description: |-`,
+and without it the description would parse as the two characters `|-` — the
+skill would load, and the model would have no idea when to use it. Validation is
+deliberately lenient: only a missing `description` rejects a skill, everything
+else is a warning and the skill loads anyway. Third-party repos do not always
+match the spec exactly, and losing a whole repo over a capital letter helps
+nobody.
+
+### `memory.ts` — project memory
+
+The problem: in every new session the agent learns the project from scratch —
+which command runs the tests, why a library was chosen, which style the user
+dislikes. Unlike `AGENTS.md`, which the user maintains by hand, **memory is
+written by the agent itself** into `.platforma/memory/`, and nobody syncs it.
+
+An index (`MEMORY.md`) plus separate files, not one growing document: a single
+file would land in the context in full on every request and, at 50 stored facts,
+would fill the window by itself. So the index goes in whole (capped at 8000
+characters) and the memory files only as name + description + path — the same
+progressive disclosure as skills, with a higher count limit (200), since memory
+accumulates naturally while skills are installed selectively. Memories are typed
+`decision` / `architecture` / `rule` / `source`.
+
+The memory section is included **even when it is empty**: without the writing
+rule in the prompt, the agent would not know the mechanism exists.
+
+## Context: tool results and compaction
+
+Two problems are solved in `context.ts`.
+
+### 1. Tool results are kept in the history
+
+The history used to consist of `{role, text}` pairs — tool results were not
+sent back to the LLM and the agent **lost its memory every turn**:
+
+```
+message 1: "read package.json"  → the agent reads it, answers
+message 2: "tell me the version" → the agent is forced to read the file AGAIN
+```
+
+Now `AgentMessage[]` is stored raw in the database
+(`chat_messages.agent_messages`, migration 004) and passed back on the next
+turn. On older messages this column is `NULL` — in that case the history is
+built from `text`, so existing conversations are not broken.
+
+### 2. Context does not grow without bound
+
+Once it exceeds `contextWindow - reserveTokens`, compaction begins:
+
+| Stage | What happens |
+|---|---|
+| 1. LLM summary | the older part is summarised, the newer part is left as is |
+| 2. Fallback path | if summarising fails, the oldest messages are dropped |
+| 3. Hard limit | `maxMessages` is applied regardless |
+
+**Cutting never starts at a `toolResult`** — it has to stay together with the
+assistant message that called it, otherwise the provider receives a context
+with "an answer but no question" and rejects the request. This is enforced by
+a test.
+
+By default compaction uses the **main chat model**: a bad summary quietly
+leads to wrong behaviour, and saving money with a cheap model is not worth
+that risk. It can be swapped with `agent.compaction.model`; if that model is
+not found we fall back to the main one rather than throwing — compacting with
+the main model beats not compacting at all.
+
+### Which user message is the prompt
+
+`agentStream` looks for the **last `user` message** rather than assuming it is
+the last element of the array. This race really happens:
+
+1. the user sends a message, the stream starts;
+2. they hit "Stop" and immediately send a new message;
+3. the old stream is aborted and the **new** user message is written;
+4. the aborted stream then saves its own "cancelled" reply — *after* the new
+   user message.
+
+The history now ends `… user, assistant`, and code checking only the last
+element silently lost the user's message with "No user message found to send".
+The messages after the chosen user message stay in the history.
+
+## Hooks
+
+`hooks.ts` — the interception point before and after a tool call.
 
 ```ts
-const hook: ToolHooki = {
-  nom: 'misol',
-  oldin: ({ nom, args }) => (nom === 'bash' ? { blokla: true, sabab: '...' } : undefined),
-  keyin: ({ natija }) => ({ natija: natija.replace(/sir/g, '***') }),
+const hook: ToolHook = {
+  name: 'example',
+  before: ({ name, args }) => (name === 'bash' ? { block: true, reason: '...' } : undefined),
+  after: ({ result }) => ({ result: result.replace(/secret/g, '***') }),
 }
 ```
 
-Tayyor hook'lar: `maxfiyniYashirHooki` (kalit/token yashirish),
-`uzunlikHooki`, `qoshimchaTaqiqHooki` (configdagi taqiqlar), `kuzatuvHooki`.
+Ready-made hooks: `redactSecretsHook` (hides keys/tokens), `lengthHook`,
+`extraDenyHook` (the deny list from the config), `observerHook`.
 
-> **Hook xavfsizlik qatlamini ALMASHTIRMAYDI.** Qat'iy taqiq, ish papkasi
-> chegarasi va klassifikator hook'lardan oldin ishlaydi va hook orqali bekor
-> qilinmaydi. Hook faqat **qo'shimcha** cheklov qo'ya oladi — ruxsatni
-> kengaytira olmaydi. Sabab: hook config'dan keladi, config esa loyiha fayli
-> orqali begona odam yozgan bo'lishi mumkin.
+> **A HOOK DOES NOT REPLACE THE SECURITY LAYER.** The hard deny list, the
+> working-directory boundary and the classifier all run before hooks and
+> cannot be overridden by one. A hook can only add **extra** restrictions —
+> it cannot widen a permission. The reason: hooks come from the config, and
+> the config may have been written by a stranger through a project file.
 
-`oldin` hook xatosi **toolni bloklaydi** (fail-closed): maxfiy ma'lumotni
-yashiradigan hook ishlamasa, natijani filtrsiz o'tkazish xavfliroq.
+An error in a `before` hook **blocks the tool** (fail-closed): if a hook that
+hides secrets is not working, passing the result through unfiltered is more
+dangerous.
 
-## Sozlamalar
+Hooks work on **text**, and only the text block of a result is replaced. This
+matters more than it sounds: the whole `content` array used to be replaced with
+a single text block, which **destroyed images** — `read` on an image file
+returns `[{type:'text'}, {type:'image'}]`, and the hooks run over nearly every
+result, so the model silently never saw the image, with no error anywhere. An
+attached image comes down exactly this path.
 
-Xulq `@platforma/config` orqali boshqariladi — `~/.platforma/config.json`
-va loyihadagi `.platforma/config.json`. Tafsilot: `platform-config/README.md`.
+Attached images are not passed as base64 at all: the prompt lists the file paths
+and the agent reads them itself with `read`. That is pi's interactive-mode path
+and it buys two things — one code path for all attachments, and the image enters
+the context only when the agent actually wants it.
 
-Asosiylari: `agent.siqish.*` (kontekst siqish), `agent.toollar.yoqilgan`
-(qaysi tool'lar mavjud), `agent.toollar.bashTimeoutSekund`,
-`ruxsat.rejim`, `ruxsat.qoshimchaTaqiqlar`.
+## Provider errors
 
-## Qaror zanjiri
+`agent.prompt()` **does not throw** on a provider error. pi-agent-core writes it
+into the last assistant message (`stopReason: 'error'`) and returns quietly.
+Without `streamError()` checking for that, such a stream counted as successful:
+no text, no tools, no error — to the user, "the chat started and ended
+immediately". It left no trace in the database either, since the orchestrator
+does not write an empty reply. Real cases that went down this path: OpenRouter's
+`400 Reasoning is mandatory for this endpoint`, and an invalidated Codex OAuth
+token.
 
-Har xavfli amal shu ketma-ketlikdan o'tadi — birinchi mos keladigan g'olib:
+An abort is deliberately **not** treated as an error here — the caller knows
+about its own cancellation and reports it separately.
 
-```
-1. Qat'iy taqiq          → bloklanadi (klassifikatorsiz, hech qachon)
-2. Ish papkasi + oq ro'yxat → avtomatik
-3. "hardoim" naqshi       → avtomatik
-4. rejim = tasdiq         → foydalanuvchidan so'raladi
-5. rejim = auto           → KLASSIFIKATOR
-   ├─ ruxsat → bajariladi
-   ├─ blok   → agent xato oladi, blok hisoblagichi +1
-   └─ nosoz  → auto o'chadi, amal foydalanuvchidan so'raladi
-```
+## Session lifetime
 
-## Kesh
+`registry.ts` — a TTL + LRU registry behind `permissionManager(sessionId)` and
+`modeManager(sessionId)`.
 
-`modellarniAniqla()` natijasi jarayon davomida saqlanadi — har chat so'rovida
-38 providerni qayta tekshirish (ba'zilari tarmoqqa chiqadi) ortiqcha.
-Yangilash: `modellarniAniqla({ majburiy: true })` yoki
+Both used to keep one manager per session in a plain `Map`. The `close()`
+functions existed but nothing ever called them, so every conversation landed in
+the map and stayed there forever — a slow leak on a long-running server.
+"Clean up when the session is deleted" does not work: chat sessions live
+permanently in SQLite and the UI offers no delete, so that event does not exist
+to hook into.
+
+TTL covers the normal case (30 minutes of inactivity and the manager drops out);
+LRU covers the anomaly (a script opening sessions faster than the TTL can
+collect, capped at 500). This is safe because the managers hold only
+session-scoped temporary state — pending requests, "always allow" patterns,
+block counters, the permission mode — none of it persistent. A new manager is
+created on the next request, which for the user is simply the default state.
+An active session is never collected: `get()` refreshes its timestamp on every
+request, so a streaming session sits at the head of the list.
+
+## Settings
+
+Behaviour is controlled through `@platforma/config` — `~/.platforma/config.json`
+and the project's `.platforma/config.json`. Details:
+`platform-config/README.md`.
+
+The main ones: `agent.compaction.*` (context compaction),
+`agent.history.maxMessages`, `agent.history.toolResultLimit`,
+`agent.tools.enabled` (which tools are available),
+`agent.tools.bashTimeoutSeconds`, `permission.mode`, `permission.waitSeconds`,
+`permission.classifierModel`, `permission.extraDenyList`,
+`mcp.connectTimeoutSeconds`, `mcp.callTimeoutSeconds`.
+
+A project config can **narrow** `agent.tools.enabled` but never widen it — a
+project file may have arrived with a cloned repo.
+
+## Cache
+
+The `detectModels()` result is kept for the lifetime of the process —
+re-checking 38 providers on every chat request (some of them go over the
+network) is wasteful. To refresh: `detectModels({ force: true })` or
 `POST /api/models/refresh`.
 
-## Keyingi ish
+## Next up
 
-**Docker izolyatsiyasi.** `ExecutionEnv` ni Docker exec ustida qayta yozish —
-statik tahlil yoki klassifikator chetlab o'tilsa ham zarar konteyner ichida
-qoladi. Interfeys shu uchun to'liq delegatsiya qilingan.
+**Docker isolation.** Rewriting `ExecutionEnv` on top of Docker exec — so
+that even if the static analysis or the classifier is bypassed, the damage
+stays inside the container. The interface is fully delegated for exactly this
+reason.
 
-**Doimiy ruxsatlar.** Hozir "har doim ruxsat" naqshi sessiya bilan birga
-unutiladi. Sozlamalar UI'si bilan ular saqlanishi mumkin.
+**Persistent permissions.** Right now an "always allow" pattern is forgotten
+along with the session. With a settings UI they could be stored.
 
-**Skills.** `pi-agent-core` da `loadSkills()` va
-`formatSkillsForSystemPrompt()` tayyor — `SKILL.md` fayllari orqali agentga
-qo'shimcha ko'nikma berish. Alohida bosqich sifatida rejalashtirilgan.
+**Dashboard code review.** `states`, `settings` and `actions` code from
+`appPublish` runs with the platform's own privileges. The next stage runs the
+same classifier over it as a prompt-injection check; the hook points already
+exist — `validateCode()` in `state-run.ts`, `validateActionCode()` in
+`action-run.ts`, `findForbidden()` in `view-build.ts`.
 
-**AgentHarness.** Hozir quyi qatlam `Agent` ishlatiladi. `AgentHarness` ga
-o'tish sessiya daraxti, `steer()`/`followUp()` (oqim davomida yo'naltirish)
-va provider retry'ni tayyor holda beradi.
+**MCP OAuth.** Only static credentials work today (env or an HTTP header),
+because the hand-written client does not implement the OAuth flow.
 
-## Testlar
+**AgentHarness.** The lower-level `Agent` is used at the moment. Moving to
+`AgentHarness` would provide the session tree, `steer()`/`followUp()`
+(steering mid-stream) and provider retries out of the box.
+
+## Tests
 
 ```bash
 bun test
 ```
 
-Tarmoqqa chiqmaydi (Ollama va `rg` sinovlaridan tashqari — ular shartli:
-dastur yo'q bo'lsa test o'zini o'tkazib yuboradi). Xavfsizlik testlari
-`ChegaralanganMuhit`, `buyruqniBahola` va klassifikator izolyatsiyasini
-to'g'ridan-to'g'ri sinaydi — LLM ishtirokisiz, ya'ni chegara kod darajasida
-majburlanishi tekshiriladi.
+782 tests across 37 files. They do not go over the network (except the Ollama
+and `rg` tests — those are conditional: if the program is missing, the test
+skips itself). The security tests exercise `RestrictedEnv`, `assessCommand`,
+classifier isolation and `sanitiseEnv` directly — without an LLM involved, i.e.
+they check that the boundary is enforced at the code level.
 
-Alohida ahamiyatga ega uchta test:
+Some deserve special mention:
 
-| Fayl | Nimani majburlaydi |
+| File | What it enforces |
 |---|---|
-| `klassifikator-izolyatsiya.test.ts` | tool natijalari klassifikator promptiga tushmaydi — buzilsa prompt injection himoyasi yo'qoladi |
-| `kontekst.test.ts` | kesish `toolResult` dan boshlanmaydi — buzilsa provider so'rovni rad etadi |
-| `qidiruv-bir-xillik.test.ts` | `rg` va Node backend'lari **aynan bir xil** natija beradi — buzilsa agent foydalanuvchi PC'siga qarab boshqacha ishlaydi |
+| `classifier-isolation.test.ts` | tool results do not reach the classifier prompt — if this breaks, the prompt injection defence is lost |
+| `memory-isolation.test.ts` | memory text does not reach the classifier either — the time-delayed injection path |
+| `context.test.ts` | cutting does not start at a `toolResult` — if this breaks, the provider rejects the request |
+| `search-parity.test.ts` | the `rg` and Node backends give **exactly the same** result — if this breaks, the agent behaves differently depending on the user's machine |
+| `search-security.test.ts` | `grep`/`find`/`ls` never escape the working directory, symlinks included |
+| `mcp-env-security.test.ts` | `LD_PRELOAD` and friends are stripped before an MCP process is spawned |
+| `stream-error.test.ts` | a provider error is not silently reported as an empty successful reply |

@@ -1,12 +1,12 @@
-"""Alert yuborish — Telegram admin chatga.
+"""Sending alerts to the Telegram admin chat.
 
-Cooldown kaliti (server, check_name): botdagi global cooldown bu
-yerda yaroqsiz bo'lardi — bitta serverning diski to'lgani boshqa
-serverning xizmati o'lganini 4 soatga bosib qo'yardi.
+The cooldown key is (server, check_name): the bot's global cooldown would
+be wrong here — one server's full disk would suppress another server's dead
+service for 4 hours.
 
-Ochiq alert `server_alerts` da `resolved_at IS NULL` bilan turadi.
-Muammo tugagach u yopiladi va tiklanish xabari yuboriladi — busiz
-foydalanuvchi holat qanday tugaganini bilmaydi.
+An open alert sits in `server_alerts` with `resolved_at IS NULL`. Once the
+problem clears it is closed and a recovery message is sent — without that
+the user never learns how the situation ended.
 """
 
 from __future__ import annotations
@@ -23,25 +23,25 @@ from monitor.state import CurrentState, should_alert
 
 log = get_logger(__name__)
 
-# Bir xil muammo (server + check) haqida shu muddat ichida takror xabar bermaymiz
+# We don't re-notify about the same problem (server + check) within this window
 ALERT_COOLDOWN_HOURS = 4
 
 
 def _send(text: str) -> bool:
-    """Xabarni admin chatga yuborish. Muvaffaqiyatli bo'lsa True.
+    """Send a message to the admin chat. True on success.
 
-    Kanal kerak emas — `has_token()` yetadi (bot uchun `is_configured()`
-    kanalni ham talab qiladi, monitor uchun bu noto'g'ri bo'lardi).
+    No channel is needed — `has_token()` is enough (the bot's
+    `is_configured()` also requires a channel, which would be wrong here).
     """
     from core.telegram import TelegramClient, admin_chat_id, has_token, with_client
 
     if not has_token():
-        log.info("Telegram sozlanmagan — alert yuborilmadi")
+        log.info("Telegram is not configured — alert not sent")
         return False
 
     chat = admin_chat_id()
     if not chat:
-        log.warning("TELEGRAM_ADMIN_CHAT_ID belgilanmagan — alert yuborilmadi")
+        log.warning("TELEGRAM_ADMIN_CHAT_ID is not set — alert not sent")
         return False
 
     async def work(client: TelegramClient) -> None:
@@ -50,13 +50,13 @@ def _send(text: str) -> bool:
     try:
         asyncio.run(with_client(work))
         return True
-    except Exception:  # noqa: BLE001 — xabar yuborilmasligi siklni to'xtatmasin
-        log.exception("Alert yuborilmadi")
+    except Exception:  # noqa: BLE001 — a failed send must not stop the cycle
+        log.exception("Alert could not be sent")
         return False
 
 
 def _open_alert(server: str, check_name: str) -> dict | None:
-    """Shu (server, check) uchun yopilmagan alert."""
+    """The unresolved alert for this (server, check), if any."""
     row = query_one(
         "SELECT id, created_at FROM server_alerts "
         "WHERE server = ? AND check_name = ? AND resolved_at IS NULL "
@@ -67,7 +67,7 @@ def _open_alert(server: str, check_name: str) -> dict | None:
 
 
 def _recently_alerted(server: str, check_name: str) -> bool:
-    """Shu juftlik uchun yaqinda alert yuborilganmi."""
+    """Whether an alert was recently sent for this pair."""
     row = query_one(
         "SELECT created_at FROM server_alerts WHERE server = ? AND check_name = ? "
         "ORDER BY id DESC LIMIT 1",
@@ -79,7 +79,8 @@ def _recently_alerted(server: str, check_name: str) -> bool:
     try:
         sent_at = datetime.fromisoformat(str(row["created_at"]))
     except ValueError:
-        # Sana o'qilmasa alertni bloklamaymiz — xabar kelmagandan ko'ra kelgani yaxshi
+        # If the date won't parse we don't block the alert — better a
+        # message that arrives than one that never does
         return False
     if sent_at.tzinfo is None:
         sent_at = sent_at.replace(tzinfo=UTC)
@@ -96,25 +97,25 @@ def _record_alert(result: CheckResult, summary: str, diagnosis: str) -> None:
 
 
 def send_alert(result: CheckResult, *, diagnosis: str = "") -> bool:
-    """Muammo haqida xabar yuborish (cooldown tekshiruvisiz).
+    """Send a message about a problem (without checking the cooldown).
 
-    Cooldown va takror mantiqi `process_results()` da — bu funksiya
-    qo'lda sinash uchun ham ishlatiladi.
+    The cooldown and repeat logic live in `process_results()` — this
+    function is also used for manual testing.
     """
     text = format_alert(result, diagnosis=diagnosis)
     if not _send(text):
         return False
-    # Yozuv faqat yuborilgandan keyin: Telegram tushib qolsa
-    # cooldown boshlanmasligi kerak
+    # Record only after a successful send: if Telegram is down the
+    # cooldown must not start
     _record_alert(result, result.message, diagnosis)
-    log.info("Alert yuborildi: %s/%s", result.server, result.name)
+    log.info("Alert sent: %s/%s", result.server, result.name)
     return True
 
 
 def resolve_alerts(healthy: list[CurrentState]) -> int:
-    """Tuzalgan muammolar bo'yicha ochiq alertlarni yopish.
+    """Close open alerts whose problems have cleared.
 
-    Yopilgan alertlar soni qaytadi. Har biri uchun tiklanish xabari.
+    Returns the number closed, sending a recovery message for each.
     """
     closed = 0
     for state in healthy:
@@ -128,7 +129,7 @@ def resolve_alerts(healthy: list[CurrentState]) -> int:
                 (utc_now(), alert["id"]),
             )
             closed += 1
-            log.info("Tiklandi: %s/%s", state.server, state.check_name)
+            log.info("Recovered: %s/%s", state.server, state.check_name)
     return closed
 
 
@@ -138,25 +139,25 @@ def process_results(
     diagnose: bool = False,
     servers: dict[str, Server] | None = None,
 ) -> int:
-    """Tekshiruv natijalaridan alertlarni yuborish.
+    """Send alerts based on the check results.
 
-    Yuborilgan alertlar soni qaytadi. Ketma-ketlik:
-      1. Muammo ketma-ket ikkinchi marta takrorlandimi (`should_alert`)
-      2. Cooldown ichida emasmi
-      3. Diagnostika (yoqilgan bo'lsa) — xato bo'lsa alert baribir ketadi
+    Returns the number of alerts sent. The sequence is:
+      1. Has the problem now repeated twice in a row (`should_alert`)
+      2. Are we outside the cooldown window
+      3. Diagnosis (if enabled) — on failure the alert still goes out
 
-    `servers` diagnostika uchun: loglarni olish serverga ulanishni
-    talab qiladi.
+    `servers` is needed for diagnosis: fetching logs requires connecting
+    to the server.
     """
     sent = 0
     for result in results:
         if not result.is_problem:
             continue
         if not should_alert(result.server, result.name):
-            log.debug("%s/%s: birinchi muammo, kutamiz", result.server, result.name)
+            log.debug("%s/%s: first failure, waiting", result.server, result.name)
             continue
         if _recently_alerted(result.server, result.name):
-            log.debug("%s/%s: cooldown ichida", result.server, result.name)
+            log.debug("%s/%s: within cooldown", result.server, result.name)
             continue
 
         diagnosis = ""
@@ -172,7 +173,7 @@ def process_results(
 
 
 def open_alerts() -> list[dict]:
-    """Hozir ochiq (yopilmagan) alertlar — CLI uchun."""
+    """Currently open (unresolved) alerts — for the CLI."""
     rows = query(
         "SELECT id, created_at, server, check_name, status, summary, diagnosis "
         "FROM server_alerts WHERE resolved_at IS NULL ORDER BY id DESC"
@@ -181,7 +182,7 @@ def open_alerts() -> list[dict]:
 
 
 def recent_alerts(limit: int = 20) -> list[dict]:
-    """Oxirgi alertlar (yopilganlari ham) — CLI uchun."""
+    """The most recent alerts, resolved ones included — for the CLI."""
     rows = query(
         "SELECT id, created_at, server, check_name, status, summary, diagnosis, resolved_at "
         "FROM server_alerts ORDER BY id DESC LIMIT ?",

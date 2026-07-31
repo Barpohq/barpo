@@ -1,495 +1,494 @@
-// MCP API — HTTP darajasida.
+// The MCP API — at the HTTP level.
 //
-// Hono ilovasi orqali chaqiriladi (tarmoq porti ochilmaydi — `app.fetch`).
-// Registry va GitHub so'rovlari SINALMAYDI: ular tashqi xizmatga bog'liq.
-// Bu yerda qo'lda qo'shish, o'rnatish, validatsiya va MAXFIY QIYMAT
-// OQIB KETMASLIGI tekshiriladi.
+// Called through the Hono app (no network port is opened — `app.fetch`).
+// Registry and GitHub requests are NOT EXERCISED: they depend on an external
+// service. What is checked here is adding by hand, installing, validation and
+// THE ABSENCE OF SECRET-VALUE LEAKS.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import { appYarat } from '../src/app.ts'
-import { bazaOch, dbOrnat } from '../src/db.ts'
+import { createApp } from '../src/app.ts'
+import { openDb, setDb } from '../src/db.ts'
 import {
-  mcpKredensialOmboriniOrnat,
-  XotiraMcpKredensialOmbori,
-} from '../src/mcp-kredensial.ts'
-import { loyihaYarat, mcpServerlarOqi } from '../src/repo.ts'
+  setMcpCredentialStore,
+  MemoryMcpCredentialStore,
+} from '../src/mcp-credentials.ts'
+import { createProject, readMcpServers } from '../src/repo.ts'
 
 let db: Database
-let app: ReturnType<typeof appYarat>
-let ombor: XotiraMcpKredensialOmbori
+let app: ReturnType<typeof createApp>
+let store: MemoryMcpCredentialStore
 
 beforeEach(() => {
-  db = bazaOch(':memory:')
-  dbOrnat(db)
-  ombor = new XotiraMcpKredensialOmbori()
-  mcpKredensialOmboriniOrnat(ombor)
-  app = appYarat()
+  db = openDb(':memory:')
+  setDb(db)
+  store = new MemoryMcpCredentialStore()
+  setMcpCredentialStore(store)
+  app = createApp()
 })
 
 afterEach(() => {
-  mcpKredensialOmboriniOrnat(null)
-  dbOrnat(null)
+  setMcpCredentialStore(null)
+  setDb(null)
   db.close()
 })
 
-/** JSON POST/DELETE yordamchisi */
-async function sorov(
-  usul: 'POST' | 'DELETE' | 'GET',
-  yol: string,
-  tana?: unknown,
-): Promise<{ status: number; javob: any }> {
-  const javob = await app.fetch(
-    new Request(`http://localhost/api${yol}`, {
-      method: usul,
-      headers: tana ? { 'Content-Type': 'application/json' } : {},
-      body: tana ? JSON.stringify(tana) : undefined,
+/** A JSON POST/DELETE helper */
+async function request(
+  method: 'POST' | 'DELETE' | 'GET',
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; response: any }> {
+  const response = await app.fetch(
+    new Request(`http://localhost/api${path}`, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
     }),
   )
-  const matn = await javob.text()
-  return { status: javob.status, javob: matn ? JSON.parse(matn) : null }
+  const text = await response.text()
+  return { status: response.status, response: text ? JSON.parse(text) : null }
 }
 
-/** Qo'lda stdio server qo'shadi va uning id'sini qaytaradi */
-async function serverQosh(
-  nom = 'test-srv',
-  sozlamalar: unknown[] = [],
-): Promise<string> {
-  await sorov('POST', '/mcp/manba/qolda', {
-    nom,
+/** Adds a stdio server by hand and returns its id */
+async function addServer(name = 'test-srv', settings: unknown[] = []): Promise<string> {
+  await request('POST', '/mcp/source/manual', {
+    name,
     transport: 'stdio',
-    buyruq: 'npx',
-    argumentlar: ['-y', '@a/b'],
-    sozlamalar,
+    command: 'npx',
+    args: ['-y', '@a/b'],
+    settings,
   })
-  const server = mcpServerlarOqi().find((s) => s.nom === nom)
-  if (!server) throw new Error('server qo\'shilmadi')
+  const server = readMcpServers().find((s) => s.name === name)
+  if (!server) throw new Error('the server was not added')
   return server.id
 }
 
 // ---------------------------------------------------------------------------
 
 describe('GET /mcp', () => {
-  test("bo'sh katalog", async () => {
-    const { status, javob } = await sorov('GET', '/mcp')
+  test('an empty catalog', async () => {
+    const { status, response } = await request('GET', '/mcp')
     expect(status).toBe(200)
-    expect(javob).toEqual({ serverlar: [], manbalar: [] })
+    expect(response).toEqual({ servers: [], sources: [] })
   })
 
-  test("qo'shilgan server ko'rinadi", async () => {
-    await serverQosh('github')
-    const { javob } = await sorov('GET', '/mcp')
-    expect(javob.serverlar).toHaveLength(1)
-    expect(javob.serverlar[0].nom).toBe('github')
-    expect(javob.manbalar).toHaveLength(1)
+  test('an added server shows up', async () => {
+    await addServer('github')
+    const { response } = await request('GET', '/mcp')
+    expect(response.servers).toHaveLength(1)
+    expect(response.servers[0].name).toBe('github')
+    expect(response.sources).toHaveLength(1)
   })
 })
 
-describe("POST /mcp/manba/qolda", () => {
-  test('stdio server qo\'shiladi', async () => {
-    const { status, javob } = await sorov('POST', '/mcp/manba/qolda', {
-      nom: 'github',
-      tavsif: 'GitHub vositalari',
+describe('POST /mcp/source/manual', () => {
+  test('a stdio server is added', async () => {
+    const { status, response } = await request('POST', '/mcp/source/manual', {
+      name: 'github',
+      description: 'GitHub tools',
       transport: 'stdio',
-      buyruq: 'npx',
-      argumentlar: ['-y', '@example/github'],
+      command: 'npx',
+      args: ['-y', '@example/github'],
     })
 
     expect(status).toBe(201)
-    expect(javob.qoshildi).toBe(1)
-    expect(javob.manba.tur).toBe('qolda')
+    expect(response.added).toBe(1)
+    expect(response.source.kind).toBe('manual')
 
-    const server = mcpServerlarOqi()[0]
-    expect(server?.buyruq).toBe('npx')
-    expect(server?.argumentlar).toEqual(['-y', '@example/github'])
+    const server = readMcpServers()[0]
+    expect(server?.command).toBe('npx')
+    expect(server?.args).toEqual(['-y', '@example/github'])
   })
 
-  test('http server qo\'shiladi', async () => {
-    const { status } = await sorov('POST', '/mcp/manba/qolda', {
-      nom: 'masofaviy',
+  test('an http server is added', async () => {
+    const { status } = await request('POST', '/mcp/source/manual', {
+      name: 'remote',
       transport: 'http',
       url: 'https://mcp.example.com/mcp',
     })
 
     expect(status).toBe(201)
-    expect(mcpServerlarOqi()[0]?.url).toBe('https://mcp.example.com/mcp')
+    expect(readMcpServers()[0]?.url).toBe('https://mcp.example.com/mcp')
   })
 
-  test('sozlama maydonlari saqlanadi', async () => {
-    await sorov('POST', '/mcp/manba/qolda', {
-      nom: 'srv',
+  test('the setting fields are kept', async () => {
+    await request('POST', '/mcp/source/manual', {
+      name: 'srv',
       transport: 'stdio',
-      buyruq: 'npx',
-      sozlamalar: [
-        { nom: 'TOKEN', majburiy: true, maxfiy: true, izoh: 'kirish tokeni' },
-        { nom: 'BASE_URL' },
+      command: 'npx',
+      settings: [
+        { name: 'TOKEN', required: true, secret: true, hint: 'access token' },
+        { name: 'BASE_URL' },
       ],
     })
 
-    const sozlamalar = mcpServerlarOqi()[0]?.sozlamalar
-    expect(sozlamalar).toEqual([
-      { nom: 'TOKEN', majburiy: true, maxfiy: true, izoh: 'kirish tokeni' },
-      { nom: 'BASE_URL', majburiy: false, maxfiy: false },
+    const settings = readMcpServers()[0]?.settings
+    expect(settings).toEqual([
+      { name: 'TOKEN', required: true, secret: true, hint: 'access token' },
+      { name: 'BASE_URL', required: false, secret: false },
     ])
   })
 
-  describe('validatsiya', () => {
-    test('nomsiz — 400', async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', { transport: 'stdio' })
+  describe('validation', () => {
+    test('no name — 400', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', { transport: 'stdio' })
       expect(status).toBe(400)
     })
 
-    test("noma'lum transport — 400", async () => {
-      const { status, javob } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('an unknown transport — 400', async () => {
+      const { status, response } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'grpc',
       })
       expect(status).toBe(400)
-      expect(javob.error).toMatch(/stdio.*http/)
+      expect(response.error).toMatch(/stdio.*http/)
     })
 
-    test('stdio buyruqsiz — 400', async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('stdio without a command — 400', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'stdio',
       })
       expect(status).toBe(400)
     })
 
-    test('http url\'siz — 400', async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('http without a url — 400', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'http',
       })
       expect(status).toBe(400)
     })
 
-    test('file:// url RAD ETILADI', async () => {
-      const { status, javob } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('a file:// url is REJECTED', async () => {
+      const { status, response } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'http',
         url: 'file:///etc/passwd',
       })
       expect(status).toBe(400)
-      expect(javob.error).toMatch(/http/)
+      expect(response.error).toMatch(/http/)
     })
 
-    test("noto'g'ri url — 400", async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('an invalid url — 400', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'http',
-        url: 'bu url emas',
+        url: 'this is not a url',
       })
       expect(status).toBe(400)
     })
 
-    test('argumentlar massiv bo\'lmasa — 400', async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('args that are not an array — 400', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'stdio',
-        buyruq: 'npx',
-        argumentlar: 'satr',
+        command: 'npx',
+        args: 'string',
       })
       expect(status).toBe(400)
     })
 
-    test('juda ko\'p argument — 400', async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('too many arguments — 400', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'stdio',
-        buyruq: 'npx',
-        argumentlar: Array.from({ length: 100 }, (_, i) => `a${i}`),
+        command: 'npx',
+        args: Array.from({ length: 100 }, (_, i) => `a${i}`),
       })
       expect(status).toBe(400)
     })
 
-    test('sozlama nomsiz — 400', async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('a setting without a name — 400', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'stdio',
-        buyruq: 'npx',
-        sozlamalar: [{ izoh: 'nomsiz' }],
+        command: 'npx',
+        settings: [{ hint: 'nameless' }],
       })
       expect(status).toBe(400)
     })
 
-    test('XAVFLI SOZLAMA NOMI rad etiladi (REGRESSIYA)', async () => {
-      // Qo'lda qo'shishda ham registry bilan bir xil qoida: jarayon
-      // xulqini o'zgartiradigan env nomi qabul qilinmaydi
-      for (const nom of ['NODE_OPTIONS', 'LD_PRELOAD', 'PATH', 'ld_preload']) {
-        const { status, javob } = await sorov('POST', '/mcp/manba/qolda', {
-          nom: `srv-${nom}`,
+    test('a DANGEROUS SETTING NAME is rejected (REGRESSION)', async () => {
+      // Adding by hand follows the same rule as the registry: an env name that
+      // alters process behaviour is not accepted
+      for (const name of ['NODE_OPTIONS', 'LD_PRELOAD', 'PATH', 'ld_preload']) {
+        const { status, response } = await request('POST', '/mcp/source/manual', {
+          name: `srv-${name}`,
           transport: 'stdio',
-          buyruq: 'npx',
-          sozlamalar: [{ nom, majburiy: true }],
+          command: 'npx',
+          settings: [{ name, required: true }],
         })
         expect(status).toBe(400)
-        expect(javob.error).toContain(nom)
+        expect(response.error).toContain(name)
       }
-      expect(mcpServerlarOqi()).toHaveLength(0)
+      expect(readMcpServers()).toHaveLength(0)
     })
 
-    test('shakli buzuq sozlama nomi rad etiladi', async () => {
-      const { status } = await sorov('POST', '/mcp/manba/qolda', {
-        nom: 'a',
+    test('a malformed setting name is rejected', async () => {
+      const { status } = await request('POST', '/mcp/source/manual', {
+        name: 'a',
         transport: 'stdio',
-        buyruq: 'npx',
-        sozlamalar: [{ nom: 'A=B' }],
+        command: 'npx',
+        settings: [{ name: 'A=B' }],
       })
       expect(status).toBe(400)
     })
 
-    test('JSON bo\'lmagan tana — 400', async () => {
-      const javob = await app.fetch(
-        new Request('http://localhost/api/mcp/manba/qolda', {
+    test('a body that is not JSON — 400', async () => {
+      const response = await app.fetch(
+        new Request('http://localhost/api/mcp/source/manual', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: 'bu JSON emas',
+          body: 'this is not JSON',
         }),
       )
-      expect(javob.status).toBe(400)
+      expect(response.status).toBe(400)
     })
   })
 })
 
-describe('POST /mcp/:id/ornat', () => {
-  test('global o\'rnatish', async () => {
-    const id = await serverQosh()
-    const { status, javob } = await sorov('POST', `/mcp/${id}/ornat`, { qamrov: 'global' })
+describe('POST /mcp/:id/install', () => {
+  test('a global install', async () => {
+    const id = await addServer()
+    const { status, response } = await request('POST', `/mcp/${id}/install`, { scope: 'global' })
 
     expect(status).toBe(200)
-    expect(javob.server.ornatilgan).toHaveLength(1)
-    expect(javob.server.ornatilgan[0].qamrov).toBe('global')
+    expect(response.server.installs).toHaveLength(1)
+    expect(response.server.installs[0].scope).toBe('global')
   })
 
-  test('loyiha o\'rnatishi', async () => {
-    const id = await serverQosh()
-    const loyiha = loyihaYarat('test', '/tmp/l')
+  test('a project install', async () => {
+    const id = await addServer()
+    const project = createProject('test', '/tmp/p')
 
-    const { status, javob } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'loyiha',
-      projectIds: [loyiha.id],
+    const { status, response } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'project',
+      projectIds: [project.id],
     })
 
     expect(status).toBe(200)
-    expect(javob.server.ornatilgan[0].projectId).toBe(loyiha.id)
+    expect(response.server.installs[0].projectId).toBe(project.id)
   })
 
-  test('MAXFIY QIYMAT javobda QAYTMAYDI', async () => {
-    const id = await serverQosh('srv', [{ nom: 'TOKEN', majburiy: true, maxfiy: true }])
+  test('a SECRET VALUE IS NOT RETURNED in the response', async () => {
+    const id = await addServer('srv', [{ name: 'TOKEN', required: true, secret: true }])
 
-    const { status, javob } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { TOKEN: 'ghp_juda_maxfiy' },
+    const { status, response } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { TOKEN: 'ghp_very_secret' },
     })
 
     expect(status).toBe(200)
-    // Butun javobda token izi bo'lmasligi kerak
-    expect(JSON.stringify(javob)).not.toContain('ghp_juda_maxfiy')
-    // Lekin u kredensial omborida saqlangan bo'lishi kerak
-    const ornatishId = javob.server.ornatilgan[0].id
-    expect(await ombor.ol(ornatishId)).toEqual({ TOKEN: 'ghp_juda_maxfiy' })
+    // There must be no trace of the token anywhere in the response
+    expect(JSON.stringify(response)).not.toContain('ghp_very_secret')
+    // But it must be stored in the credential store
+    const installId = response.server.installs[0].id
+    expect(await store.get(installId)).toEqual({ TOKEN: 'ghp_very_secret' })
   })
 
-  test('MAXFIY QIYMAT bazaga tushmaydi', async () => {
-    const id = await serverQosh('srv', [{ nom: 'TOKEN', majburiy: true, maxfiy: true }])
-    await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { TOKEN: 'ghp_maxfiy' },
+  test('a SECRET VALUE does not land in the database', async () => {
+    const id = await addServer('srv', [{ name: 'TOKEN', required: true, secret: true }])
+    await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { TOKEN: 'ghp_secret' },
     })
 
-    // Butun bazani matn sifatida tekshiramiz
-    const qatorlar = db
-      .query<{ sozlama_qiymatlari: string }, []>('SELECT sozlama_qiymatlari FROM mcp_ornatish')
+    // We check the whole database as text
+    const rows = db
+      .query<{ setting_values: string }, []>('SELECT setting_values FROM mcp_installs')
       .all()
-    for (const q of qatorlar) {
-      expect(q.sozlama_qiymatlari).not.toContain('ghp_maxfiy')
+    for (const row of rows) {
+      expect(row.setting_values).not.toContain('ghp_secret')
     }
   })
 
-  test('OCHIQ qiymat bazaga tushadi', async () => {
-    const id = await serverQosh('srv', [{ nom: 'BASE_URL', maxfiy: false }])
-    const { javob } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { BASE_URL: 'https://a.b' },
+  test('a PUBLIC value does land in the database', async () => {
+    const id = await addServer('srv', [{ name: 'BASE_URL', secret: false }])
+    const { response } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { BASE_URL: 'https://a.b' },
     })
 
-    expect(javob.server.ornatilgan[0].sozlamaQiymatlari).toEqual({ BASE_URL: 'https://a.b' })
+    expect(response.server.installs[0].settingValues).toEqual({ BASE_URL: 'https://a.b' })
   })
 
-  test('MAJBURIY maydon to\'ldirilmasa — 400', async () => {
-    const id = await serverQosh('srv', [{ nom: 'TOKEN', majburiy: true, maxfiy: true }])
-    const { status, javob } = await sorov('POST', `/mcp/${id}/ornat`, { qamrov: 'global' })
+  test('a REQUIRED field left unfilled — 400', async () => {
+    const id = await addServer('srv', [{ name: 'TOKEN', required: true, secret: true }])
+    const { status, response } = await request('POST', `/mcp/${id}/install`, { scope: 'global' })
 
     expect(status).toBe(400)
-    expect(javob.yetishmagan).toEqual(['TOKEN'])
+    expect(response.missing).toEqual(['TOKEN'])
   })
 
-  test('standart qiymati bor majburiy maydon so\'ralmaydi', async () => {
-    const id = await serverQosh('srv', [{ nom: 'REJIM', majburiy: true }])
-    // `standart` qo'lda qo'shishda sxemaga tushmaydi, shuning uchun bu
-    // holat faqat registry yozuvlarida bo'ladi — lekin mantiq bir xil
-    const { status } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { REJIM: 'oddiy' },
+  test('a required field with a default value is not asked for', async () => {
+    const id = await addServer('srv', [{ name: 'MODE', required: true }])
+    // `default` does not make it into the schema when adding by hand, so this
+    // case only arises with registry entries — but the logic is the same
+    const { status } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { MODE: 'plain' },
     })
     expect(status).toBe(200)
   })
 
-  test('qayta o\'rnatishda maxfiy maydon BO\'SH kelsa saqlangani qoladi', async () => {
-    const id = await serverQosh('srv', [{ nom: 'TOKEN', majburiy: true, maxfiy: true }])
-    const { javob: birinchi } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { TOKEN: 'asl-token' },
+  test('on a re-install an EMPTY secret field keeps the stored value', async () => {
+    const id = await addServer('srv', [{ name: 'TOKEN', required: true, secret: true }])
+    const { response: first } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { TOKEN: 'original-token' },
     })
-    const ornatishId = birinchi.server.ornatilgan[0].id
+    const installId = first.server.installs[0].id
 
-    // UI maxfiy qiymatni ko'rsatmaydi → forma bo'sh input bilan qaytadi
-    const { status } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { TOKEN: '' },
+    // The UI does not display the secret value → the form comes back with an
+    // empty input
+    const { status } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { TOKEN: '' },
     })
 
     expect(status).toBe(200)
-    expect(await ombor.ol(ornatishId)).toEqual({ TOKEN: 'asl-token' })
+    expect(await store.get(installId)).toEqual({ TOKEN: 'original-token' })
   })
 
-  test('SXEMADA YO\'Q kalit e\'tiborsiz qoldiriladi', async () => {
-    const id = await serverQosh('srv', [{ nom: 'RUXSAT', maxfiy: false }])
-    const { javob } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { RUXSAT: 'ha', PATH: '/buzuq' },
+  test('a key NOT IN THE SCHEMA is ignored', async () => {
+    const id = await addServer('srv', [{ name: 'ACCESS', secret: false }])
+    const { response } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { ACCESS: 'yes', PATH: '/broken' },
     })
 
-    expect(javob.server.ornatilgan[0].sozlamaQiymatlari).toEqual({ RUXSAT: 'ha' })
+    expect(response.server.installs[0].settingValues).toEqual({ ACCESS: 'yes' })
   })
 
-  describe('validatsiya', () => {
-    test("noma'lum server — 404", async () => {
-      const { status } = await sorov('POST', '/mcp/yoq-bunday/ornat', { qamrov: 'global' })
+  describe('validation', () => {
+    test('an unknown server — 404', async () => {
+      const { status } = await request('POST', '/mcp/no-such-thing/install', { scope: 'global' })
       expect(status).toBe(404)
     })
 
-    test("noto'g'ri qamrov — 400", async () => {
-      const id = await serverQosh()
-      const { status } = await sorov('POST', `/mcp/${id}/ornat`, { qamrov: 'hammasi' })
+    test('an invalid scope — 400', async () => {
+      const id = await addServer()
+      const { status } = await request('POST', `/mcp/${id}/install`, { scope: 'everything' })
       expect(status).toBe(400)
     })
 
-    test('loyiha qamrovi loyihasiz — 400', async () => {
-      const id = await serverQosh()
-      const { status } = await sorov('POST', `/mcp/${id}/ornat`, { qamrov: 'loyiha' })
+    test('project scope without a project — 400', async () => {
+      const id = await addServer()
+      const { status } = await request('POST', `/mcp/${id}/install`, { scope: 'project' })
       expect(status).toBe(400)
     })
 
-    test("mavjud bo'lmagan loyiha — 404", async () => {
-      const id = await serverQosh()
-      const { status } = await sorov('POST', `/mcp/${id}/ornat`, {
-        qamrov: 'loyiha',
-        projectIds: ['yoq'],
+    test('a project that does not exist — 404', async () => {
+      const id = await addServer()
+      const { status } = await request('POST', `/mcp/${id}/install`, {
+        scope: 'project',
+        projectIds: ['missing'],
       })
       expect(status).toBe(404)
     })
 
-    test('qiymat matn bo\'lmasa — 400', async () => {
-      const id = await serverQosh('srv', [{ nom: 'A' }])
-      const { status } = await sorov('POST', `/mcp/${id}/ornat`, {
-        qamrov: 'global',
-        sozlamaQiymatlari: { A: 123 },
+    test('a value that is not text — 400', async () => {
+      const id = await addServer('srv', [{ name: 'A' }])
+      const { status } = await request('POST', `/mcp/${id}/install`, {
+        scope: 'global',
+        settingValues: { A: 123 },
       })
       expect(status).toBe(400)
     })
   })
 })
 
-describe('DELETE /mcp/:id/ornat', () => {
-  test("o'rnatish va KREDENSIAL o'chadi", async () => {
-    const id = await serverQosh('srv', [{ nom: 'TOKEN', majburiy: true, maxfiy: true }])
-    const { javob } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { TOKEN: 'maxfiy' },
+describe('DELETE /mcp/:id/install', () => {
+  test('the install and its CREDENTIALS are removed', async () => {
+    const id = await addServer('srv', [{ name: 'TOKEN', required: true, secret: true }])
+    const { response } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { TOKEN: 'secret' },
     })
-    const ornatishId = javob.server.ornatilgan[0].id
-    expect(await ombor.ol(ornatishId)).toEqual({ TOKEN: 'maxfiy' })
+    const installId = response.server.installs[0].id
+    expect(await store.get(installId)).toEqual({ TOKEN: 'secret' })
 
-    const { status, javob: keyin } = await sorov('DELETE', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-    })
-
-    expect(status).toBe(200)
-    expect(keyin.server.ornatilgan).toHaveLength(0)
-    // Kredensial ORTDA QOLMASLIGI kerak
-    expect(await ombor.ol(ornatishId)).toEqual({})
-  })
-
-  test('loyiha o\'rnatishi o\'chadi', async () => {
-    const id = await serverQosh()
-    const loyiha = loyihaYarat('test', '/tmp/l')
-    await sorov('POST', `/mcp/${id}/ornat`, { qamrov: 'loyiha', projectIds: [loyiha.id] })
-
-    const { status, javob } = await sorov('DELETE', `/mcp/${id}/ornat`, {
-      qamrov: 'loyiha',
-      projectIds: [loyiha.id],
+    const { status, response: after } = await request('DELETE', `/mcp/${id}/install`, {
+      scope: 'global',
     })
 
     expect(status).toBe(200)
-    expect(javob.server.ornatilgan).toHaveLength(0)
+    expect(after.server.installs).toHaveLength(0)
+    // No credential must BE LEFT BEHIND
+    expect(await store.get(installId)).toEqual({})
   })
 
-  test('loyiha tanlanmasa — 400', async () => {
-    const id = await serverQosh()
-    const { status } = await sorov('DELETE', `/mcp/${id}/ornat`, { qamrov: 'loyiha' })
+  test('a project install is removed', async () => {
+    const id = await addServer()
+    const project = createProject('test', '/tmp/p')
+    await request('POST', `/mcp/${id}/install`, { scope: 'project', projectIds: [project.id] })
+
+    const { status, response } = await request('DELETE', `/mcp/${id}/install`, {
+      scope: 'project',
+      projectIds: [project.id],
+    })
+
+    expect(status).toBe(200)
+    expect(response.server.installs).toHaveLength(0)
+  })
+
+  test('no project selected — 400', async () => {
+    const id = await addServer()
+    const { status } = await request('DELETE', `/mcp/${id}/install`, { scope: 'project' })
     expect(status).toBe(400)
   })
 })
 
-describe('DELETE /mcp/manba/:id', () => {
-  test("manba, serverlari va KREDENSIALLARI o'chadi", async () => {
-    const id = await serverQosh('srv', [{ nom: 'TOKEN', majburiy: true, maxfiy: true }])
-    const { javob } = await sorov('POST', `/mcp/${id}/ornat`, {
-      qamrov: 'global',
-      sozlamaQiymatlari: { TOKEN: 'maxfiy' },
+describe('DELETE /mcp/source/:id', () => {
+  test('the source, its servers and its CREDENTIALS are removed', async () => {
+    const id = await addServer('srv', [{ name: 'TOKEN', required: true, secret: true }])
+    const { response } = await request('POST', `/mcp/${id}/install`, {
+      scope: 'global',
+      settingValues: { TOKEN: 'secret' },
     })
-    const ornatishId = javob.server.ornatilgan[0].id
-    const manbaId = mcpServerlarOqi()[0]!.manbaId
+    const installId = response.server.installs[0].id
+    const sourceId = readMcpServers()[0]!.sourceId
 
-    const { status } = await sorov('DELETE', `/mcp/manba/${manbaId}`)
+    const { status } = await request('DELETE', `/mcp/source/${sourceId}`)
 
     expect(status).toBe(200)
-    expect(mcpServerlarOqi()).toHaveLength(0)
-    // CASCADE bazani tozalaydi, lekin kredensial FAYLDA — u ham ketishi kerak
-    expect(await ombor.ol(ornatishId)).toEqual({})
+    expect(readMcpServers()).toHaveLength(0)
+    // CASCADE cleans the database, but the credential lives IN A FILE — it has
+    // to go too
+    expect(await store.get(installId)).toEqual({})
   })
 
-  test("noma'lum manba — 404", async () => {
-    const { status } = await sorov('DELETE', '/mcp/manba/yoq')
+  test('an unknown source — 404', async () => {
+    const { status } = await request('DELETE', '/mcp/source/missing')
     expect(status).toBe(404)
   })
 })
 
-describe('POST /mcp/manba/:id/sinxron', () => {
-  test("qo'lda manbani sinxronlab bo'lmaydi — 422", async () => {
-    await serverQosh()
-    const manbaId = mcpServerlarOqi()[0]!.manbaId
-    const { status, javob } = await sorov('POST', `/mcp/manba/${manbaId}/sinxron`)
+describe('POST /mcp/source/:id/sync', () => {
+  test('a manual source cannot be synced — 422', async () => {
+    await addServer()
+    const sourceId = readMcpServers()[0]!.sourceId
+    const { status, response } = await request('POST', `/mcp/source/${sourceId}/sync`)
 
     expect(status).toBe(422)
-    expect(javob.error).toMatch(/qolda/)
+    expect(response.error).toMatch(/manual/)
   })
 
-  test("noma'lum manba — 404", async () => {
-    const { status } = await sorov('POST', '/mcp/manba/yoq/sinxron')
+  test('an unknown source — 404', async () => {
+    const { status } = await request('POST', '/mcp/source/missing/sync')
     expect(status).toBe(404)
   })
 })
 
-describe('GET /mcp/faol', () => {
-  test("faqat o'rnatilganlar", async () => {
-    const a = await serverQosh('a')
-    await serverQosh('b')
-    await sorov('POST', `/mcp/${a}/ornat`, { qamrov: 'global' })
+describe('GET /mcp/active', () => {
+  test('only the installed ones', async () => {
+    const a = await addServer('a')
+    await addServer('b')
+    await request('POST', `/mcp/${a}/install`, { scope: 'global' })
 
-    const { javob } = await sorov('GET', '/mcp/faol')
-    expect(javob.serverlar.map((s: { nom: string }) => s.nom)).toEqual(['a'])
+    const { response } = await request('GET', '/mcp/active')
+    expect(response.servers.map((s: { name: string }) => s.name)).toEqual(['a'])
   })
 })

@@ -1,4 +1,4 @@
-import type { Migratsiya } from './index.ts'
+import type { Migration } from './index.ts'
 
 // Agent tool chaqiruvlari xabar bilan birga saqlanadi.
 //
@@ -9,9 +9,9 @@ import type { Migratsiya } from './index.ts'
 //
 // `tool_card` tegilmaydi — eski xabarlar buzilmasin.
 
-export const migratsiya: Migratsiya = {
-  raqam: 3,
-  nom: 'chat-tool-cards',
+export const migration: Migration = {
+  number: 3,
+  name: 'chat-tool-cards',
   sql: `
     ALTER TABLE chat_messages ADD COLUMN tool_cards TEXT;
   `,

@@ -1,11 +1,11 @@
-"""SQLite ulanishi va migratsiya runner.
+"""SQLite connection and migration runner.
 
-Barcha modullar bazaga shu yerdan kiradi. Ulanish thread-local — APScheduler
-turli threadlarda ishlatgani uchun.
+Every module reaches the database through here. The connection is
+thread-local, because APScheduler runs across different threads.
 
-Baza ikkala agent uchun bitta: `llm_calls` bo'linmasligi kerak (qaysi
-agent qancha sarflayapti), `errors` va `runs` ham umumiy. Migratsiyalar
-agent bo'yicha ajratilgan — `core/db/schema.py` ga qarang.
+Both agents share one database: `llm_calls` must not be split up (it
+shows which agent is spending how much), and `errors` and `runs` are
+shared too. Migrations are split per agent — see `core/db/schema.py`.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ _local = threading.local()
 
 
 def utc_now() -> str:
-    """Hozirgi vaqt ISO 8601 formatida (UTC). Barcha sanalar shu formatda."""
+    """The current time in ISO 8601 format (UTC). All dates use this format."""
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
@@ -36,7 +36,7 @@ def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30.0, isolation_level=None)
     conn.row_factory = sqlite3.Row
-    # WAL: o'qish va yozish bir-birini bloklamaydi
+    # WAL: reads and writes do not block each other
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
@@ -45,7 +45,7 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 def get_connection() -> sqlite3.Connection:
-    """Joriy thread uchun ulanish (kerak bo'lsa yaratiladi)."""
+    """The connection for the current thread (created if needed)."""
     conn = getattr(_local, "conn", None)
     if conn is None:
         conn = _connect(db_path())
@@ -62,7 +62,7 @@ def close_connection() -> None:
 
 @contextmanager
 def transaction() -> Iterator[sqlite3.Connection]:
-    """Tranzaksiya konteksti — xato bo'lsa rollback."""
+    """Transaction context — rolls back on error."""
     conn = get_connection()
     conn.execute("BEGIN")
     try:
@@ -86,7 +86,7 @@ def execute(sql: str, params: Any = ()) -> sqlite3.Cursor:
     return get_connection().execute(sql, params)
 
 
-# ─────────────────────────── Migratsiyalar ───────────────────────────
+# ─────────────────────────── Migrations ──────────────────────────────
 
 
 def _ensure_migrations_table(conn: sqlite3.Connection) -> None:
@@ -109,9 +109,9 @@ def current_version() -> int:
 
 
 def migrate() -> int:
-    """Qo'llanilmagan migratsiyalarni ishga tushirish.
+    """Run any migrations that have not been applied yet.
 
-    Qo'llanilgan migratsiyalar soni qaytariladi.
+    Returns the number of migrations applied.
     """
     conn = get_connection()
     _ensure_migrations_table(conn)
@@ -120,13 +120,13 @@ def migrate() -> int:
     pending = [(v, note, sql) for v, note, sql in all_migrations() if v not in applied]
 
     if not pending:
-        log.info("Baza yangi (versiya %d), migratsiya kerak emas", current_version())
+        log.info("Database is up to date (version %d), no migration needed", current_version())
         return 0
 
     for version, note, sql in sorted(pending):
-        log.info("Migratsiya %d qo'llanmoqda: %s", version, note)
-        # Diqqat: executescript() o'zi ochiq tranzaksiyani commit qiladi, shuning
-        # uchun BEGIN/COMMIT ni skript ichiga qo'yamiz — bitta atomik blok bo'lishi uchun.
+        log.info("Applying migration %d: %s", version, note)
+        # Careful: executescript() commits any open transaction itself, so we
+        # put BEGIN/COMMIT inside the script to keep it one atomic block.
         try:
             conn.executescript(f"BEGIN;\n{sql}\nCOMMIT;")
             conn.execute(
@@ -136,41 +136,41 @@ def migrate() -> int:
         except Exception:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
-            log.error("Migratsiya %d muvaffaqiyatsiz — o'zgarishlar qaytarildi", version)
+            log.error("Migration %d failed — changes were rolled back", version)
             raise
 
-    log.info("Migratsiya tugadi. Baza versiyasi: %d", current_version())
+    log.info("Migration finished. Database version: %d", current_version())
     return len(pending)
 
 
 def check_schema() -> None:
-    """Sxema eng so'nggi versiyada ekanini tekshirish. Bo'lmasa xato."""
+    """Check that the schema is at the latest version. Raises if it is not."""
     version = current_version()
     latest = latest_version()
     if version < latest:
         raise RuntimeError(
-            f"Baza sxemasi eskirgan (versiya {version}, kerak {latest}). "
-            f"`bot db migrate` ni ishga tushiring."
+            f"Database schema is out of date (version {version}, need {latest}). "
+            f"Run `bot db migrate`."
         )
 
 
-# ─────────────────────────── Yordamchi yozuvchilar ───────────────────────────
+# ─────────────────────────── Helper writers ──────────────────────────────────
 
 
 def log_error(component: str, message: str, *, context: str = "", traceback: str = "") -> None:
-    """Xatoni bazaga yozish — health report va debug uchun."""
+    """Write an error to the database — for health reports and debugging."""
     try:
         execute(
             "INSERT INTO errors (created_at, component, context, message, traceback) "
             "VALUES (?, ?, ?, ?, ?)",
             (utc_now(), component, context or None, message, traceback or None),
         )
-    except Exception:  # noqa: BLE001 — log yozish hech qachon pipeline'ni to'xtatmasin
-        log.exception("Xatoni bazaga yozib bo'lmadi")
+    except Exception:  # noqa: BLE001 — logging must never stop the pipeline
+        log.exception("Could not write error to the database")
 
 
 def start_run(stage: str) -> int:
-    """Pipeline bosqichi boshlanishini qayd etish. Run id qaytaradi."""
+    """Record the start of a pipeline stage. Returns the run id."""
     cur = execute(
         "INSERT INTO runs (started_at, stage) VALUES (?, ?)",
         (utc_now(), stage),

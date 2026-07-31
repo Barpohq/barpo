@@ -1,87 +1,89 @@
-// GitHub client — skill manbalarini skanerlash va yuklab olish.
+// GitHub client — scanning and downloading skill sources.
 //
-// Ikki chaqiruv yetadi:
-//   1) `git/trees?recursive=1` — repo'dagi HAMMA fayl bitta so'rovda.
-//      Shundan `SKILL.md` larni ajratamiz. `contents` API bilan har papkani
-//      alohida so'rash o'nlab so'rov degani (rate limit tez tugaydi).
-//   2) `tarball` — o'rnatishda butun repo arxivi. Faqat kerakli papka
-//      chiqariladi; qolgani tashlanadi.
+// Two calls are enough:
+//   1) `git/trees?recursive=1` — EVERY file in the repo in a single request.
+//      We pick the `SKILL.md` files out of it. Asking for each directory
+//      separately through the `contents` API would mean dozens of requests
+//      (the rate limit would run out fast).
+//   2) `tarball` — the whole repo archive at install time. Only the directory
+//      we need is extracted; the rest is discarded.
 //
-// AUTENTIFIKATSIYA YO'Q: public repo uchun token shart emas. Rate limit
-// token'siz soatiga 60 so'rov — bir foydalanuvchili platforma uchun yetarli.
-// Limitga urilganda xato ANIQ ko'rsatiladi (jim ishlamay qolish emas).
+// NO AUTHENTICATION: a token is not required for public repositories. Without
+// a token the rate limit is 60 requests per hour — enough for a single-user
+// platform. When the limit is hit the error is reported CLEARLY (rather than
+// silently doing nothing).
 
 const API = 'https://api.github.com'
 
-/** Tarmoq so'rovi timeout'i — GitHub javob bermay qolsa sessiya osilib qolmasin */
+/** Network request timeout — if GitHub stops responding the session must not hang */
 const TIMEOUT_MS = 30_000
 
 /**
- * Tarball hajmi chegarasi. `anthropics/skills` ~10MB, lekin begona repo
- * yuzlab megabayt bo'lishi mumkin — uni xotiraga yuklash serverni yiqitardi.
+ * Tarball size limit. `anthropics/skills` is ~10MB, but an unknown repo can be
+ * hundreds of megabytes — loading that into memory would take the server down.
  */
-export const MAKS_TARBALL_BAYT = 100 * 1024 * 1024
+export const MAX_TARBALL_BYTES = 100 * 1024 * 1024
 
-/** Bitta skill papkasi chegarasi (ombordagi yakuniy hajm) */
-export const MAKS_SKILL_BAYT = 20 * 1024 * 1024
+/** Limit for a single skill directory (its final size in the store) */
+export const MAX_SKILL_BYTES = 20 * 1024 * 1024
 
-export interface GithubManzil {
+export interface GithubRef {
   owner: string
   repo: string
-  /** Bo'sh satr = standart branch */
+  /** Empty string = the default branch */
   ref: string
 }
 
 /**
- * Foydalanuvchi kiritgan matndan repo manzilini ajratadi.
+ * Extracts a repository reference from text entered by the user.
  *
- * Qabul qilinadi:
+ * Accepted:
  *   https://github.com/anthropics/skills
  *   https://github.com/anthropics/skills/tree/main
  *   github.com/anthropics/skills.git
  *   anthropics/skills
  *
- * `null` — tanib bo'lmadi.
+ * `null` — could not be recognised.
  */
-export function manzilniAjrat(xom: string): GithubManzil | null {
-  let matn = xom.trim()
-  if (!matn) return null
+export function parseGithubRef(raw: string): GithubRef | null {
+  let text = raw.trim()
+  if (!text) return null
 
-  matn = matn.replace(/^git\+/, '').replace(/\.git$/, '')
-  matn = matn.replace(/^https?:\/\//, '').replace(/^git@github\.com:/, 'github.com/')
-  matn = matn.replace(/^(www\.)?github\.com\//, '')
-  matn = matn.replace(/\/+$/, '')
+  text = text.replace(/^git\+/, '').replace(/\.git$/, '')
+  text = text.replace(/^https?:\/\//, '').replace(/^git@github\.com:/, 'github.com/')
+  text = text.replace(/^(www\.)?github\.com\//, '')
+  text = text.replace(/\/+$/, '')
 
-  const bolaklar = matn.split('/').filter(Boolean)
-  if (bolaklar.length < 2) return null
+  const parts = text.split('/').filter(Boolean)
+  if (parts.length < 2) return null
 
-  const [owner, repo, ...qolgan] = bolaklar
+  const [owner, repo, ...rest] = parts
   if (!owner || !repo) return null
 
-  // Nom qoidasi: GitHub `[A-Za-z0-9._-]` ga ruxsat beradi. Nuqta kerak
-  // (`repo.js` kabi nomlar bor), lekin FAQAT nuqtadan iborat bo'lak (`.`,
-  // `..`) taqiqlanadi — u API URL'ida yo'l bo'lagi bo'lib siljitib
-  // yuborardi (`/repos/../etc` → boshqa endpoint).
-  const nomToger = (x: string) => /^[A-Za-z0-9._-]+$/.test(x) && !/^\.+$/.test(x)
-  if (!nomToger(owner) || !nomToger(repo)) return null
+  // Naming rule: GitHub allows `[A-Za-z0-9._-]`. The dot is needed (names like
+  // `repo.js` exist), but a segment consisting ONLY of dots (`.`, `..`) is
+  // forbidden — in an API URL it would act as a path segment and shift the
+  // request elsewhere (`/repos/../etc` → a different endpoint).
+  const validName = (x: string) => /^[A-Za-z0-9._-]+$/.test(x) && !/^\.+$/.test(x)
+  if (!validName(owner) || !validName(repo)) return null
 
-  // `/tree/<ref>/...` yoki `/blob/<ref>/...`
+  // `/tree/<ref>/...` or `/blob/<ref>/...`
   let ref = ''
-  if ((qolgan[0] === 'tree' || qolgan[0] === 'blob') && qolgan[1]) {
-    ref = qolgan.slice(1).join('/')
+  if ((rest[0] === 'tree' || rest[0] === 'blob') && rest[1]) {
+    ref = rest.slice(1).join('/')
   }
-  // Ref API URL'iga qo'shiladi (`/commits/<ref>`), shuning uchun `..`
-  // bo'lagi taqiqlanadi — aks holda yo'l boshqa endpoint'ga siljib ketardi
+  // The ref is appended to an API URL (`/commits/<ref>`), so a `..` segment is
+  // forbidden — otherwise the path would slide over to a different endpoint
   if (ref) {
     if (!/^[A-Za-z0-9._\/-]+$/.test(ref)) return null
-    if (ref.split('/').some((b) => /^\.+$/.test(b))) return null
+    if (ref.split('/').some((p) => /^\.+$/.test(p))) return null
   }
 
   return { owner, repo, ref }
 }
 
-async function soraw(url: string): Promise<Response> {
-  const javob = await fetch(url, {
+async function request(url: string): Promise<Response> {
+  const response = await fetch(url, {
     headers: {
       Accept: 'application/vnd.github+json',
       'User-Agent': 'platforma-skills',
@@ -90,132 +92,133 @@ async function soraw(url: string): Promise<Response> {
     signal: AbortSignal.timeout(TIMEOUT_MS),
   })
 
-  if (javob.ok) return javob
+  if (response.ok) return response
 
-  // Rate limit'ni alohida ajratamiz — foydalanuvchi nima qilishni bilsin
-  if (javob.status === 403 || javob.status === 429) {
-    const qoldi = javob.headers.get('x-ratelimit-remaining')
-    if (qoldi === '0') {
-      const tiklanish = javob.headers.get('x-ratelimit-reset')
-      const vaqt = tiklanish
-        ? new Date(Number(tiklanish) * 1000).toLocaleTimeString('uz-UZ')
-        : "bir ozdan so'ng"
-      throw new Error(`GitHub rate limit reached. Try again at ${vaqt}.`)
+  // Handle the rate limit separately — the user should know what to do next
+  if (response.status === 403 || response.status === 429) {
+    const remaining = response.headers.get('x-ratelimit-remaining')
+    if (remaining === '0') {
+      const reset = response.headers.get('x-ratelimit-reset')
+      const time = reset
+        ? new Date(Number(reset) * 1000).toLocaleTimeString('en-GB')
+        : 'a little later'
+      throw new Error(`GitHub rate limit reached. Try again at ${time}.`)
     }
   }
-  if (javob.status === 404) {
+  if (response.status === 404) {
     throw new Error('Repository not found. Check the URL (private repositories are not supported).')
   }
 
-  throw new Error(`GitHub error: ${javob.status} ${javob.statusText}`)
+  throw new Error(`GitHub error: ${response.status} ${response.statusText}`)
 }
 
-/** Repo'ning standart branch'i va oxirgi commit SHA'si */
-export async function repoMalumoti(m: GithubManzil): Promise<{ ref: string; sha: string }> {
-  const ref = m.ref || (await (async () => {
-    const javob = await soraw(`${API}/repos/${m.owner}/${m.repo}`)
-    const malumot = (await javob.json()) as { default_branch?: string }
-    return malumot.default_branch ?? 'main'
+/** The repository's default branch and latest commit SHA */
+export async function repoInfo(r: GithubRef): Promise<{ ref: string; sha: string }> {
+  const ref = r.ref || (await (async () => {
+    const response = await request(`${API}/repos/${r.owner}/${r.repo}`)
+    const data = (await response.json()) as { default_branch?: string }
+    return data.default_branch ?? 'main'
   })())
 
-  const javob = await soraw(`${API}/repos/${m.owner}/${m.repo}/commits/${encodeURIComponent(ref)}`)
-  const malumot = (await javob.json()) as { sha?: string }
-  return { ref, sha: malumot.sha ?? '' }
+  const response = await request(
+    `${API}/repos/${r.owner}/${r.repo}/commits/${encodeURIComponent(ref)}`,
+  )
+  const data = (await response.json()) as { sha?: string }
+  return { ref, sha: data.sha ?? '' }
 }
 
-export interface TopilganFayl {
-  /** Repo ildizidan yo'l: `document-skills/pdf/SKILL.md` */
-  yol: string
-  /** Blob SHA — mazmunni olish uchun */
+export interface FoundFile {
+  /** Path from the repository root: `document-skills/pdf/SKILL.md` */
+  path: string
+  /** Blob SHA — used to fetch the contents */
   sha: string
 }
 
 /**
- * Repo daraxtida naqshga mos fayllarni topadi.
+ * Finds the files in the repository tree that match a pattern.
  *
- * BITTA CHAQIRUVDA butun daraxt olinadi (`recursive=1`) va mahalliy
- * filtrlanadi — rate limit (60/soat, autentifikatsiyasiz) sababli har papka
- * uchun alohida so'rov yuborib bo'lmaydi.
+ * The whole tree is fetched in a SINGLE CALL (`recursive=1`) and filtered
+ * locally — because of the rate limit (60/hour, unauthenticated) we cannot
+ * send a separate request per directory.
  *
- * `truncated` bayrog'i: juda katta repo'da GitHub daraxtni kesib beradi.
- * Bunda topilganini qaytaramiz va chaqiruvchiga ogohlantirish beramiz —
- * bo'sh natijadan ko'ra qisman natija foydali.
+ * The `truncated` flag: for a very large repository GitHub cuts the tree
+ * short. In that case we return what was found and hand the caller a warning —
+ * a partial result is more useful than an empty one.
  *
- * NAQSH PARAMETR: skilllar `SKILL.md` qidiradi, MCP marketi `server.json`.
- * Ikkalasi uchun bir xil daraxt so'rovi va bir xil `truncated` mantig'i
- * kerak, shuning uchun faqat filtr tashqariga chiqarilgan.
+ * THE PATTERN IS A PARAMETER: skills look for `SKILL.md`, the MCP marketplace
+ * for `server.json`. Both need the same tree request and the same `truncated`
+ * handling, so only the filter was lifted out.
  */
-export async function fayllarniTop(
-  m: GithubManzil,
+export async function findFiles(
+  r: GithubRef,
   ref: string,
-  naqsh: RegExp,
-): Promise<{ fayllar: TopilganFayl[]; kesilgan: boolean }> {
-  const javob = await soraw(
-    `${API}/repos/${m.owner}/${m.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+  pattern: RegExp,
+): Promise<{ files: FoundFile[]; truncated: boolean }> {
+  const response = await request(
+    `${API}/repos/${r.owner}/${r.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
   )
-  const malumot = (await javob.json()) as {
+  const data = (await response.json()) as {
     tree?: { path?: string; type?: string; sha?: string }[]
     truncated?: boolean
   }
 
-  const fayllar: TopilganFayl[] = []
-  for (const yozuv of malumot.tree ?? []) {
-    if (yozuv.type !== 'blob' || !yozuv.path || !yozuv.sha) continue
-    if (!naqsh.test(yozuv.path)) continue
-    fayllar.push({ yol: yozuv.path, sha: yozuv.sha })
+  const files: FoundFile[] = []
+  for (const entry of data.tree ?? []) {
+    if (entry.type !== 'blob' || !entry.path || !entry.sha) continue
+    if (!pattern.test(entry.path)) continue
+    files.push({ path: entry.path, sha: entry.sha })
   }
 
-  return { fayllar, kesilgan: malumot.truncated === true }
+  return { files, truncated: data.truncated === true }
 }
 
-/** Papka ichida yoki ildizda joylashgan `SKILL.md` (katta-kichik harf farqsiz) */
-const SKILL_NAQSHI = /(^|\/)SKILL\.md$/i
+/** A `SKILL.md` inside a directory or at the root (case-insensitive) */
+const SKILL_PATTERN = /(^|\/)SKILL\.md$/i
 
-/** Repo'dagi hamma `SKILL.md` yo'llarini topadi */
-export async function skillFayllariniTop(
-  m: GithubManzil,
+/** Finds every `SKILL.md` path in the repository */
+export async function findSkillFiles(
+  r: GithubRef,
   ref: string,
-): Promise<{ fayllar: TopilganFayl[]; kesilgan: boolean }> {
-  return fayllarniTop(m, ref, SKILL_NAQSHI)
+): Promise<{ files: FoundFile[]; truncated: boolean }> {
+  return findFiles(r, ref, SKILL_PATTERN)
 }
 
-/** Bitta blob mazmuni — katalog skanerlashda `SKILL.md` frontmatter'i uchun */
-export async function blobniOqi(m: GithubManzil, sha: string): Promise<string> {
-  const javob = await soraw(`${API}/repos/${m.owner}/${m.repo}/git/blobs/${sha}`)
-  const malumot = (await javob.json()) as { content?: string; encoding?: string }
-  if (malumot.encoding !== 'base64' || !malumot.content) return ''
-  return Buffer.from(malumot.content, 'base64').toString('utf8')
+/** A single blob's contents — for the `SKILL.md` frontmatter during a catalog scan */
+export async function readBlob(r: GithubRef, sha: string): Promise<string> {
+  const response = await request(`${API}/repos/${r.owner}/${r.repo}/git/blobs/${sha}`)
+  const data = (await response.json()) as { content?: string; encoding?: string }
+  if (data.encoding !== 'base64' || !data.content) return ''
+  return Buffer.from(data.content, 'base64').toString('utf8')
 }
 
 /**
- * Repo tarball'ini yuklab oladi (gzip ochilgan holda).
+ * Downloads the repository tarball (already gunzipped).
  *
- * Hajm ikki marta tekshiriladi: `Content-Length` sarlavhasi bo'yicha
- * oldindan, va yuklab olingandan keyin haqiqiy hajm bo'yicha — sarlavha
- * yolg'on bo'lishi mumkin.
+ * The size is checked twice: up front from the `Content-Length` header, and
+ * again after the download from the actual size — the header can lie.
  */
-export async function tarballniOl(m: GithubManzil, ref: string): Promise<Uint8Array> {
-  const javob = await fetch(
-    `https://codeload.github.com/${m.owner}/${m.repo}/tar.gz/${encodeURIComponent(ref)}`,
+export async function fetchTarball(r: GithubRef, ref: string): Promise<Uint8Array> {
+  const response = await fetch(
+    `https://codeload.github.com/${r.owner}/${r.repo}/tar.gz/${encodeURIComponent(ref)}`,
     {
       headers: { 'User-Agent': 'platforma-skills' },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     },
   )
 
-  if (!javob.ok) {
-    throw new Error(`Could not download the archive: ${javob.status} ${javob.statusText}`)
+  if (!response.ok) {
+    throw new Error(`Could not download the archive: ${response.status} ${response.statusText}`)
   }
 
-  const uzunlik = javob.headers.get('content-length')
-  if (uzunlik && Number(uzunlik) > MAKS_TARBALL_BAYT) {
-    throw new Error(`Repository too large (${Math.round(Number(uzunlik) / 1024 / 1024)}MB)`)
+  const length = response.headers.get('content-length')
+  if (length && Number(length) > MAX_TARBALL_BYTES) {
+    throw new Error(`Repository too large (${Math.round(Number(length) / 1024 / 1024)}MB)`)
   }
 
-  const siqilgan = new Uint8Array(await javob.arrayBuffer())
-  if (siqilgan.length > MAKS_TARBALL_BAYT) {
+  const compressed = new Uint8Array(await response.arrayBuffer())
+  if (compressed.length > MAX_TARBALL_BYTES) {
     throw new Error('Repository too large')
   }
 
-  return Bun.gunzipSync(siqilgan)
+  return Bun.gunzipSync(compressed)
 }

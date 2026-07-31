@@ -1,10 +1,11 @@
-"""Umumiy konfiguratsiya — muhit o'zgaruvchilari va model sozlamalari.
+"""Shared configuration — environment variables and model settings.
 
-Bu yerda ikkala agent (bot va monitor) ishlatadigan qism: YAML o'qish,
-`.env`, baza yo'li va `models.yaml`. Agentga xos konfiguratsiya o'z
-paketida bo'ladi (`bot/config.py`, `monitor/config.py`).
+This holds what both agents (bot and monitor) need: YAML loading,
+`.env`, the database path and `models.yaml`. Agent-specific
+configuration lives in its own package (`bot/config.py`,
+`monitor/config.py`).
 
-Maxfiy ma'lumotlar (API kalitlar) faqat muhit o'zgaruvchilarida.
+Secrets (API keys) live in environment variables only.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-# Loyiha ildizi: core/config.py -> core/ -> ildiz
+# Project root: core/config.py -> core/ -> root
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT_DIR / "config"
 
@@ -26,38 +27,38 @@ load_dotenv(ROOT_DIR / ".env")
 
 
 class ConfigError(RuntimeError):
-    """Konfiguratsiya xatosi — yetishmayotgan fayl yoki kalit."""
+    """Configuration error — a missing file or key."""
 
 
 def read_yaml(name: str) -> dict[str, Any]:
-    """`config/` katalogidagi YAML faylni o'qish."""
+    """Read a YAML file from the `config/` directory."""
     path = CONFIG_DIR / name
     if not path.exists():
-        raise ConfigError(f"Konfiguratsiya fayli topilmadi: {path}")
+        raise ConfigError(f"Configuration file not found: {path}")
     with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     if data is None:
         return {}
     if not isinstance(data, dict):
-        raise ConfigError(f"{name} ildizida obyekt (mapping) kutilgan edi")
+        raise ConfigError(f"expected an object (mapping) at the root of {name}")
     return data
 
 
 def env_str(key: str, default: str | None = None, *, required: bool = False) -> str:
-    """Muhit o'zgaruvchisini o'qish.
+    """Read an environment variable.
 
-    `required=True` bo'lsa va qiymat yo'q bo'lsa ConfigError.
+    Raises ConfigError if `required=True` and the value is missing.
     """
     value = os.getenv(key, default)
     if required and not value:
         raise ConfigError(
-            f"{key} muhit o'zgaruvchisi belgilanmagan. .env.example dan nusxa oling."
+            f"The {key} environment variable is not set. Copy it from .env.example."
         )
     return value or ""
 
 
 def db_path() -> Path:
-    """SQLite fayli. Ikkala agent bitta bazani ishlatadi."""
+    """The SQLite file. Both agents share a single database."""
     raw = env_str("DB_PATH", "data/bot.db")
     path = Path(raw)
     return path if path.is_absolute() else ROOT_DIR / path
@@ -67,15 +68,15 @@ def log_level() -> str:
     return env_str("LOG_LEVEL", "INFO").upper()
 
 
-# ─────────────────────────── Modellar ───────────────────────────
+# ──────────────────────────── Models ────────────────────────────
 
 
 @dataclass(frozen=True, slots=True)
 class StageConfig:
-    """Bitta vazifa uchun model sozlamalari.
+    """Model settings for a single task.
 
-    "Bosqich" — `models.yaml` dagi kalit, kodda qattiq qiymat yo'q.
-    Bot uchun rank/enrich/write, monitor uchun diagnostika.
+    A "stage" is just a key in `models.yaml` — nothing is hardcoded here.
+    The bot uses rank/enrich/write, the monitor uses diagnostics.
     """
 
     name: str
@@ -86,13 +87,13 @@ class StageConfig:
 
     @property
     def chain(self) -> tuple[str, ...]:
-        """Asosiy model + fallbacklar — urinish tartibida."""
+        """Primary model plus fallbacks, in the order they are tried."""
         return (self.model, *self.fallbacks)
 
 
 @dataclass(frozen=True, slots=True)
 class Price:
-    """Model narxi, $/1M token."""
+    """Model price, in $ per 1M tokens."""
 
     input: float
     output: float
@@ -107,15 +108,15 @@ class Limits:
     max_retries: int = 3
     retry_base_delay: float = 2.0
     request_timeout: int = 120
-    # Bosqich bo'yicha alohida kunlik limit. Ikki agent bitta bazani
-    # bo'lishadi — bot pipeline'i limitni to'ldirsa monitor diagnostikasi
-    # bloklanmasligi kerak (va aksincha).
+    # Per-stage daily limit. The two agents share one database — if the
+    # bot's pipeline uses up the limit, that must not block the monitor's
+    # diagnostics (and vice versa).
     stage_limits: tuple[tuple[str, float], ...] = ()
 
     def limit_for(self, stage: str) -> tuple[float, str]:
-        """Bosqich uchun limit va u qaysi kalitdan kelgani.
+        """The limit for a stage, and which key it came from.
 
-        Alohida limiti bo'lmagan bosqichlar umumiy limitni bo'lishadi.
+        Stages without a dedicated limit share the global one.
         """
         for name, value in self.stage_limits:
             if name == stage:
@@ -123,12 +124,11 @@ class Limits:
         return self.daily_cost_usd, "daily_cost_usd"
 
     def counted_stages(self, stage: str) -> tuple[tuple[str, ...], bool]:
-        """Limitga qaysi bosqichlar sanaladi.
+        """Which stages count toward the limit.
 
-        Qaytadi: (bosqichlar, `include`). `include=True` — faqat shu
-        ro'yxat sanaladi; `include=False` — ro'yxatdagilar chiqarib
-        tashlanadi (umumiy limit alohida limitli bosqichlarni
-        o'ziga qo'shmasligi kerak).
+        Returns (stages, `include`). With `include=True` only the listed
+        stages are counted; with `include=False` they are excluded (the
+        global limit must not absorb stages that have their own limit).
         """
         named = tuple(name for name, _ in self.stage_limits)
         if stage in named:
@@ -148,12 +148,12 @@ class ModelsConfig:
             return self.stages[name]
         except KeyError:
             raise ConfigError(
-                f"models.yaml: '{name}' bosqichi topilmadi. "
-                f"Mavjud bosqichlar: {sorted(self.stages)}"
+                f"models.yaml: stage '{name}' not found. "
+                f"Available stages: {sorted(self.stages)}"
             ) from None
 
     def price(self, model: str) -> Price | None:
-        """Model narxi. Noma'lum model uchun None — xarajat 0 deb hisoblanadi."""
+        """Model price. None for an unknown model — its cost counts as 0."""
         return self.pricing.get(model)
 
 
@@ -161,7 +161,7 @@ def parse_models(raw: dict[str, Any]) -> ModelsConfig:
     stages: dict[str, StageConfig] = {}
     for name, cfg in (raw.get("stages") or {}).items():
         if "model" not in cfg:
-            raise ConfigError(f"models.yaml: '{name}' bosqichida 'model' maydoni yo'q")
+            raise ConfigError(f"models.yaml: stage '{name}' has no 'model' field")
         stages[name] = StageConfig(
             name=name,
             model=cfg["model"],
@@ -178,7 +178,7 @@ def parse_models(raw: dict[str, Any]) -> ModelsConfig:
     limits_raw = raw.get("limits") or {}
     stage_limits_raw = limits_raw.get("stage_limits") or {}
     if not isinstance(stage_limits_raw, dict):
-        raise ConfigError("models.yaml: limits.stage_limits obyekt bo'lishi kerak")
+        raise ConfigError("models.yaml: limits.stage_limits must be an object")
 
     limits = Limits(
         daily_cost_usd=float(limits_raw.get("daily_cost_usd", 2.0)),
@@ -200,5 +200,5 @@ def parse_models(raw: dict[str, Any]) -> ModelsConfig:
 
 @lru_cache(maxsize=1)
 def load_models() -> ModelsConfig:
-    """`models.yaml` (jarayon davomida bir marta o'qiladi)."""
+    """`models.yaml` (read once per process)."""
     return parse_models(read_yaml("models.yaml"))

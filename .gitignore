@@ -3,7 +3,7 @@ node_modules/
 .env
 *.db
 
-# SQLite WAL sidecar fayllari va runtime baza papkasi
+# SQLite WAL sidecar files and the runtime database directory
 *.db-wal
 *.db-shm
 platform-server/data/

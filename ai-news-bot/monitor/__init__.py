@@ -1,1 +1,1 @@
-"""Server monitor agenti — serverlarni SSH orqali kuzatish."""
+"""Server monitor agent — watches servers over SSH."""

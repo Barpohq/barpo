@@ -1,29 +1,30 @@
 import { useMemo, useState } from 'react'
 import { auditLog, type AuditLevel } from '../data/mock'
-import { LEVEL_LABEL, RESULT_LABEL } from '../lib/audit-yorliq'
+import { LEVEL_LABEL, RESULT_LABEL } from '../lib/audit-label'
 import { Card, LevelBadge, PageHead } from '../ui'
 
-// Kalitlar bazadan keladi (`seed.ts`) — yorliqlari `lib/audit-yorliq.ts` da
+// The keys come from the database (`seed.ts`) — their labels live in
+// `lib/audit-label.ts`
 const resultStyle: Record<string, string> = {
   OK: 'text-mint',
-  tasdiqlandi: 'text-mint',
-  'rad etildi': 'text-coral',
-  kutmoqda: 'text-gold',
+  approved: 'text-mint',
+  denied: 'text-coral',
+  pending: 'text-gold',
 }
 
-/** `hammasi` — filtr qiymati, bazada uchramaydi */
-const levels: (AuditLevel | 'hammasi')[] = ['hammasi', "o'qish", "o'zgartirish", 'xavfli']
+/** `all` is a filter value — it never occurs in the database */
+const levels: (AuditLevel | 'all')[] = ['all', 'read', 'write', 'dangerous']
 
-const levelYorligi = (l: (typeof levels)[number]): string =>
-  l === 'hammasi' ? 'all' : LEVEL_LABEL[l]
+const levelLabel = (l: (typeof levels)[number]): string =>
+  l === 'all' ? 'all' : LEVEL_LABEL[l]
 
 export default function Audit() {
-  const [level, setLevel] = useState<(typeof levels)[number]>('hammasi')
-  const [actor, setActor] = useState('hammasi')
+  const [level, setLevel] = useState<(typeof levels)[number]>('all')
+  const [actor, setActor] = useState('all')
 
-  const actors = useMemo(() => ['hammasi', ...new Set(auditLog.map((e) => e.actor))], [])
+  const actors = useMemo(() => ['all', ...new Set(auditLog.map((e) => e.actor))], [])
   const rows = auditLog.filter(
-    (e) => (level === 'hammasi' || e.level === level) && (actor === 'hammasi' || e.actor === actor),
+    (e) => (level === 'all' || e.level === level) && (actor === 'all' || e.actor === actor),
   )
 
   return (
@@ -44,7 +45,7 @@ export default function Audit() {
                 level === l ? 'bg-lazur-dim font-semibold text-bg' : 'border border-line text-muted hover:text-ink'
               }`}
             >
-              {levelYorligi(l)}
+              {levelLabel(l)}
             </button>
           ))}
         </div>
@@ -57,7 +58,7 @@ export default function Audit() {
           >
             {actors.map((a) => (
               <option key={a} value={a}>
-                {a === 'hammasi' ? 'all' : a}
+                {a}
               </option>
             ))}
           </select>

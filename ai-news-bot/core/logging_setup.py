@@ -1,7 +1,7 @@
-"""Loglashni sozlash.
+"""Logging setup.
 
-Muhim: barcha log stdout'ga chiqadi va darhol flush qilinadi — Docker
-loglarida va uzoq ishlaydigan jarayonlarda real vaqtda ko'rinishi uchun.
+Important: all logs go to stdout and are flushed immediately — so they
+show up in real time in Docker logs and in long-running processes.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import sys
 
 
 class _FlushingStreamHandler(logging.StreamHandler):
-    """Har yozuvdan keyin flush qiladigan handler."""
+    """Handler that flushes after every record."""
 
     def emit(self, record: logging.LogRecord) -> None:
         super().emit(record)
@@ -19,7 +19,7 @@ class _FlushingStreamHandler(logging.StreamHandler):
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Ildiz loggerni sozlash. Bir necha marta chaqirilsa qayta sozlaydi."""
+    """Configure the root logger. Reconfigures if called more than once."""
     root = logging.getLogger()
     root.setLevel(level)
 
@@ -35,7 +35,7 @@ def setup_logging(level: str = "INFO") -> None:
     )
     root.addHandler(handler)
 
-    # Kutubxonalarning shovqinli loglarini bosish
+    # Quiet down noisy library logs
     for noisy in ("httpx", "httpcore", "apscheduler.executors.default"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 

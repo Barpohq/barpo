@@ -1,312 +1,315 @@
-// WS hub testlari — obuna, broadcast filtri va client eventlarni qayta ishlash.
+// WS hub tests — subscriptions, the broadcast filter and client event handling.
 
 import { describe, expect, test } from 'bun:test'
 import type { ClientEvent, ServerEvent } from '@platforma/shared'
-import { WsHub, type PlatformaWS } from '../src/ws/hub.ts'
+import { WsHub, type PlatformWS } from '../src/ws/hub.ts'
 
-/** Soxta WS ulanishi — yuborilgan eventlarni massivga yig'adi */
-function soxtaWs(channels: string[] = [], sessionId?: string) {
-  const olingan: ServerEvent[] = []
+/** A fake WS connection — collects the events it is sent into an array */
+function fakeWs(channels: string[] = [], sessionId?: string) {
+  const received: ServerEvent[] = []
   const ws = {
-    data: { id: `soxta-${Math.random()}`, channels: new Set(channels), sessionId },
-    send: (m: string) => olingan.push(JSON.parse(m) as ServerEvent),
+    data: { id: `fake-${Math.random()}`, channels: new Set(channels), sessionId },
+    send: (m: string) => received.push(JSON.parse(m) as ServerEvent),
   }
-  return { ws: ws as unknown as PlatformaWS, olingan }
+  return { ws: ws as unknown as PlatformWS, received }
 }
 
-/** Chat eventi — sessiya filtri testlari uchun qisqartma */
+/** A chat event — shorthand for the session filter tests */
 function chatDelta(sessionId: string, delta = 'x'): ServerEvent {
   return { type: 'chat.delta', sessionId, messageId: 'm1', delta }
 }
 
 describe('WsHub', () => {
-  test('ulanishda hello yuboriladi', () => {
+  test('hello is sent on connect', () => {
     const hub = new WsHub()
-    const { ws, olingan } = soxtaWs()
-    hub.ulandi(ws)
+    const { ws, received } = fakeWs()
+    hub.connected(ws)
 
-    expect(hub.soni).toBe(1)
-    expect(olingan[0]?.type).toBe('hello')
+    expect(hub.count).toBe(1)
+    expect(received[0]?.type).toBe('hello')
   })
 
-  test('uzilganda registrdan chiqadi', () => {
+  test('a closed connection leaves the registry', () => {
     const hub = new WsHub()
-    const { ws } = soxtaWs()
-    hub.ulandi(ws)
-    hub.uzildi(ws)
-    expect(hub.soni).toBe(0)
+    const { ws } = fakeWs()
+    hub.connected(ws)
+    hub.disconnected(ws)
+    expect(hub.count).toBe(0)
   })
 
-  test('broadcast faqat obuna bo\'lganlarga boradi', () => {
+  test('a broadcast only reaches subscribers', () => {
     const hub = new WsHub()
-    const obuna = soxtaWs(['audit'])
-    const begona = soxtaWs(['chat'])
-    hub.ulandi(obuna.ws)
-    hub.ulandi(begona.ws)
-    obuna.olingan.length = 0
-    begona.olingan.length = 0
+    const subscriber = fakeWs(['audit'])
+    const outsider = fakeWs(['chat'])
+    hub.connected(subscriber.ws)
+    hub.connected(outsider.ws)
+    subscriber.received.length = 0
+    outsider.received.length = 0
 
-    const soni = hub.broadcast({
+    const count = hub.broadcast({
       type: 'audit.entry',
-      entry: { time: '10:00', actor: 'test', action: 'a', target: 't', level: "o'qish", result: 'OK' },
+      entry: { time: '10:00', actor: 'test', action: 'a', target: 't', level: 'read', result: 'OK' },
     })
 
-    expect(soni).toBe(1)
-    expect(obuna.olingan).toHaveLength(1)
-    expect(begona.olingan).toHaveLength(0)
+    expect(count).toBe(1)
+    expect(subscriber.received).toHaveLength(1)
+    expect(outsider.received).toHaveLength(0)
   })
 
-  test('sub eventi obunani qo\'shadi va keyingi broadcast keladi', () => {
+  test('a sub event adds the subscription and the next broadcast arrives', () => {
     const hub = new WsHub()
-    const { ws, olingan } = soxtaWs()
-    hub.ulandi(ws)
-    olingan.length = 0
+    const { ws, received } = fakeWs()
+    hub.connected(ws)
+    received.length = 0
 
-    // obunasiz — event kelmaydi
+    // without a subscription — no event arrives
     hub.broadcast({ type: 'build.done', buildId: 'b1', appId: 'app1' })
-    expect(olingan).toHaveLength(0)
+    expect(received).toHaveLength(0)
 
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['build'] }))
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['build'] }))
     hub.broadcast({ type: 'build.done', buildId: 'b1', appId: 'app1' })
 
-    expect(olingan).toHaveLength(1)
-    expect(olingan[0]).toMatchObject({ type: 'build.done', buildId: 'b1' })
+    expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({ type: 'build.done', buildId: 'b1' })
   })
 
-  test('client eventlari handlerga uzatiladi', () => {
+  test('client events are passed on to the handler', () => {
     const hub = new WsHub()
-    const { ws } = soxtaWs()
-    hub.ulandi(ws)
+    const { ws } = fakeWs()
+    hub.connected(ws)
 
-    const olingan: ClientEvent[] = []
-    hub.handlerQosh((e) => olingan.push(e))
+    const received: ClientEvent[] = []
+    hub.addHandler((e) => received.push(e))
 
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'chat.send', sessionId: 's1', text: 'salom' }))
+    hub.messageReceived(ws, JSON.stringify({ type: 'chat.send', sessionId: 's1', text: 'hello' }))
 
-    expect(olingan).toHaveLength(1)
-    expect(olingan[0]).toMatchObject({ type: 'chat.send', sessionId: 's1', text: 'salom' })
+    expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({ type: 'chat.send', sessionId: 's1', text: 'hello' })
   })
 
-  test("buzuq JSON va noma'lum event turi e'tiborsiz qoldiriladi", () => {
+  test('malformed JSON and an unknown event type are ignored', () => {
     const hub = new WsHub()
-    const { ws } = soxtaWs()
-    hub.ulandi(ws)
+    const { ws } = fakeWs()
+    hub.connected(ws)
 
-    const olingan: ClientEvent[] = []
-    hub.handlerQosh((e) => olingan.push(e))
+    const received: ClientEvent[] = []
+    hub.addHandler((e) => received.push(e))
 
-    expect(() => hub.xabarKeldi(ws, '{buzuq json')).not.toThrow()
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'nomalum.event' }))
+    expect(() => hub.messageReceived(ws, '{malformed json')).not.toThrow()
+    hub.messageReceived(ws, JSON.stringify({ type: 'unknown.event' }))
 
-    expect(olingan).toHaveLength(0)
+    expect(received).toHaveLength(0)
   })
 
-  test('handlerQosh qaytargan funksiya obunani bekor qiladi', () => {
+  test('the function addHandler returns unregisters the handler', () => {
     const hub = new WsHub()
-    const { ws } = soxtaWs()
-    hub.ulandi(ws)
+    const { ws } = fakeWs()
+    hub.connected(ws)
 
-    const olingan: ClientEvent[] = []
-    const bekor = hub.handlerQosh((e) => olingan.push(e))
+    const received: ClientEvent[] = []
+    const unregister = hub.addHandler((e) => received.push(e))
 
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'chat.send', sessionId: 's1', text: 'bir' }))
-    bekor()
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'chat.send', sessionId: 's1', text: 'ikki' }))
+    hub.messageReceived(ws, JSON.stringify({ type: 'chat.send', sessionId: 's1', text: 'one' }))
+    unregister()
+    hub.messageReceived(ws, JSON.stringify({ type: 'chat.send', sessionId: 's1', text: 'two' }))
 
-    expect(olingan).toHaveLength(1)
+    expect(received).toHaveLength(1)
   })
 })
 
-describe('sessiya izolyatsiyasi', () => {
-  test('chat eventi faqat o\'z sessiyasini kuzatayotgan mijozga boradi', () => {
-    // ASOSIY BUG: oldin ikkala oyna ham bir-birining javobini olardi
+describe('session isolation', () => {
+  test('a chat event only reaches the client watching that session', () => {
+    // THE ORIGINAL BUG: both windows used to receive each other's replies
     const hub = new WsHub()
-    const birinchi = soxtaWs(['chat'], 's1')
-    const ikkinchi = soxtaWs(['chat'], 's2')
-    hub.ulandi(birinchi.ws)
-    hub.ulandi(ikkinchi.ws)
-    birinchi.olingan.length = 0
-    ikkinchi.olingan.length = 0
+    const first = fakeWs(['chat'], 's1')
+    const second = fakeWs(['chat'], 's2')
+    hub.connected(first.ws)
+    hub.connected(second.ws)
+    first.received.length = 0
+    second.received.length = 0
 
-    const soni = hub.broadcast(chatDelta('s1', 'salom'))
+    const count = hub.broadcast(chatDelta('s1', 'hello'))
 
-    expect(soni).toBe(1)
-    expect(birinchi.olingan).toHaveLength(1)
-    expect(ikkinchi.olingan).toHaveLength(0)
+    expect(count).toBe(1)
+    expect(first.received).toHaveLength(1)
+    expect(second.received).toHaveLength(0)
   })
 
-  test('ruxsat so\'rovi begona sessiyaga sizmaydi', () => {
-    // chat.permission eng nozigi: boshqa oynada tasdiq tugmasi chiqib qolardi
+  test('a permission request does not leak into another session', () => {
+    // chat.permission is the most delicate one: the confirmation button used to
+    // pop up in the other window
     const hub = new WsHub()
-    const egasi = soxtaWs(['chat'], 's1')
-    const begona = soxtaWs(['chat'], 's2')
-    hub.ulandi(egasi.ws)
-    hub.ulandi(begona.ws)
-    egasi.olingan.length = 0
-    begona.olingan.length = 0
+    const owner = fakeWs(['chat'], 's1')
+    const outsider = fakeWs(['chat'], 's2')
+    hub.connected(owner.ws)
+    hub.connected(outsider.ws)
+    owner.received.length = 0
+    outsider.received.length = 0
 
     hub.broadcast({
       type: 'chat.permission',
       sessionId: 's1',
       messageId: 'm1',
-      sorov: {
+      request: {
         id: 'r1',
         sessionId: 's1',
-        tur: 'buyruq',
-        amal: 'bash',
-        nishon: 'rm -rf x',
-        sabab: 'test',
-        naqsh: 'rm',
-        vaqt: '2026-01-01T00:00:00.000Z',
+        kind: 'command',
+        action: 'bash',
+        target: 'rm -rf x',
+        reason: 'test',
+        pattern: 'rm',
+        time: '2026-01-01T00:00:00.000Z',
       },
     })
 
-    expect(egasi.olingan).toHaveLength(1)
-    expect(begona.olingan).toHaveLength(0)
+    expect(owner.received).toHaveLength(1)
+    expect(outsider.received).toHaveLength(0)
   })
 
-  test('tool va xato eventlari ham filtrlanadi', () => {
+  test('tool and error events are filtered as well', () => {
     const hub = new WsHub()
-    const egasi = soxtaWs(['chat'], 's1')
-    const begona = soxtaWs(['chat'], 's2')
-    hub.ulandi(egasi.ws)
-    hub.ulandi(begona.ws)
-    begona.olingan.length = 0
+    const owner = fakeWs(['chat'], 's1')
+    const outsider = fakeWs(['chat'], 's2')
+    hub.connected(owner.ws)
+    hub.connected(outsider.ws)
+    outsider.received.length = 0
 
     hub.broadcast({
       type: 'chat.tool',
       sessionId: 's1',
       messageId: 'm1',
-      tool: { id: 't1', nom: 'bash', args: 'ls', holat: 'tugadi' },
+      tool: { id: 't1', name: 'bash', args: 'ls', status: 'done' },
     })
-    hub.broadcast({ type: 'chat.error', sessionId: 's1', messageId: 'm1', error: 'xato' })
+    hub.broadcast({ type: 'chat.error', sessionId: 's1', messageId: 'm1', error: 'error' })
     hub.broadcast({ type: 'chat.done', sessionId: 's1', messageId: 'm1' })
 
-    expect(begona.olingan).toHaveLength(0)
+    expect(outsider.received).toHaveLength(0)
   })
 
-  test('sessiya ko\'rsatmagan mijoz hammasini oladi (orqaga moslik)', () => {
+  test('a client that named no session receives everything (backwards compatibility)', () => {
     const hub = new WsHub()
-    const eski = soxtaWs(['chat']) // sessionId yo'q — eski mijoz
-    hub.ulandi(eski.ws)
-    eski.olingan.length = 0
+    const old = fakeWs(['chat']) // no sessionId — an older client
+    hub.connected(old.ws)
+    old.received.length = 0
 
     hub.broadcast(chatDelta('s1'))
     hub.broadcast(chatDelta('s2'))
 
-    expect(eski.olingan).toHaveLength(2)
+    expect(old.received).toHaveLength(2)
   })
 
-  test('sessiyaga bog\'liq bo\'lmagan eventlar filtrlanmaydi', () => {
-    // audit/build/app eventlari sessiyaga tegishli emas — hammaga ketishi kerak
+  test('events that are not tied to a session are not filtered', () => {
+    // audit/build/app events belong to no session — everyone should get them
     const hub = new WsHub()
-    const mijoz = soxtaWs(['audit', 'build'], 's1')
-    hub.ulandi(mijoz.ws)
-    mijoz.olingan.length = 0
+    const client = fakeWs(['audit', 'build'], 's1')
+    hub.connected(client.ws)
+    client.received.length = 0
 
     hub.broadcast({
       type: 'audit.entry',
-      entry: { time: '10:00', actor: 't', action: 'a', target: 't', level: "o'qish", result: 'OK' },
+      entry: { time: '10:00', actor: 't', action: 'a', target: 't', level: 'read', result: 'OK' },
     })
     hub.broadcast({ type: 'build.done', buildId: 'b1', appId: 'app1' })
 
-    expect(mijoz.olingan).toHaveLength(2)
+    expect(client.received).toHaveLength(2)
   })
 
-  test('sub eventi sessiyani o\'rnatadi', () => {
+  test('a sub event sets the session', () => {
     const hub = new WsHub()
-    const { ws, olingan } = soxtaWs()
-    hub.ulandi(ws)
-    olingan.length = 0
+    const { ws, received } = fakeWs()
+    hub.connected(ws)
+    received.length = 0
 
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
 
     hub.broadcast(chatDelta('s1'))
     hub.broadcast(chatDelta('s2'))
 
-    expect(olingan).toHaveLength(1)
-    expect(olingan[0]).toMatchObject({ sessionId: 's1' })
+    expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({ sessionId: 's1' })
   })
 
-  test('sessiyasiz sub oldingi tanlovni buzmaydi', () => {
-    // Mijoz keyingi `sub` da faqat yangi kanal qo'shayotgan bo'lishi mumkin
+  test('a sub without a session does not disturb the earlier choice', () => {
+    // On a later `sub` the client may only be adding a new channel
     const hub = new WsHub()
-    const { ws, olingan } = soxtaWs()
-    hub.ulandi(ws)
+    const { ws, received } = fakeWs()
+    hub.connected(ws)
 
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['audit'] }))
-    olingan.length = 0
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['audit'] }))
+    received.length = 0
 
     hub.broadcast(chatDelta('s2'))
-    expect(olingan).toHaveLength(0) // sessiya hali ham s1
+    expect(received).toHaveLength(0) // the session is still s1
 
     hub.broadcast(chatDelta('s1'))
-    expect(olingan).toHaveLength(1)
+    expect(received).toHaveLength(1)
   })
 
-  test('sessionId: null filtrni olib tashlaydi', () => {
+  test('sessionId: null removes the filter', () => {
     const hub = new WsHub()
-    const { ws, olingan } = soxtaWs()
-    hub.ulandi(ws)
+    const { ws, received } = fakeWs()
+    hub.connected(ws)
 
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: null }))
-    olingan.length = 0
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: null }))
+    received.length = 0
 
     hub.broadcast(chatDelta('s1'))
     hub.broadcast(chatDelta('s2'))
 
-    expect(olingan).toHaveLength(2)
+    expect(received).toHaveLength(2)
   })
 
-  test('chat.status begona sessiyaga ham boradi (ataylab)', () => {
-    // Sidebar badge'lari uchun: s1 ni ochgan mijoz s2 da agent
-    // ishlayotganini ko'rishi SHART. Bu qolgan chat.* eventlaridan farqli.
+  test('chat.status reaches other sessions too (deliberately)', () => {
+    // For the sidebar badges: a client that has s1 open MUST be able to see
+    // that an agent is running in s2. This is unlike the rest of the chat.*
+    // events.
     const hub = new WsHub()
-    const birinchi = soxtaWs(['chat'], 's1')
-    const ikkinchi = soxtaWs(['chat'], 's2')
-    hub.ulandi(birinchi.ws)
-    hub.ulandi(ikkinchi.ws)
-    birinchi.olingan.length = 0
-    ikkinchi.olingan.length = 0
+    const first = fakeWs(['chat'], 's1')
+    const second = fakeWs(['chat'], 's2')
+    hub.connected(first.ws)
+    hub.connected(second.ws)
+    first.received.length = 0
+    second.received.length = 0
 
-    const soni = hub.broadcast({ type: 'chat.status', sessionId: 's2', holat: 'ishlayapti' })
+    const count = hub.broadcast({ type: 'chat.status', sessionId: 's2', status: 'running' })
 
-    expect(soni).toBe(2)
-    expect(birinchi.olingan).toHaveLength(1)
-    expect(birinchi.olingan[0]).toMatchObject({ sessionId: 's2', holat: 'ishlayapti' })
-    expect(ikkinchi.olingan).toHaveLength(1)
+    expect(count).toBe(2)
+    expect(first.received).toHaveLength(1)
+    expect(first.received[0]).toMatchObject({ sessionId: 's2', status: 'running' })
+    expect(second.received).toHaveLength(1)
   })
 
-  test('chat.status kanal filtridan esa o\'tadi', () => {
-    // Filtrsizlik faqat SESSIYAGA tegishli — chat kanaliga obuna
-    // bo'lmagan mijoz (masalan faqat audit kuzatuvchi) uni olmasligi kerak.
+  test('chat.status does still pass through the channel filter', () => {
+    // The lack of filtering applies to the SESSION only — a client that is not
+    // subscribed to the chat channel (one watching audit alone, say) must not
+    // receive it.
     const hub = new WsHub()
-    const chatsiz = soxtaWs(['audit'])
-    hub.ulandi(chatsiz.ws)
-    chatsiz.olingan.length = 0
+    const withoutChat = fakeWs(['audit'])
+    hub.connected(withoutChat.ws)
+    withoutChat.received.length = 0
 
-    const soni = hub.broadcast({ type: 'chat.status', sessionId: 's1', holat: 'ishlayapti' })
+    const count = hub.broadcast({ type: 'chat.status', sessionId: 's1', status: 'running' })
 
-    expect(soni).toBe(0)
-    expect(chatsiz.olingan).toHaveLength(0)
+    expect(count).toBe(0)
+    expect(withoutChat.received).toHaveLength(0)
   })
 
-  test('sessiya almashtirilsa yangi sessiya kuzatiladi', () => {
-    // "+ yangi suhbat" → boshqa sessiyaga o'tish
+  test('switching sessions moves the watch to the new one', () => {
+    // "+ new conversation" → moving to a different session
     const hub = new WsHub()
-    const { ws, olingan } = soxtaWs()
-    hub.ulandi(ws)
+    const { ws, received } = fakeWs()
+    hub.connected(ws)
 
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
-    hub.xabarKeldi(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's2' }))
-    olingan.length = 0
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's1' }))
+    hub.messageReceived(ws, JSON.stringify({ type: 'sub', channels: ['chat'], sessionId: 's2' }))
+    received.length = 0
 
     hub.broadcast(chatDelta('s1'))
-    expect(olingan).toHaveLength(0)
+    expect(received).toHaveLength(0)
 
     hub.broadcast(chatDelta('s2'))
-    expect(olingan).toHaveLength(1)
+    expect(received).toHaveLength(1)
   })
 })

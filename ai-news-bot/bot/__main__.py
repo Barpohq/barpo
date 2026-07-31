@@ -1,27 +1,27 @@
-"""CLI kirish nuqtasi.
+"""CLI entry point.
 
-Buyruqlar:
-    bot db migrate          — baza sxemasini yangilash
-    bot db status           — baza holati
-    bot llm test            — OpenRouter ulanishini tekshirish
-    bot cost [--days N]     — LLM xarajatlari hisoboti
-    bot collect             — manbalardan yangilik yig'ish
-    bot backfill-publishers — eski elementlarga nashriyot ma'lumotini qo'shish
-    bot dedup               — dublikatlarni klasterlash
-    bot rank                — klasterlarni LLM bilan baholash
-    bot enrich              — to'liq maqola matni bilan boyitish
-    bot write               — klasterlardan post yozish
-    bot lang-test           — til sinovi: modellarni taqqoslash
-    bot posts list          — yozilgan postlar ro'yxati
-    bot posts show <id>     — bitta postni ko'rish
-    bot publish             — draftlarni tasdiqqa yuborish + navbatni chiqarish
-    bot publish-now <id>    — bitta postni darhol kanalga chiqarish
-    bot telegram check      — bot va kanal sozlamalarini tekshirish
-    bot health              — hozirgi holat va kunlik hisobot
-    bot stats               — umumiy statistika, avtonom rejimga tayyorlik
-    bot clusters list       — klasterlar ro'yxati
-    bot clusters show <id>  — bitta klaster tafsiloti
-    bot run                 — scheduler bilan doimiy rejim
+Commands:
+    bot db migrate          — upgrade the database schema
+    bot db status           — database status
+    bot llm test            — check the OpenRouter connection
+    bot cost [--days N]     — LLM cost report
+    bot collect             — gather news from the sources
+    bot backfill-publishers — add publisher info to older items
+    bot dedup               — cluster duplicates
+    bot rank                — score clusters with an LLM
+    bot enrich              — enrich with the full article text
+    bot write               — write posts from clusters
+    bot lang-test           — language trial: compare models
+    bot posts list          — list the posts that were written
+    bot posts show <id>     — view a single post
+    bot publish             — send drafts for approval + release the queue
+    bot publish-now <id>    — publish a single post to the channel right away
+    bot telegram check      — check the bot and channel settings
+    bot health              — current status and daily report
+    bot stats               — overall statistics, readiness for autonomous mode
+    bot clusters list       — list clusters
+    bot clusters show <id>  — details of a single cluster
+    bot run                 — continuous mode with the scheduler
 """
 
 from __future__ import annotations

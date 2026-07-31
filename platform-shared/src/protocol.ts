@@ -1,25 +1,25 @@
-// WebSocket protokoli — client va server o'rtasidagi yagona shartnoma.
-// Ikkala yo'nalish ham discriminated union: `type` maydoni bo'yicha ajratiladi,
-// shuning uchun switch ichida TypeScript qolgan maydonlarni o'zi biladi.
+// The WebSocket protocol — the single contract between the client and the
+// server. Both directions are discriminated unions, split by the `type` field,
+// so inside a switch TypeScript knows the remaining fields by itself.
 //
-// Yangi event qo'shish tartibi:
-//   1) shu yerda interfeys yozing (`type` — noyob satr literal),
-//   2) uni ClientEvent yoki ServerEvent union'iga qo'shing,
-//   3) server tomonda hub.broadcast(...) bilan yuboring,
-//   4) UI tomonda switch'ga yangi case qo'shing.
-// Boshqa joyni o'zgartirish shart emas.
+// How to add a new event:
+//   1) write the interface here (`type` — a unique string literal),
+//   2) add it to the ClientEvent or ServerEvent union,
+//   3) send it with hub.broadcast(...) on the server side,
+//   4) add a new case to the switch on the UI side.
+// Nothing else needs to change.
 
 import type {
   AppManifest,
   AuditEntry,
   BuildStep,
-  KlassifikatorQarori,
-  RejimHolati,
-  RuxsatJavobi,
-  RuxsatRejimi,
-  RuxsatSorovi,
+  ClassifierVerdict,
+  ModeState,
+  PermissionAnswer,
+  PermissionMode,
+  PermissionRequest,
   ToolCard,
-  ToolChaqiruv,
+  ToolCall,
 } from './types.ts'
 
 export const PROTOCOL_VERSION = '0.1.0'
@@ -28,38 +28,39 @@ export const PROTOCOL_VERSION = '0.1.0'
 // Client → server
 // ---------------------------------------------------------------------------
 
-/** Chat uchun tanlangan model — provider bilan birga */
-export interface ModelTanlovi {
+/** The model selected for the chat — together with its provider */
+export interface ModelChoice {
   provider: string
   model: string
 }
 
-/** Foydalanuvchi chatga xabar yubordi */
+/** The user sent a message to the chat */
 export interface ChatSendEvent {
   type: 'chat.send'
   sessionId: string
   text: string
   /**
-   * Faqat sessiyaning BIRINCHI xabarida hisobga olinadi — shunda sessiya
-   * provideri qulflanadi. Keyingi xabarlarda boshqa provider yuborilsa
-   * server rad etadi (chat.error).
+   * Only taken into account on the FIRST message of a session — that is when
+   * the session's provider is locked. If a different provider is sent in a
+   * later message the server rejects it (chat.error).
    */
-  model?: ModelTanlovi
+  model?: ModelChoice
   /**
-   * Xabarga biriktirilgan fayllarning ID'lari (`POST /api/chat/biriktirma`
-   * qaytargan).
+   * The IDs of the files attached to the message (returned by
+   * `POST /api/chat/attachment`).
    *
-   * FAQAT ID — obyekt emas. Yo'l, tur va mime SERVERDA bazadan olinadi:
-   * mijoz `yol` bergan bo'lsa u ish papkasidan tashqariga ko'rsata olardi,
-   * `tur` bergan bo'lsa vision qorovulini aldab o'tardi.
+   * IDS ONLY — not objects. The path, kind and mime are taken from the
+   * database ON THE SERVER: if the client supplied `path` it could point
+   * outside the work directory, and if it supplied `kind` it could trick the
+   * vision guard.
    *
-   * Biriktirma bo'lsa `text` bo'sh bo'lishi mumkin — foydalanuvchi rasm
-   * tashlab hech narsa yozmasligi tabiiy holat.
+   * When there is an attachment, `text` may be empty — dropping in an image
+   * and writing nothing is a natural thing for a user to do.
    */
-  biriktirmalar?: string[]
+  attachments?: string[]
 }
 
-/** Qurilish oqimidagi tanlov (masalan "domen" yoki "port preview") */
+/** A choice in the build flow (for example "domain" or "port preview") */
 export interface ChatChoiceEvent {
   type: 'chat.choice'
   sessionId: string
@@ -68,73 +69,75 @@ export interface ChatChoiceEvent {
 }
 
 /**
- * Kanallarga obuna bo'lish — faqat kerakli eventlar keladi.
+ * Subscribing to channels — only the needed events arrive.
  *
- * `sessionId` — mijoz QAYSI chat sessiyasini kuzatayotgani. Berilsa, shu
- * mijozga faqat o'sha sessiyaning chat eventlari boradi (`chat.delta`,
- * `chat.tool`, `chat.permission` va h.k.). Ikki brauzer oynasi ikki xil
- * suhbatni ochsa, biri ikkinchisining javobini KO'RMAYDI.
+ * `sessionId` — WHICH chat session the client is watching. When given, only
+ * that session's chat events go to this client (`chat.delta`, `chat.tool`,
+ * `chat.permission` and so on). If two browser windows open two different
+ * conversations, neither SEES the other's reply.
  *
- * Berilmasa eski xulq saqlanadi: mijoz kanaldagi hamma sessiyaning
- * eventlarini oladi. Orqaga moslik uchun ataylab shunday — `sub` yuboradigan
- * eski mijozlar (va sessiyaga bog'lanmagan diagnostika vositalari) ishlashda
- * davom etadi. Sessiyali izolyatsiya kerak bo'lsa mijoz uni ANIQ so'raydi.
+ * When omitted the old behaviour is preserved: the client receives the events
+ * of every session on the channel. This is deliberate for backwards
+ * compatibility — old clients that send `sub` (and diagnostic tools not bound
+ * to a session) keep working. A client that needs session isolation asks for
+ * it EXPLICITLY.
  */
 export interface SubEvent {
   type: 'sub'
   channels: string[]
   /**
-   * Kuzatilayotgan chat sessiyasi.
+   * The chat session being watched.
    *
-   *   string    — shu sessiyaning chat eventlari kuzatiladi;
-   *   null      — filtrni ATAYLAB olib tashlash (yana hamma sessiya ko'rinadi);
-   *   maydon yo'q — oldingi tanlov o'zgarishsiz qoladi (mijoz faqat yangi
-   *                 kanal qo'shayotgan bo'lishi mumkin).
+   *   string    — that session's chat events are watched;
+   *   null      — DELIBERATELY removing the filter (every session is visible again);
+   *   field absent — the previous choice stays unchanged (the client may just
+   *                 be adding a new channel).
    *
-   * `null` va "maydon yo'q" farqlanadi, chunki JSON'da `undefined` maydonni
-   * butunlay yo'qotadi — "tozala" niyatini bildirishning boshqa yo'li yo'q.
+   * `null` and "field absent" are distinguished, because in JSON `undefined`
+   * loses the field entirely — there is no other way to express the "clear it"
+   * intent.
    */
   sessionId?: string | null
 }
 
 /**
- * Foydalanuvchi ruxsat so'roviga javob berdi.
- * `hardoim` — ruxsat beriladi va naqsh sessiya davomida eslab qolinadi.
+ * The user answered a permission request.
+ * `always` — permission is granted and the pattern is remembered for the session.
  */
 export interface ChatPermissionReplyEvent {
   type: 'chat.permission.reply'
   sessionId: string
-  sorovId: string
-  javob: RuxsatJavobi
+  requestId: string
+  answer: PermissionAnswer
 }
 
 /**
- * Foydalanuvchi ruxsat rejimini o'zgartirdi (yoki auto ni qayta yoqdi).
+ * The user changed the permission mode (or re-enabled auto).
  */
-export interface ChatRejimSetEvent {
-  type: 'chat.rejim.set'
+export interface ChatModeSetEvent {
+  type: 'chat.mode.set'
   sessionId: string
-  rejim: RuxsatRejimi
+  mode: PermissionMode
 }
 
 export type ClientEvent =
   | ChatSendEvent
   | ChatChoiceEvent
   | ChatPermissionReplyEvent
-  | ChatRejimSetEvent
+  | ChatModeSetEvent
   | SubEvent
 
 // ---------------------------------------------------------------------------
 // Server → client
 // ---------------------------------------------------------------------------
 
-/** Ulanish ochilganda birinchi bo'lib yuboriladi */
+/** Sent first when the connection opens */
 export interface HelloEvent {
   type: 'hello'
   version: string
 }
 
-/** Streaming javobning navbatdagi bo'lagi */
+/** The next chunk of the streaming reply */
 export interface ChatDeltaEvent {
   type: 'chat.delta'
   sessionId: string
@@ -142,7 +145,7 @@ export interface ChatDeltaEvent {
   delta: string
 }
 
-/** Javob ichidagi tool kartasi (eski demo oqimi) */
+/** A tool card inside the reply (the old demo flow) */
 export interface ChatToolCardEvent {
   type: 'chat.toolcard'
   sessionId: string
@@ -151,79 +154,81 @@ export interface ChatToolCardEvent {
 }
 
 /**
- * Agent tool chaqiruvining holati o'zgardi.
- * Bitta `id` uchun bir necha marta keladi: ishlamoqda → tugadi/xato.
- * UI `id` bo'yicha mavjud kartani yangilaydi.
+ * The status of an agent tool call changed.
+ * It arrives several times for one `id`: running → done/error.
+ * The UI updates the existing card by `id`.
  */
 export interface ChatToolEvent {
   type: 'chat.tool'
   sessionId: string
   messageId: string
-  tool: ToolChaqiruv
+  tool: ToolCall
 }
 
 /**
- * Agent xavfli amalga urindi — foydalanuvchidan ruxsat so'ralmoqda.
- * Javob `chat.permission.reply` bilan qaytariladi. Javob kelmasa
- * server 5 daqiqadan keyin o'zi rad etadi.
+ * The agent attempted a dangerous action — permission is being asked of the
+ * user. The answer comes back as `chat.permission.reply`. If no answer
+ * arrives, the server denies it itself after 5 minutes.
  */
 export interface ChatPermissionEvent {
   type: 'chat.permission'
   sessionId: string
   messageId: string
-  sorov: RuxsatSorovi
+  request: PermissionRequest
 }
 
 /**
- * Klassifikator amal bo'yicha qaror chiqardi (auto rejim).
- * UI'da tool kartasi ostida kichik yorliq bo'lib ko'rinadi.
+ * The classifier produced a verdict for an action (auto mode).
+ * It shows up in the UI as a small label under the tool card.
  */
-export interface ChatKlassifikatorEvent {
-  type: 'chat.klassifikator'
+export interface ChatClassifierEvent {
+  type: 'chat.classifier'
   sessionId: string
   messageId: string
-  qaror: KlassifikatorQarori
+  verdict: ClassifierVerdict
 }
 
 /**
- * Ruxsat rejimi o'zgardi — foydalanuvchi o'zi almashtirdi yoki auto
- * fallback tufayli o'chdi (klassifikator nosoz / blok chegarasi).
+ * The permission mode changed — either the user switched it themselves or it
+ * was turned off by the auto fallback (a broken classifier / the block limit).
  */
-export interface ChatRejimEvent {
-  type: 'chat.rejim'
+export interface ChatModeEvent {
+  type: 'chat.mode'
   sessionId: string
-  holat: RejimHolati
+  state: ModeState
 }
 
 /**
- * Sessiyadagi agent oqimining umumiy holati — "fon agentlari" ko'rinishi uchun.
+ * The overall status of the agent stream in a session — for the "background
+ * agents" view.
  *
- * `chat.delta`/`chat.done` javob MATNI haqida, bu esa OQIM haqida: sessiya
- * hozir ishlayaptimi, ruxsat kutyaptimi, tugadimi. Sidebar badge'lari va
- * "Agentlar" sahifasi shu eventga tayanadi.
+ * `chat.delta`/`chat.done` are about the reply TEXT, this one is about the
+ * STREAM: whether the session is running right now, waiting for permission or
+ * finished. The sidebar badges and the "Agents" page rely on this event.
  *
- * MUHIM: bu event ATAYLAB sessiya bo'yicha FILTRLANMAYDI (`eventSessiyasi()`
- * uning uchun `null` qaytaradi). Sabab: mijoz bitta sessiyani kuzatayotgan
- * bo'lsa ham, BOSHQA sessiyalarning holatini ko'rishi kerak — aks holda
- * sidebar'da "ikkinchi suhbatda agent ishlayapti" ko'rinmaydi. Bu ma'lumot
- * sizishi emas: eventda faqat sessiya id'si va holat bor, javob matni,
- * tool natijasi yoki ruxsat tafsiloti yo'q.
+ * IMPORTANT: this event is DELIBERATELY NOT FILTERED by session
+ * (`eventSession()` returns `null` for it). The reason: even when a client is
+ * watching a single session, it needs to see the status of the OTHER sessions
+ * — otherwise "an agent is running in the second conversation" would not show
+ * up in the sidebar. This is not a data leak: the event carries only the
+ * session id and the status, no reply text, no tool result and no permission
+ * detail.
  */
 export interface ChatStatusEvent {
   type: 'chat.status'
   sessionId: string
-  holat: OqimHolati
+  status: StreamStatus
 }
 
-/** Sessiya oqimining holati */
-export type OqimHolati = 'ishlayapti' | 'ruxsat-kutmoqda' | 'tugadi' | 'xato'
+/** The status of a session's stream */
+export type StreamStatus = 'running' | 'awaiting-permission' | 'done' | 'error'
 
-/** Javob tugadi */
+/** The reply is finished */
 export interface ChatDoneEvent {
   type: 'chat.done'
   sessionId: string
   messageId: string
-  /** Sarflangan tokenlar va narx — mavjud bo'lsa */
+  /** Tokens spent and the cost — when available */
   usage?: {
     input: number
     output: number
@@ -232,9 +237,9 @@ export interface ChatDoneEvent {
 }
 
 /**
- * Javob oqimi xato bilan uzildi. `chat.done` o'rniga keladi — ikkalasi
- * bir vaqtda kelmaydi, shuning uchun UI "javob kutmoqda" holatini shu
- * eventda ham tugatishi kerak.
+ * The reply stream was cut short by an error. It arrives instead of
+ * `chat.done` — the two never arrive together, so the UI must also end the
+ * "waiting for a reply" state on this event.
  */
 export interface ChatErrorEvent {
   type: 'chat.error'
@@ -243,7 +248,7 @@ export interface ChatErrorEvent {
   error: string
 }
 
-/** Qurilishning navbatdagi qadami */
+/** The next step of the build */
 export interface BuildStepEvent {
   type: 'build.step'
   buildId: string
@@ -251,7 +256,7 @@ export interface BuildStepEvent {
   step: BuildStep
 }
 
-/** Qurilish to'xtab, foydalanuvchidan tanlov so'ralmoqda */
+/** The build paused and is asking the user to choose */
 export interface BuildChoiceEvent {
   type: 'build.choice'
   buildId: string
@@ -259,39 +264,39 @@ export interface BuildChoiceEvent {
   options: { label: string }[]
 }
 
-/** Qurilish muvaffaqiyatli tugadi */
+/** The build finished successfully */
 export interface BuildDoneEvent {
   type: 'build.done'
   buildId: string
   appId: string
 }
 
-/** Qurilish xato bilan tugadi */
+/** The build finished with an error */
 export interface BuildFailedEvent {
   type: 'build.failed'
   buildId: string
   error: string
 }
 
-/** Yangi ilova o'rnatildi — UI sidebar'ga qo'shadi */
+/** A new app was installed — the UI adds it to the sidebar */
 export interface AppInstalledEvent {
   type: 'app.installed'
   manifest: AppManifest
 }
 
-/** Mavjud ilova manifesti yangilandi */
+/** An existing app's manifest was updated */
 export interface AppUpdatedEvent {
   type: 'app.updated'
   manifest: AppManifest
 }
 
-/** Audit log'ga yangi yozuv tushdi */
+/** A new entry landed in the audit log */
 export interface AuditEntryEvent {
   type: 'audit.entry'
   entry: AuditEntry
 }
 
-/** Terminal (tmux sessiya) chiqishining bir qatori */
+/** One line of terminal (tmux session) output */
 export interface TerminalLineEvent {
   type: 'terminal.line'
   buildId: string
@@ -304,8 +309,8 @@ export type ServerEvent =
   | ChatToolCardEvent
   | ChatToolEvent
   | ChatPermissionEvent
-  | ChatKlassifikatorEvent
-  | ChatRejimEvent
+  | ChatClassifierEvent
+  | ChatModeEvent
   | ChatStatusEvent
   | ChatDoneEvent
   | ChatErrorEvent
@@ -321,8 +326,8 @@ export type ServerEvent =
 export type ProtocolEvent = ClientEvent | ServerEvent
 
 // ---------------------------------------------------------------------------
-// Kanallar — `sub` eventida ishlatiladigan standart nomlar.
-// Obuna bo'lmagan mijoz faqat "hamma uchun" eventlarni oladi (CHANNELS.hammasi).
+// Channels — the standard names used in the `sub` event.
+// A client that has not subscribed only receives the "for everyone" events.
 // ---------------------------------------------------------------------------
 
 export const CHANNELS = {
@@ -335,15 +340,15 @@ export const CHANNELS = {
 
 export type Channel = (typeof CHANNELS)[keyof typeof CHANNELS]
 
-/** Qaysi event turi qaysi kanalga tegishli — hub shu jadval bo'yicha filtrlaydi */
-export function eventKanali(event: ServerEvent): Channel | null {
+/** Which event type belongs to which channel — the hub filters by this table */
+export function eventChannel(event: ServerEvent): Channel | null {
   switch (event.type) {
     case 'chat.delta':
     case 'chat.toolcard':
     case 'chat.tool':
     case 'chat.permission':
-    case 'chat.klassifikator':
-    case 'chat.rejim':
+    case 'chat.classifier':
+    case 'chat.mode':
     case 'chat.status':
     case 'chat.done':
     case 'chat.error':
@@ -361,57 +366,59 @@ export function eventKanali(event: ServerEvent): Channel | null {
     case 'terminal.line':
       return CHANNELS.terminal
     case 'hello':
-      return null // hello har doim yuboriladi, kanaldan qat'i nazar
+      return null // hello is always sent, regardless of the channel
   }
 }
 
 /**
- * Event qaysi chat sessiyasiga tegishli — sessiyaga bog'liq bo'lmasa `null`.
+ * Which chat session an event belongs to — `null` when it is not tied to a
+ * session.
  *
- * Hub shu funksiya bo'yicha ikkinchi filtrni qo'llaydi: sessiyali eventni
- * faqat o'sha sessiyani kuzatayotgan (yoki umuman sessiya ko'rsatmagan)
- * mijozga yuboradi.
+ * The hub applies a second filter based on this function: a session-bound
+ * event is only sent to the client watching that session (or to one that did
+ * not name a session at all).
  *
- * MUHIM: yangi sessiyali event qo'shilsa, uni SHU YERGA ham qo'shish kerak.
- * Aks holda u hamma mijozga tarqalib, sessiyalar orasida ma'lumot sizadi.
- * `switch` ataylab to'liq sanab o'tadi — yangi event turi qo'shilganda
- * TypeScript `ServerEvent` union'i bo'yicha eslatib turadi.
+ * IMPORTANT: when a new session-bound event is added, it must be added HERE as
+ * well. Otherwise it is broadcast to every client and data leaks between
+ * sessions. The `switch` deliberately enumerates every case — when a new event
+ * type is added, TypeScript reminds us through the `ServerEvent` union.
  */
-export function eventSessiyasi(event: ServerEvent): string | null {
+export function eventSession(event: ServerEvent): string | null {
   switch (event.type) {
     case 'chat.delta':
     case 'chat.toolcard':
     case 'chat.tool':
     case 'chat.permission':
-    case 'chat.klassifikator':
-    case 'chat.rejim':
+    case 'chat.classifier':
+    case 'chat.mode':
     case 'chat.done':
     case 'chat.error':
       return event.sessionId
 
-    // `chat.status` da `sessionId` BOR, lekin u ATAYLAB filtrlanmaydi.
-    // Bu qoidadan yagona ongli istisno: sidebar hamma sessiyaning holatini
-    // ko'rsatishi kerak, ya'ni bitta suhbatni ochgan mijoz ham qolganlarining
-    // "ishlayapti / ruxsat kutmoqda" belgisini olishi shart. Eventda mazmun
-    // (matn, tool natijasi, ruxsat tafsiloti) yo'q — faqat id va holat.
+    // `chat.status` DOES carry a `sessionId`, but it is DELIBERATELY not
+    // filtered. This is the single conscious exception to the rule: the
+    // sidebar has to show the status of every session, which means a client
+    // with one conversation open must still receive the "running / awaiting
+    // permission" markers of the others. The event carries no content (no
+    // text, no tool result, no permission detail) — only an id and a status.
     case 'chat.status':
       return null
 
     default:
-      // build.*, app.*, audit.*, terminal.*, hello — sessiyaga bog'liq emas
+      // build.*, app.*, audit.*, terminal.*, hello — not tied to a session
       return null
   }
 }
 
-/** Kelgan JSON haqiqatan ClientEvent'ga o'xshaydimi — yengil tekshiruv */
-export function clientEventMi(qiymat: unknown): qiymat is ClientEvent {
-  if (typeof qiymat !== 'object' || qiymat === null) return false
-  const tur = (qiymat as { type?: unknown }).type
+/** Does the incoming JSON really look like a ClientEvent — a lightweight check */
+export function isClientEvent(value: unknown): value is ClientEvent {
+  if (typeof value !== 'object' || value === null) return false
+  const kind = (value as { type?: unknown }).type
   return (
-    tur === 'chat.send' ||
-    tur === 'chat.choice' ||
-    tur === 'chat.permission.reply' ||
-    tur === 'chat.rejim.set' ||
-    tur === 'sub'
+    kind === 'chat.send' ||
+    kind === 'chat.choice' ||
+    kind === 'chat.permission.reply' ||
+    kind === 'chat.mode.set' ||
+    kind === 'sub'
   )
 }
