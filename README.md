@@ -1,9 +1,25 @@
 # AI Platform — Project documentation
 
 > A self-hosted, open-source AI orchestration platform.
-> Stage 1: a Telegram AI news bot. Stage 2: evolving that bot into a general-purpose platform.
+> It began as a Telegram AI news bot; that bot shipped, and the platform grew
+> out of it. The bot now lives on as a separate project in `ai-news-bot/`.
 
 ---
+
+## Where the code stands
+
+A working backend, AI agent layer and web UI — 1579 tests green.
+
+```bash
+bun install
+bun test
+cd platform-server && bun run src/index.ts   # backend :8787
+cd platform-ui && bun run dev                # UI
+```
+
+Chat with an agent that reads and writes files, runs commands, connects to MCP
+servers and manages real servers over SSH — with a permission layer in front of
+every dangerous action. [CONTINUE.md](CONTINUE.md) has the full picture.
 
 ## The project in brief
 
@@ -22,17 +38,23 @@
 
 | File | Contents |
 |---|---|
-| [01-telegram-bot.md](01-telegram-bot.md) | Stage one: the full specification and architecture of the AI news bot |
-| [02-ai-platform.md](02-ai-platform.md) | Stage two: bot-to-platform evolution, modules, architecture |
-| [03-roadmap.md](03-roadmap.md) | Phase-by-phase plan and success criteria |
+| [CONTINUE.md](CONTINUE.md) | **Start here to pick the work back up** — current state, what is built, the boundaries that must not be broken |
+| [02-ai-platform.md](02-ai-platform.md) | The vision: bot-to-platform evolution, modules, architecture |
 | [04-risks.md](04-risks.md) | Critical analysis: risks, weak points, and mitigation strategies |
+
+Each package carries its own README with the implementation detail —
+[platform-ai](platform-ai/README.md) (the security model),
+[platform-server](platform-server/README.md) (routes, database, WS protocol),
+[platform-config](platform-config/README.md),
+[platform-ui](platform-ui/README.md), and
+[mcp-servers](mcp-servers/README.md).
 
 ## Context: where I stand
 
-- 5 servers available, to be connected to the platform
+- 5 servers available, being connected to the platform
 - Claude, ChatGPT, and Gemini subscriptions, plus a habit of trying new models through OpenRouter
 - The web is my primary working environment
-- First real need: a fully autonomous AI news bot for my Telegram channel
+- The first real need — a fully autonomous AI news bot for my Telegram channel — is built and running
 
 ## Inspirations and similar projects
 

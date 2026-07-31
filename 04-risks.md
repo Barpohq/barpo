@@ -25,9 +25,9 @@ The original idea (a commercial SaaS platform for everyone) carried the serious 
 **The risk:** "for myself" projects expand without limit, because nobody says no. You start building a platform instead of a bot, then an ecosystem instead of a platform, and nothing ever ships.
 
 **Mitigation:**
-- The strict order in the roadmap: no platform code until the bot works
+- The strict order: no platform code until the bot works
 - A module is only generalised when a second use case demands it
-- The "anti-goals" list (03-roadmap.md) — every new idea is checked against it first
+- Every new idea is checked against the anti-goals first
 
 ### X2. Prompt injection — technically an unsolved problem
 

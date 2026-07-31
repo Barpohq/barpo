@@ -261,7 +261,7 @@ describe('name helpers', () => {
     expect(safeToolName('io.github.owner/repo')).toBe('io_github_owner_repo')
     expect(safeToolName('plain-name_2')).toBe('plain-name_2')
     expect(safeToolName('!!!')).toBe('___')
-    expect(safeToolName('')).toBe('nomalum')
+    expect(safeToolName('')).toBe('unknown')
   })
 
   test('mcpToolName adds the prefix and the separator', () => {

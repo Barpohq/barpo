@@ -18,7 +18,7 @@
 // │ they cannot be written into a static config list.                    │
 // │                                                                      │
 // │ THE SOLUTION: NO config flag at all. The control is at install time: │
-// │ if no server is installed, `mcpManbasi` returns an empty list → no   │
+// │ if no server is installed, `mcpProvider` returns an empty list → no  │
 // │ manager is created → this function returns `[]`. Installing is       │
 // │ already a deliberate act; putting a flag on top of it would drop the │
 // │ user into the "why isn't it working" state.                          │
@@ -46,11 +46,11 @@ export const MCP_TOOL_PREFIX = 'mcp__'
  * remain in it. Registry names are reverse-DNS (`io.github.owner/repo`) — we
  * turn the `.` and `/` in them into `_`.
  *
- * The same idea as `xavfsizNom` in `skill-store.ts`, but that one lives in
+ * The same idea as `safeName` in `skill-store.ts`, but that one lives in
  * `platform-server` and this package does not depend on it.
  */
-export function safeToolName(x: string): string {
-  return x.replace(/[^a-zA-Z0-9_-]/g, '_') || 'nomalum'
+export function safeToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_') || 'unknown'
 }
 
 /**
