@@ -1,6 +1,6 @@
-"""LLM qatlami — barcha model chaqiruvlari shu modul orqali o'tadi.
+"""LLM layer — every model call goes through this module.
 
-Kelajakda platformaning "LLM Router" komponentiga aylanadi.
+In the future this becomes the platform's "LLM Router" component.
 """
 
 from core.llm.client import (

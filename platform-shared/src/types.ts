@@ -1,10 +1,11 @@
-// Platformaning umumiy tiplari — UI ham, server ham shu yerdan oladi.
-// Bu fayl yagona haqiqat manbai: tip o'zgarsa, ikkala tomon birdan biladi.
-// (Ilgari platform-ui/src/data/mock.ts ichida edi, endi mock.ts shu yerdan
-// import qilib re-export qiladi — sahifalar uchun hech narsa o'zgarmaydi.)
+// Shared platform types — both the UI and the server take them from here.
+// This file is the single source of truth: when a type changes, both sides
+// learn about it at once.
+// (It used to live inside platform-ui/src/data/mock.ts; now mock.ts imports
+// from here and re-exports — nothing changes for the pages.)
 
 // ---------------------------------------------------------------------------
-// Agentlar
+// Agents
 // ---------------------------------------------------------------------------
 
 export type AgentStatus = 'running' | 'idle' | 'paused'
@@ -23,38 +24,38 @@ export interface Agent {
 }
 
 // ---------------------------------------------------------------------------
-// Serverlar
+// Servers
 // ---------------------------------------------------------------------------
 
-// Bazada faqat ULANISH ma'lumoti saqlanadi. Jonli holat (metrikalar,
-// online/offline) `ServerMetrika` sifatida har so'rovda SSH orqali olinadi —
-// saqlanmaydi, chunki eskirgan qiymat "ishonchli ko'ringan yolg'on" bo'lardi.
+// Only CONNECTION data is stored in the database. Live state (metrics,
+// online/offline) is fetched over SSH as `ServerMetrics` on every request —
+// it is not stored, because a stale value would be a "trustworthy-looking lie".
 export interface Server {
   id: string
-  /** SSH alias — `ssh <name>` shu nom bilan ishlaydi. Faqat [a-z0-9-]. */
+  /** SSH alias — `ssh <name>` works with this name. Only [a-z0-9-]. */
   name: string
   host: string
   port: number
-  /** Odatda 'root' — platforma serverni to'liq boshqarishi uchun */
+  /** Usually 'root' — so the platform can fully manage the server */
   username: string
   createdAt: string
 }
 
-/** SSH orqali jonli o'qiladigan holat — bazaga yozilmaydi */
-export interface ServerMetrika {
-  holat: 'ulangan' | 'xato'
-  /** holat='xato' bo'lsa sabab shu yerda */
-  xato?: string
-  /** "3 kun 4 soat" ko'rinishida */
+/** Live state read over SSH — never written to the database */
+export interface ServerMetrics {
+  status: 'connected' | 'error'
+  /** When status='error', the reason goes here */
+  error?: string
+  /** In the form "3 days 4 hours" */
   uptime?: string
-  /** Foizlar: 0-100. CPU — 1 daqiqalik load / yadro soni. */
+  /** Percentages: 0-100. CPU — 1-minute load / core count. */
   cpu?: number
   ram?: number
   disk?: number
 }
 
 // ---------------------------------------------------------------------------
-// Workflow (pipeline bosqichlari)
+// Workflow (pipeline steps)
 // ---------------------------------------------------------------------------
 
 export interface WorkflowStep {
@@ -67,7 +68,7 @@ export interface WorkflowStep {
 }
 
 // ---------------------------------------------------------------------------
-// LLM chaqiruvlari va xarajat
+// LLM calls and cost
 // ---------------------------------------------------------------------------
 
 export interface LlmCall {
@@ -80,10 +81,10 @@ export interface LlmCall {
 }
 
 // ---------------------------------------------------------------------------
-// Audit log — append-only, platformadagi har amal shu yerga tushadi
+// Audit log — append-only, every action on the platform lands here
 // ---------------------------------------------------------------------------
 
-export type AuditLevel = "o'qish" | "o'zgartirish" | 'xavfli'
+export type AuditLevel = 'read' | 'write' | 'dangerous'
 
 export interface AuditEntry {
   time: string
@@ -91,236 +92,240 @@ export interface AuditEntry {
   action: string
   target: string
   level: AuditLevel
-  result: 'OK' | 'tasdiqlandi' | 'rad etildi' | 'kutmoqda'
+  result: 'OK' | 'approved' | 'denied' | 'pending'
 }
 
 // ---------------------------------------------------------------------------
-// Skilllar
+// Skills
 // ---------------------------------------------------------------------------
 //
-// Model uch qatlamdan iborat — ularni ARALASHTIRMASLIK kerak:
+// The model has three layers — they must NOT be mixed up:
 //
-//   MANBA   — ulangan GitHub repo (`anthropics/skills`). Bir manbada ko'p skill.
-//   SKILL   — repo ichida topilgan bitta `SKILL.md`. Katalogda ko'rinadi,
-//             lekin diskda hali yo'q — bu shunchaki "mavjud" degani.
-//   O'RNATISH — skill qayerda ishlashi: global (hamma joyda) yoki aniq
-//             loyihalarda. Bitta skill bir vaqtda bir necha loyihaga
-//             o'rnatilishi mumkin, shuning uchun bu alohida ro'yxat.
+//   SOURCE  — a connected GitHub repo (`anthropics/skills`). One source holds
+//             many skills.
+//   SKILL   — a single `SKILL.md` found inside the repo. It shows up in the
+//             catalog, but is not on disk yet — this only means "available".
+//   INSTALL — where the skill runs: globally (everywhere) or in specific
+//             projects. One skill can be installed into several projects at
+//             once, which is why this is a separate list.
 //
-// Diskda skill FAQAT o'rnatilgandan keyin paydo bo'ladi (omborda), sessiya
-// boshida esa loyiha papkasiga nusxalanadi. Batafsil: platform-server/
-// src/skill-ombor.ts.
+// A skill appears on disk ONLY after it is installed (in the store), and it is
+// copied into the project folder at the start of a session. Details:
+// platform-server/src/skill-store.ts.
 
 /**
- * Skill manbasi qayerdan keladi.
+ * Where a skill source comes from.
  *
- * `github`   — foydalanuvchi ulagan repo (`owner/repo`).
- * `platforma` — platforma bilan BIRGA kelgan standart skilllar.
+ * `github`  — a repo the user connected (`owner/repo`).
+ * `builtin` — the default skills that ship WITH the platform.
  *
  * ┌────────────────────────────────────────────────────────────────────┐
- * │ NEGA `platforma` ALOHIDA TUR. Standart skilllar (dashboard yozish  │
- * │ kabi) platformaning bir qismi va u bilan birga versiyalanadi.      │
+ * │ WHY `builtin` IS A SEPARATE KIND. Builtin skills (such as writing  │
+ * │ dashboards) are part of the platform and are versioned with it.    │
  * │                                                                    │
- * │ Hozir ular repo ichidagi `skills/` papkasidan o'qiladi, chunki     │
- * │ repo yopiq. Repo ochilganda manba GitHub'ga ko'chadi — o'shanda    │
- * │ FAQAT skanerlash manbai o'zgaradi, katalog, o'rnatish va UI        │
- * │ oqimlari o'z holicha qoladi. Shu sabab ular boshidanoq oddiy       │
- * │ manba kabi katalogdan o'tadi.                                      │
+ * │ For now they are read from the `skills/` folder inside the repo,   │
+ * │ because the repo is private. Once the repo is opened the source    │
+ * │ moves to GitHub — at that point ONLY the scanning source changes;  │
+ * │ the catalog, install and UI flows stay as they are. That is why    │
+ * │ they go through the catalog like an ordinary source from day one.  │
  * └────────────────────────────────────────────────────────────────────┘
  */
-export type SkillManbaTuri = 'github' | 'platforma'
+export type SkillSourceKind = 'github' | 'builtin'
 
-export interface SkillManba {
+export interface SkillSource {
   id: string
-  tur: SkillManbaTuri
-  /** Foydalanuvchi kiritgan asl URL — UI'da shu ko'rsatiladi */
+  kind: SkillSourceKind
+  /** The original URL the user entered — this is what the UI shows */
   url: string
   owner: string
   repo: string
-  /** Branch yoki tag. Bo'sh bo'lsa repo'ning standart branch'i ishlatilgan. */
+  /** Branch or tag. When empty, the repo's default branch was used. */
   ref: string
-  /** Oxirgi sinxronlashdagi commit SHA — o'zgarganini shundan bilamiz */
+  /** Commit SHA of the last sync — this is how we know something changed */
   commitSha: string | null
-  oxirgiSinxron: string | null
+  lastSync: string | null
   createdAt: string
 }
 
-/** Skill qayerda ishlaydi */
-export type SkillQamrov = 'global' | 'loyiha'
+/** Where a skill is active */
+export type SkillScope = 'global' | 'project'
 
-export interface SkillOrnatish {
-  qamrov: SkillQamrov
-  /** `qamrov: 'loyiha'` bo'lganda majburiy, aks holda undefined */
+export interface SkillInstall {
+  scope: SkillScope
+  /** Required when `scope: 'project'`, otherwise undefined */
   projectId?: string
 }
 
 export interface Skill {
   id: string
-  manbaId: string
-  /** Repo ichidagi yo'l — `document-skills/pdf/SKILL.md` */
-  yol: string
-  /** Frontmatter'dagi `name`, yo'q bo'lsa papka nomi */
-  nom: string
-  /** Frontmatter'dagi `description` — MAJBURIY, promptga shu tushadi */
-  tavsif: string
-  litsenziya?: string
+  sourceId: string
+  /** Path inside the repo — `document-skills/pdf/SKILL.md` */
+  path: string
+  /** The `name` from the frontmatter, or the folder name if missing */
+  name: string
+  /** The `description` from the frontmatter — REQUIRED, it goes into the prompt */
+  description: string
+  license?: string
   /**
-   * Frontmatter'dagi `allowed-tools`.
+   * The `allowed-tools` from the frontmatter.
    *
-   * HOZIRCHA MAJBURLANMAYDI — o'rnatish modalida foydalanuvchiga
-   * ko'rsatiladi, xolos. Majburlash alohida bosqich (pi'da ham
-   * implementatsiya qilinmagan).
+   * NOT ENFORCED FOR NOW — it is merely shown to the user in the install
+   * modal. Enforcement is a separate step (it is not implemented in pi
+   * either).
    */
   allowedTools?: string[]
-  /** Spec'ga mos kelmagan joylar — skill baribir yuklanadi, UI'da ko'rsatiladi */
-  ogohlantirishlar: string[]
-  /** Bo'sh massiv = o'rnatilmagan, faqat katalogda turibdi */
-  ornatilgan: SkillOrnatish[]
+  /** Places that do not match the spec — the skill still loads, the UI shows these */
+  warnings: string[]
+  /** Empty array = not installed, only sitting in the catalog */
+  installs: SkillInstall[]
 }
 
 // ---------------------------------------------------------------------------
-// MCP (Model Context Protocol) serverlar
+// MCP (Model Context Protocol) servers
 // ---------------------------------------------------------------------------
 //
-// Model skilllar bilan AYNAN BIR XIL uch qatlamli (yuqoridagi izohga q.):
+// The model has EXACTLY THE SAME three layers as skills (see the comment
+// above):
 //
-//   MANBA   — katalog qayerdan kelgan (registry, GitHub repo, qo'lda, standart).
-//   SERVER  — katalogdagi bitta MCP server yozuvi. "Mavjud" degani, ulangan
-//             degani EMAS.
-//   O'RNATISH — server qayerda faol: global yoki aniq loyihalarda.
+//   SOURCE  — where the catalog came from (registry, GitHub repo, manual,
+//             builtin).
+//   SERVER  — a single MCP server entry in the catalog. It means "available",
+//             NOT "connected".
+//   INSTALL — where the server is active: globally or in specific projects.
 //
-// SKILLLARDAN TUB FARQI — bu yerda DISK EMAS, JARAYON.
+// THE FUNDAMENTAL DIFFERENCE FROM SKILLS — here it is a PROCESS, not a DISK.
 //
-// Skill o'rnatilganda fayl ko'chiriladi va shu bilan tugaydi; agent uni
-// `read` bilan o'qiydi. MCP server o'rnatilganda esa hech narsa ko'chmaydi:
-// u har sessiya boshida JARAYON sifatida ishga tushadi (stdio) yoki
-// masofaviy manzilga ulanadi (http), va agentga YANGI TOOL'LAR beradi.
+// When a skill is installed a file is copied and that is the end of it; the
+// agent reads it with `read`. When an MCP server is installed nothing is
+// copied: it starts as a PROCESS at the beginning of each session (stdio) or
+// connects to a remote address (http), and it gives the agent NEW TOOLS.
 //
-// Shundan kelib chiqadigan uch narsa (platform-ai/src/mcp-*.ts):
-//   1) lifecycle — jarayonni ko'tarish, o'ldirish, zombi qoldirmaslik;
-//   2) kredensial — deyarli har server token talab qiladi (pastga q.);
-//   3) ruxsat — har tool chaqiruvi `RuxsatBoshqaruvchi.sora()` dan o'tadi.
+// Three things follow from that (platform-ai/src/mcp-*.ts):
+//   1) lifecycle — starting the process, killing it, leaving no zombies;
+//   2) credentials — nearly every server requires a token (see below);
+//   3) permission — every tool call goes through `PermissionManager.ask()`.
 
 /**
- * MCP server bilan qanday gaplashiladi.
+ * How we talk to an MCP server.
  *
- * `stdio` — mahalliy jarayon (`npx`/`uvx`/`docker`), JSON-RPC stdin/stdout
- *           orqali. Ekotizimning katta qismi shunday.
- * `http`  — masofaviy server (`streamable-http` yoki `sse`). Mahalliy kod
- *           ishga tushmaydi, ya'ni xavfsizlik jihatidan tozaroq.
+ * `stdio` — a local process (`npx`/`uvx`/`docker`) over JSON-RPC on
+ *           stdin/stdout. Most of the ecosystem works this way.
+ * `http`  — a remote server (`streamable-http` or `sse`). No local code
+ *           starts, which means it is cleaner from a security standpoint.
  */
-export type McpTransportTuri = 'stdio' | 'http'
+export type McpTransportKind = 'stdio' | 'http'
 
 /**
- * Katalog yozuvi qayerdan kelgan.
+ * Where a catalog entry came from.
  *
- * `registry` — rasmiy MCP registry (registry.modelcontextprotocol.io).
- * `github`   — repo'da `server.json` qidirib topilgan.
- * `qolda`    — foydalanuvchi o'zi kiritgan (buyruq yoki URL).
- * `standart` — platforma bilan birga kelgan to'plam.
+ * `registry` — the official MCP registry (registry.modelcontextprotocol.io).
+ * `github`   — found by searching for `server.json` in a repo.
+ * `manual`   — entered by the user (a command or a URL).
+ * `builtin`  — the set that ships with the platform.
  *
- * `SkillManbaTuri` bilan bir xil g'oya: manba turi FAQAT yozuvni QANDAY
- * olishda farq qiladi, undan keyingi hamma qadam (katalog, o'rnatish, UI)
- * turni bilmaydi.
+ * Same idea as `SkillSourceKind`: the source kind matters ONLY for HOW the
+ * entry is obtained; every step after that (catalog, install, UI) does not
+ * know the kind.
  */
-export type McpKatalogManbaTuri = 'registry' | 'github' | 'qolda' | 'standart'
+export type McpCatalogSourceKind = 'registry' | 'github' | 'manual' | 'builtin'
 
-export interface McpManba {
+export interface McpSource {
   id: string
-  tur: McpKatalogManbaTuri
+  kind: McpCatalogSourceKind
   /**
-   * Manbani identifikatsiya qiluvchi nom — turga qarab boshqa ma'no:
-   * `registry` uchun server nomi, `github` uchun `owner/repo`,
-   * `qolda` uchun foydalanuvchi bergan nom, `standart` uchun papka nomi.
+   * The name identifying the source — its meaning depends on the kind:
+   * the server name for `registry`, `owner/repo` for `github`, the name the
+   * user gave for `manual`, and the folder name for `builtin`.
    */
-  manbaNomi: string
-  /** Faqat `github` turida to'ladi */
+  sourceName: string
+  /** Only filled in for the `github` kind */
   owner: string | null
   repo: string | null
-  /** Branch yoki tag. Bo'sh satr = standart branch. */
+  /** Branch or tag. Empty string = default branch. */
   ref: string
-  oxirgiSinxron: string | null
+  lastSync: string | null
   createdAt: string
 }
 
 /**
- * Bitta sozlanadigan maydon — env o'zgaruvchisi (stdio) yoki HTTP sarlavha.
+ * A single configurable field — an env variable (stdio) or an HTTP header.
  *
- * MUHIM: bu FAQAT SXEMA, qiymat emas. Ya'ni "bu server `GITHUB_TOKEN`
- * so'raydi" degan ma'lumot. Qiymatning o'zi o'rnatish paytida kiritiladi
- * va `maxfiy` bo'lsa bazaga UMUMAN tushmaydi (`mcp-kredensial.ts`).
+ * IMPORTANT: this is ONLY THE SCHEMA, not the value. That is, the information
+ * "this server asks for `GITHUB_TOKEN`". The value itself is entered during
+ * install and, when it is `secret`, it NEVER reaches the database
+ * (`mcp-credentials.ts`).
  *
- * Rasmiy registry sxemasidagi `KeyValueInput` dan olinadi:
- * `isRequired` → `majburiy`, `isSecret` → `maxfiy`.
+ * Taken from `KeyValueInput` in the official registry schema:
+ * `isRequired` → `required`, `isSecret` → `secret`.
  */
-export interface McpSozlamaMaydoni {
-  nom: string
-  izoh?: string
-  majburiy: boolean
-  /** true — UI'da yashiriladi, kredensial omboriga tushadi, API qaytarmaydi */
-  maxfiy: boolean
-  standart?: string
+export interface McpSettingField {
+  name: string
+  hint?: string
+  required: boolean
+  /** true — hidden in the UI, goes into the credential store, never returned by the API */
+  secret: boolean
+  default?: string
 }
 
 /**
- * Katalogdagi MCP server — "bunday server bor" degani.
+ * An MCP server in the catalog — it means "such a server exists".
  *
- * `transport` bo'yicha ikki xil to'ldiriladi: `stdio` uchun
- * `buyruq`+`argumentlar`, `http` uchun `url`. Bazada bu CHECK bilan
- * majburlanadi (migratsiya 011).
+ * It is filled in two different ways depending on `transport`: `command`
+ * + `args` for `stdio`, `url` for `http`. This is enforced with a CHECK in
+ * the database (migration 011).
  */
-export interface McpKatalogYozuvi {
+export interface McpCatalogEntry {
   id: string
-  manbaId: string
-  /** Registry'dagi reverse-DNS nom (`com.example/github`) yoki erkin nom */
-  nom: string
-  tavsif: string
-  transport: McpTransportTuri
-  /** `stdio`: ishga tushirish buyrug'i — `npx`, `uvx`, `docker` */
-  buyruq?: string
+  sourceId: string
+  /** The reverse-DNS name from the registry (`com.example/github`) or a free-form name */
+  name: string
+  description: string
+  transport: McpTransportKind
+  /** `stdio`: the launch command — `npx`, `uvx`, `docker` */
+  command?: string
   /**
-   * `stdio`: argumentlar. O'rin egallovchilar (`{token}`) HALI
-   * almashtirilmagan — ular jarayon ko'tarilishidan oldin, `Bun.spawn`
-   * argv massivi ichida almashtiriladi (shell orqali EMAS).
+   * `stdio`: arguments. Placeholders (`{token}`) are NOT substituted yet —
+   * they are substituted before the process starts, inside the `Bun.spawn`
+   * argv array (NOT through a shell).
    */
-  argumentlar?: string[]
-  /** `http`: server manzili */
+  args?: string[]
+  /** `http`: the server address */
   url?: string
-  /** Kerakli env/sarlavhalar TAVSIFI — qiymatsiz */
-  sozlamalar: McpSozlamaMaydoni[]
+  /** A DESCRIPTION of the required env vars/headers — no values */
+  settings: McpSettingField[]
   createdAt: string
 }
 
-/** MCP server qayerda faol — `SkillQamrov` bilan bir xil */
-export type McpQamrov = 'global' | 'loyiha'
+/** Where an MCP server is active — the same as `SkillScope` */
+export type McpScope = 'global' | 'project'
 
-export interface McpOrnatish {
-  /** O'rnatish qatorining id'si — kredensial kaliti shundan quriladi */
+export interface McpInstall {
+  /** The id of the install row — the credential key is built from it */
   id: string
-  qamrov: McpQamrov
-  /** `qamrov: 'loyiha'` bo'lganda majburiy */
+  scope: McpScope
+  /** Required when `scope: 'project'` */
   projectId?: string
   /**
-   * MAXFIY BO'LMAGAN sozlama qiymatlari (masalan `BASE_URL`).
+   * NON-SECRET setting values (for example `BASE_URL`).
    *
-   * Maxfiylar bu yerda YO'Q — ular `mcp-kredensial.ts` da, alohida faylda.
-   * Har o'rnatishning o'z qiymatlari bor: bir server ikki loyihada turli
-   * token bilan ishlashi mumkin.
+   * Secrets are NOT here — they live in `mcp-credentials.ts`, in a separate
+   * file. Each install has its own values: one server can run in two projects
+   * with different tokens.
    */
-  sozlamaQiymatlari: Record<string, string>
+  settingValues: Record<string, string>
 }
 
-/** Katalog + o'rnatish holati — UI ro'yxati uchun to'liq ko'rinish */
-export interface McpServer extends McpKatalogYozuvi {
-  /** Bo'sh massiv = o'rnatilmagan, faqat katalogda turibdi */
-  ornatilgan: McpOrnatish[]
+/** Catalog + install state — the full view for the UI list */
+export interface McpServer extends McpCatalogEntry {
+  /** Empty array = not installed, only sitting in the catalog */
+  installs: McpInstall[]
 }
 
 // ---------------------------------------------------------------------------
-// Chat: tool kartalari
+// Chat: tool cards
 // ---------------------------------------------------------------------------
 
-/** Eski, bitta kartali shakl — mock demo va build oqimi hali shuni ishlatadi */
+/** The old single-card shape — the mock demo and the build flow still use it */
 export interface ToolCard {
   tool: string
   args: string
@@ -328,147 +333,148 @@ export interface ToolCard {
 }
 
 // ---------------------------------------------------------------------------
-// Agent tool chaqiruvlari — LLM qo'l bilan qilgan amallar
+// Agent tool calls — the actions the LLM performed by hand
 // ---------------------------------------------------------------------------
 
-export type ToolHolati = 'ishlamoqda' | 'tugadi' | 'xato' | 'rad etildi'
+export type ToolStatus = 'running' | 'done' | 'error' | 'denied'
 
-/** Bitta tool chaqiruvi — UI kartasi shu shakldan render qilinadi */
-export interface ToolChaqiruv {
+/** A single tool call — the UI card is rendered from this shape */
+export interface ToolCall {
   id: string
   /** 'read' | 'write' | 'edit' | 'bash' */
-  nom: string
-  /** Qisqartirilgan argument ko'rinishi: fayl yo'li yoki buyruq matni */
+  name: string
+  /** A shortened view of the arguments: a file path or the command text */
   args: string
-  holat: ToolHolati
-  /** Natija matni (uzun bo'lsa qisqartirilgan) */
-  natija?: string
-  /** `edit` uchun diff, `bash` uchun truncation belgisi */
-  tafsilot?: {
+  status: ToolStatus
+  /** The result text (shortened when long) */
+  result?: string
+  /** A diff for `edit`, a truncation marker for `bash` */
+  detail?: {
     diff?: string
-    qisqartirilgan?: boolean
+    truncated?: boolean
   }
-  /** Auto rejimda klassifikator shu amal bo'yicha chiqargan qaror */
-  klassifikator?: KlassifikatorQarori
+  /** The verdict the classifier produced for this action in auto mode */
+  classifier?: ClassifierVerdict
   /**
-   * Amal qanday tasdiqdan o'tgani. Bazaga tool chaqiruvi bilan birga
-   * yoziladi, ya'ni suhbat qayta ochilganda ham ko'rinadi.
+   * How the action was approved. It is written to the database together with
+   * the tool call, so it is still visible when the conversation is reopened.
    */
-  ruxsat?: RuxsatQarori
+  permission?: PermissionDecision
 }
 
 // ---------------------------------------------------------------------------
-// Ruxsat so'rovlari — xavfli amal oldidan foydalanuvchidan so'raladi
+// Permission requests — asked of the user before a dangerous action
 // ---------------------------------------------------------------------------
 
 /**
- * Ruxsat so'raladigan amal turi.
+ * The kind of action that needs permission.
  *
- * `fayl`   — ish papkasidan tashqaridagi fayl (`muhit.ts`).
- * `buyruq` — xavfli yoki notanish bash buyrug'i (`buyruq-tahlil.ts`).
- * `mcp`    — ulangan MCP serverning vositasi (`mcp-boshqaruvchi.ts`).
+ * `file`    — a file outside the work directory (`environment.ts`).
+ * `command` — a dangerous or unfamiliar bash command (`command-analysis.ts`).
+ * `mcp`     — a tool of a connected MCP server (`mcp-manager.ts`).
  *
  * ┌────────────────────────────────────────────────────────────────────┐
- * │ NEGA MCP UCHINCHI TUR, `buyruq` EMAS. MCP chaqiruvi na fayl, na    │
- * │ mahalliy buyruq: u tashqi tizimda yon effekt qiladi (GitHub'ga     │
- * │ issue, Slack'ga xabar) va bu ta'sir mahalliy fayl tizimida         │
- * │ KO'RINMAYDI. Klassifikator ham shu farqni bilishi kerak, aks       │
- * │ holda u "bash buyrug'i" deb baholab, buyruq matnini qidiradi —     │
- * │ MCP chaqiruvida esa unday matn yo'q.                               │
+ * │ WHY MCP IS A THIRD KIND AND NOT `command`. An MCP call is neither  │
+ * │ a file nor a local command: it causes a side effect in an external │
+ * │ system (an issue on GitHub, a message in Slack) and that effect is │
+ * │ INVISIBLE in the local file system. The classifier has to know     │
+ * │ that difference too, otherwise it would judge it as a "bash        │
+ * │ command" and look for command text — and an MCP call has no such   │
+ * │ text.                                                              │
  * └────────────────────────────────────────────────────────────────────┘
  */
-export type RuxsatTuri = 'fayl' | 'buyruq' | 'mcp'
+export type PermissionKind = 'file' | 'command' | 'mcp'
 
-/** `hardoim` — ruxsat beriladi va naqsh sessiya davomida eslab qolinadi */
-export type RuxsatJavobi = 'ruxsat' | 'rad' | 'hardoim'
+/** `always` — permission is granted and the pattern is remembered for the session */
+export type PermissionAnswer = 'allow' | 'deny' | 'always'
 
 /**
- * Ruxsat rejimi.
+ * Permission mode.
  *
- * `tasdiq` — har xavfli yoki notanish amal foydalanuvchidan so'raladi.
- * `auto`   — klassifikator hal qiladi: amal foydalanuvchi so'raganidan
- *            chetga chiqmasa avtomatik bajariladi.
+ * `confirm` — every dangerous or unfamiliar action is asked of the user.
+ * `auto`    — the classifier decides: an action is run automatically as long
+ *             as it does not stray from what the user asked for.
  *
- * Qat'iy taqiq ro'yxatidagi buyruqlar ikkala rejimda ham bloklanadi.
+ * Commands on the hard deny list are blocked in both modes.
  */
-export type RuxsatRejimi = 'tasdiq' | 'auto'
+export type PermissionMode = 'confirm' | 'auto'
 
-export interface RejimHolati {
-  rejim: RuxsatRejimi
-  /** Auto o'z-o'zidan o'chgan bo'lsa — sababi */
-  sabab?: string
-  /** Klassifikator qaysi model bilan ishlayapti */
-  klassifikatorModeli?: string
+export interface ModeState {
+  mode: PermissionMode
+  /** When auto turned itself off — the reason */
+  reason?: string
+  /** Which model the classifier is running with */
+  classifierModel?: string
 }
 
-/** Klassifikator bitta amal bo'yicha chiqargan qaror — UI'da tool kartasi ostida */
-export interface KlassifikatorQarori {
-  /** Qaysi tool chaqiruviga tegishli */
+/** The verdict the classifier produced for one action — shown under the tool card in the UI */
+export interface ClassifierVerdict {
+  /** Which tool call it belongs to */
   toolId?: string
-  qaror: 'ruxsat' | 'blok'
-  izoh: string
+  verdict: 'allow' | 'block'
+  note: string
 }
 
 /**
- * Amal QANDAY tasdiqdan o'tgani — tool chaqiruvi bilan birga saqlanadi.
+ * HOW the action was approved — stored together with the tool call.
  *
- * Bu javobning O'ZI emas, javob QAYERDAN kelgani. Foydalanuvchi keyinroq
- * "bu buyruq nega bajarildi?" deb so'raganda yagona ishonchli manba shu:
+ * This is not the answer ITSELF, but WHERE the answer came from. When the user
+ * later asks "why was this command run?", this is the only reliable source:
  *
- *   `hardoim`    — shu sessiyada avval "Har doim" tanlangan, qayta so'ralmadi
- *   `auto`       — auto rejimda klassifikator ruxsat berdi
- *   `auto-blok`  — auto rejimda klassifikator bloklandi
- *   `foydalanuvchi` — foydalanuvchi "Ruxsat berish" bosdi
- *   `foydalanuvchi-hardoim` — foydalanuvchi "Har doim" bosdi
- *   `rad`        — foydalanuvchi rad etdi
- *   `muddat`     — javob kelmadi, muddat tugab RAD etildi
- *   `bekor`      — javob oqimi to'xtatildi, so'rov o'z-o'zidan yopildi
- *   `taqiqlangan` — qat'iy taqiq ro'yxati, hech kimdan so'ralmaydi
+ *   `always`      — "Always" was chosen earlier in this session, so it was not asked again
+ *   `auto`        — the classifier granted permission in auto mode
+ *   `auto-block`  — the classifier blocked it in auto mode
+ *   `user`        — the user pressed "Allow"
+ *   `user-always` — the user pressed "Always"
+ *   `denied`      — the user denied it
+ *   `timeout`     — no answer arrived, it was DENIED when the deadline passed
+ *   `cancelled`   — the reply stream was stopped, the request closed itself
+ *   `forbidden`   — the hard deny list, nobody is asked
  *
- * `bekor` va `rad` ATAYLAB ajratilgan: birinchisida foydalanuvchi butun
- * javobni to'xtatgan, ikkinchisida aynan shu amalni rad etgan. Ikkalasini
- * "siz rad etdingiz" deb ko'rsatish yolg'on bo'lardi.
+ * `cancelled` and `denied` are DELIBERATELY separate: in the first the user
+ * stopped the whole reply, in the second they rejected this specific action.
+ * Showing both as "you denied this" would be a lie.
  */
-export type RuxsatManbasi =
-  | 'hardoim'
+export type PermissionOrigin =
+  | 'always'
   | 'auto'
-  | 'auto-blok'
-  | 'foydalanuvchi'
-  | 'foydalanuvchi-hardoim'
-  | 'rad'
-  | 'muddat'
-  | 'bekor'
-  | 'taqiqlangan'
+  | 'auto-block'
+  | 'user'
+  | 'user-always'
+  | 'denied'
+  | 'timeout'
+  | 'cancelled'
+  | 'forbidden'
 
-/** Ruxsat qarori — qanday hal bo'lgani, tool chaqiruviga biriktiriladi */
-export interface RuxsatQarori {
-  /** Foydalanuvchiga ko'rsatiladigan so'rov id'si; so'ralmagan bo'lsa yo'q */
-  sorovId?: string
-  manba: RuxsatManbasi
-  /** Ruxsat berildimi (`rad`/`auto-blok`/`muddat`/`taqiqlangan` da `false`) */
-  berildi: boolean
-  /** "Har doim" da eslab qolingan naqsh */
-  naqsh?: string
-  vaqt: string
+/** The permission decision — how it was resolved, attached to the tool call */
+export interface PermissionDecision {
+  /** The id of the request shown to the user; absent when nothing was asked */
+  requestId?: string
+  origin: PermissionOrigin
+  /** Was permission granted (`false` for `denied`/`auto-block`/`timeout`/`forbidden`) */
+  granted: boolean
+  /** The pattern remembered on "Always" */
+  pattern?: string
+  time: string
 }
 
-export interface RuxsatSorovi {
+export interface PermissionRequest {
   id: string
   sessionId: string
-  tur: RuxsatTuri
-  /** Qaysi tool: 'read', 'write', 'edit', 'bash' */
-  amal: string
-  /** Fayl yo'li yoki buyruq matni */
-  nishon: string
-  /** Nega so'ralayapti — foydalanuvchiga ko'rsatiladi */
-  sabab: string
-  /** "Har doim ruxsat" tanlansa nima eslab qolinadi */
-  naqsh: string
-  vaqt: string
+  kind: PermissionKind
+  /** Which tool: 'read', 'write', 'edit', 'bash' */
+  action: string
+  /** A file path or the command text */
+  target: string
+  /** Why it is being asked — shown to the user */
+  reason: string
+  /** What gets remembered when "Always allow" is chosen */
+  pattern: string
+  time: string
 }
 
 // ---------------------------------------------------------------------------
-// Ilova manifestlari — vidjetlar sxema sifatida, host UI dinamik render qiladi
+// App manifests — widgets as a schema, the host UI renders them dynamically
 // ---------------------------------------------------------------------------
 
 export interface StatItem {
@@ -484,237 +490,243 @@ export type Widget =
   | { type: 'table'; title: string; columns: string[]; rows: string[][] }
   | { type: 'logs'; title: string; lines: string[] }
   | { type: 'note'; text: string }
-  | { type: 'deploy'; url: string; kind: 'domen' | 'port'; server: string; ssl?: string; extra?: string }
+  | { type: 'deploy'; url: string; kind: 'domain' | 'port'; server: string; ssl?: string; extra?: string }
   | { type: 'git'; repo: string; branch: string; commits: { hash: string; msg: string; time: string }[] }
 
 /**
- * AI yozgan ko'rinish kodi — IXTIYORIY qatlam.
+ * View code written by the AI — an OPTIONAL layer.
  *
- * NEGA KOD KERAK. `Widget` lug'ati ataylab tor: u bashoratli va xavfsiz,
- * lekin har dashboard unga sig'avermaydi. Kod qatlami o'sha shiftni ochadi —
- * AI o'zi xohlagan tartibni JSX bilan yozadi.
+ * WHY CODE IS NEEDED. The `Widget` vocabulary is deliberately narrow: it is
+ * predictable and safe, but not every dashboard fits into it. The code layer
+ * lifts that ceiling — the AI writes whatever layout it wants in JSX.
  *
- * ⚠️ ISHONCH DARAJASI. Kod HOST React daraxtida ishlaydi, ya'ni
- * platformaning huquqi bilan (avval sandbox iframe'da edi — `AiKorinish.tsx`
- * boshidagi izoh nega o'zgarganini tushuntiradi). Bu `states` qatlami bilan
- * bir xil daraja va bir xil ongli qaror.
+ * ⚠️ TRUST LEVEL. The code runs in the HOST React tree, that is, with the
+ * platform's own privileges (it used to run in a sandboxed iframe — the
+ * comment at the top of `AiView.tsx` explains why that changed). This is the
+ * same level and the same conscious decision as the `states` layer.
  *
- * Chegara `view-qurish.ts` da: `import` va `fetch` taqiqlangan, ya'ni kod
- * ixtiyoriy tarmoq chiqishi qila olmaydi. Yozish faqat platforma bergan
- * `ui.saqla` / `ui.amal` orqali va faqat O'Z ilovasiga
- * (`AiKorinish.tsx` da app id closure'ga qulflangan).
+ * The boundary is in `view-build.ts`: `import` and `fetch` are forbidden, so
+ * the code cannot make arbitrary network calls. Writing happens only through
+ * the platform-provided `ui.save` / `ui.action` and only to ITS OWN app
+ * (the app id is locked into a closure in `AiView.tsx`).
  *
- * Xato izolyatsiyasi saqlanadi: `KorinishChegarasi` render xatosini ushlaydi
- * va faqat shu blok o'chadi.
+ * Error isolation is preserved: `ViewErrorBoundary` catches render errors and
+ * only that block disappears.
  */
 export interface AppView {
   /**
-   * Kompilyatsiya QILINGAN JS (JSX emas).
+   * COMPILED JS (not JSX).
    *
-   * AI JSX yozadi, server `Bun.build` bilan aylantiradi — brauzerga
-   * transform yuki tushmasin va xato UI'da emas, serverda ushlansin.
+   * The AI writes JSX and the server converts it with `Bun.build` — so the
+   * browser is not burdened with the transform and errors are caught on the
+   * server rather than in the UI.
    */
-  kod: string
-  /** Manba kodining xashi — keshni yangilash va audit uchun */
-  xash: string
+  code: string
+  /** Hash of the source code — for cache invalidation and auditing */
+  hash: string
 }
 
 /**
- * Vaqt o'tishi bilan YANGILANADIGAN ma'lumot bo'lagi.
+ * A piece of data that is REFRESHED over time.
  *
  * ┌────────────────────────────────────────────────────────────────────┐
- * │ QOIDA O'ZGARMAYDI: AI YANGI API YOZMAYDI.                          │
+ * │ THE RULE DOES NOT CHANGE: THE AI DOES NOT WRITE NEW APIS.          │
  * │                                                                    │
- * │ Endpoint bitta va OLDINDAN tayyor:                                 │
- * │     GET /api/apps/:id/state/:nom                                   │
- * │ AI faqat o'sha endpoint NIMA QAYTARISHINI belgilaydi — ya'ni       │
- * │ state kodini yozadi, marshrutni emas.                              │
+ * │ There is one endpoint and it is ready IN ADVANCE:                  │
+ * │     GET /api/apps/:id/state/:name                                  │
+ * │ The AI only decides WHAT that endpoint RETURNS — that is, it       │
+ * │ writes the state code, not the route.                              │
  * └────────────────────────────────────────────────────────────────────┘
  *
- * NEGA HAR STATE ALOHIDA. Dashboarddagi ma'lumotlar bir xil tezlikda
- * eskirmaydi: CPU 5 soniyada o'zgaradi, disk hajmi esa 30 soniyada ham
- * deyarli o'zgarmaydi. Hammasini bitta obyektga qo'shsak, eng tez
- * yangilanadigani butun to'plamni har safar qayta hisoblatardi — ya'ni
- * disk uchun `df` har 5 soniyada bejiz ishga tushardi.
+ * WHY EVERY STATE IS SEPARATE. The data on a dashboard does not go stale at
+ * the same rate: CPU changes every 5 seconds, while disk usage barely changes
+ * even over 30 seconds. If we put everything into one object, the fastest
+ * refreshing item would force the whole set to be recomputed each time — that
+ * is, `df` would run every 5 seconds for no reason.
  *
- * Shuning uchun har state — mustaqil birlik: o'z kodi, o'z intervali,
- * o'z keshi.
+ * That is why every state is an independent unit: its own code, its own
+ * interval, its own cache.
  */
 export interface AppState {
   /**
-   * State nomi — `data` ichida shu kalit ostida turadi va URL'ga tushadi.
+   * The state name — it sits under this key inside `data` and it lands in the
+   * URL.
    *
-   * Faqat `[a-z0-9_]` (`manifest-tekshir.ts` majburlaydi): u yo'l
-   * bo'lagiga aylanadi.
+   * Only `[a-z0-9_]` (enforced by `manifest-validate.ts`): it becomes a path
+   * segment.
    */
-  nom: string
+  name: string
   /**
-   * Serverda bajariladigan JS kod.
+   * JS code executed on the server.
    *
-   * `module.exports = async function () { ... }` shaklida — natija
-   * `data[nom]` ga tushadi. Kod SERVER JARAYONIDA ishlaydi, ya'ni
-   * `child_process`, `fs` va tarmoq unga ochiq.
+   * In the form `module.exports = async function () { ... }` — the result
+   * lands in `data[name]`. The code runs IN THE SERVER PROCESS, which means
+   * `child_process`, `fs` and the network are open to it.
    *
    * ┌──────────────────────────────────────────────────────────────────┐
-   * │ ⚠️ ISHONCH DARAJASI. Bu kod platformaning to'liq huquqi bilan    │
-   * │ ishlaydi va interval bo'yicha AVTOMATIK takrorlanadi.            │
+   * │ ⚠️ TRUST LEVEL. This code runs with the platform's full          │
+   * │ privileges and is repeated AUTOMATICALLY on an interval.         │
    * │                                                                  │
-   * │ Hozircha u ruxsat qatlamidan O'TMAYDI — bu ONGLI vaqtinchalik    │
-   * │ qaror. Keyingi bosqichda kodni tekshiradigan klassifikator       │
-   * │ qo'shiladi (prompt injection himoyasi), ulanish nuqtasi:         │
-   * │ `platform-server/src/state-bajar.ts` → `kodniTekshir()`.         │
+   * │ For now it does NOT go through the permission layer — this is a  │
+   * │ CONSCIOUS temporary decision. The next step adds a classifier    │
+   * │ that inspects the code (prompt-injection protection); the hook   │
+   * │ point is `platform-server/src/state-run.ts` → `validateCode()`.  │
    * └──────────────────────────────────────────────────────────────────┘
    */
-  kod: string
+  code: string
   /**
-   * Qayta hisoblash oralig'i (soniya).
+   * The recomputation interval (seconds).
    *
-   * `0` yoki berilmagan — avtomatik yangilanmaydi, faqat sahifa
-   * ochilganda bir marta hisoblanadi.
+   * `0` or omitted — no automatic refresh, it is computed once when the page
+   * is opened.
    */
   interval?: number
 }
 
 // ---------------------------------------------------------------------------
-// Boshqaruv qatlami — sozlamalar (forma) va amallar (tugma)
+// The controls layer — settings (a form) and actions (buttons)
 // ---------------------------------------------------------------------------
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ HAQIQAT MANBAI — SERVER, PLATFORMA EMAS.                             │
+// │ THE SOURCE OF TRUTH IS THE SERVER, NOT THE PLATFORM.                 │
 // │                                                                      │
-// │ Ilova (masalan telegram bot) serverda MUSTAQIL ishlaydi va tokenni   │
-// │ o'z konfiguratsiyasidan (`/opt/bot/.env`) o'qiydi. Foydalanuvchi      │
-// │ tokenni platformada kiritganda u SHU YERGA yoziladi, platformaning    │
-// │ o'z bazasiga EMAS.                                                    │
+// │ The app (a telegram bot, say) runs INDEPENDENTLY on the server and   │
+// │ reads its token from its own configuration (`/opt/bot/.env`). When   │
+// │ the user enters the token in the platform it is written THERE, not   │
+// │ into the platform's own database.                                    │
 // │                                                                      │
-// │     brauzer → platforma → SSH → server:/opt/bot/.env → restart       │
+// │     browser → platform → SSH → server:/opt/bot/.env → restart        │
 // │                                                                      │
-// │ Sirlar TESKARI yo'nalishda oqmaydi: platforma sir maydon uchun faqat │
-// │ "o'rnatilgan / o'rnatilmagan" ni biladi, qiymatini o'qimaydi.         │
+// │ Secrets do not flow in the REVERSE direction: for a secret field the │
+// │ platform only knows "set / not set", it never reads the value.       │
 // │                                                                      │
-// │ NEGA `mcp-kredensial.ts` DAN FARQLI. MCP serverni platformaning       │
-// │ O'ZI ishga tushiradi — token unga KERAK, shuning uchun saqlanadi.     │
-// │ Ilova esa serverda o'zi ishlaydi — token platformaga kerak emas,      │
-// │ ya'ni uni saqlash faqat qo'shimcha xavf bo'lardi.                     │
+// │ WHY THIS DIFFERS FROM `mcp-credentials.ts`. The platform ITSELF      │
+// │ starts an MCP server — it NEEDS the token, so it is stored. An app   │
+// │ runs on the server by itself — the platform does not need its token, │
+// │ so storing it would only be an extra risk.                           │
 // └──────────────────────────────────────────────────────────────────────┘
 
 /**
- * Sozlama maydonining turi — UI qanday kiritish elementi chizishini belgilaydi.
+ * The kind of a setting field — it decides which input element the UI draws.
  *
- * `sir` alohida toifada: u UI'da yashiriladi, joriy qiymati HECH QACHON
- * qaytarilmaydi va bo'sh qoldirilsa "o'zgartirmadim" degani
- * (`McpSozlamaMaydoni.maxfiy` bilan bir xil qaror).
+ * `secret` is its own category: it is hidden in the UI, its current value is
+ * NEVER returned, and leaving it empty means "I did not change it" (the same
+ * decision as `McpSettingField.secret`).
  */
-export type SozlamaTuri = 'matn' | 'sir' | 'raqam' | 'tanlov' | 'kalit' | 'kopMatn'
+export type SettingKind = 'text' | 'secret' | 'number' | 'select' | 'toggle' | 'textarea'
 
-export interface SozlamaMaydoni {
+export interface SettingField {
   /**
-   * Sozlama kaliti — serverdagi konfiguratsiyada shu nom bilan yoziladi.
+   * The setting key — it is written under this name in the server's
+   * configuration.
    *
-   * Faqat `[a-z][a-z0-9_]*`: u `.env` kaliti bo'lib chiqadi (yuqori registrga
-   * aylantirilib) va JSON kaliti bo'lishi mumkin. Qat'iy naqsh injection
-   * yo'llarini yopadi — `manifest-tekshir.ts` majburlaydi.
+   * Only `[a-z][a-z0-9_]*`: it ends up as an `.env` key (uppercased) and may
+   * become a JSON key. The strict pattern closes off injection paths —
+   * `manifest-validate.ts` enforces it.
    */
-  kalit: string
-  turi: SozlamaTuri
-  yorliq: string
-  izoh?: string
-  majburiy?: boolean
-  /** Boshlang'ich qiymat — `sir` uchun ISHLATILMAYDI */
-  standart?: string
-  /** `turi: 'tanlov'` uchun variantlar ro'yxati */
-  variantlar?: string[]
+  key: string
+  kind: SettingKind
+  label: string
+  hint?: string
+  required?: boolean
+  /** The initial value — NOT USED for `secret` */
+  default?: string
+  /** The list of options for `kind: 'select'` */
+  options?: string[]
   /**
-   * Validatsiya regexi (satr shaklida, `RegExp` konstruktoriga beriladi).
+   * The validation regex (as a string, passed to the `RegExp` constructor).
    *
    * ┌────────────────────────────────────────────────────────────────────┐
-   * │ BU — INJECTION HIMOYASINING UCHINCHI QATLAMI.                      │
+   * │ THIS IS THE THIRD LAYER OF INJECTION PROTECTION.                   │
    * │                                                                    │
-   * │ `states` qatlamida foydalanuvchi kirishi YO'Q edi, bu yerda BOR.   │
-   * │ Birinchi ikki qatlam kirishni shell'dan butunlay ajratadi          │
-   * │ (argv massivi + stdin), naqsh esa qiymatning O'ZINI cheklaydi —    │
-   * │ masalan bot tokeni `^\d+:[A-Za-z0-9_-]+$` shaklidan chiqmasin.     │
+   * │ The `states` layer had NO user input; here there IS some. The      │
+   * │ first two layers keep the input entirely away from the shell       │
+   * │ (argv array + stdin), while the pattern constrains the VALUE       │
+   * │ ITSELF — so that a bot token cannot deviate from the shape         │
+   * │ `^\d+:[A-Za-z0-9_-]+$`, for example.                               │
    * └────────────────────────────────────────────────────────────────────┘
    */
-  naqsh?: string
-  /** Naqsh buzilganda foydalanuvchiga ko'rsatiladigan matn */
-  naqshIzohi?: string
+  pattern?: string
+  /** The text shown to the user when the pattern is violated */
+  patternHint?: string
 }
 
 /**
- * Ilova sozlamalari — forma sxemasi va uni serverga yozadigan kod.
+ * App settings — the form schema and the code that writes it to the server.
  *
- * Sxema (`maydonlar`) va kod (`yoz`) ATAYLAB ajratilgan: sxema bashoratli va
- * UI uni o'zi render qiladi (`widgets` falsafasi), kod esa har ilova uchun
- * boshqacha bo'ladigan qismni oladi — qaysi faylga, qaysi formatda, qanday
- * restart bilan.
+ * The schema (`fields`) and the code (`write`) are DELIBERATELY separate: the
+ * schema is predictable and the UI renders it itself (the `widgets`
+ * philosophy), while the code takes on the part that differs for every app —
+ * which file, in which format, with which restart.
  */
-export interface AppSozlamalari {
-  maydonlar: SozlamaMaydoni[]
+export interface AppSettings {
+  fields: SettingField[]
   /**
-   * Qiymatlarni SERVERGA yozadigan kod.
+   * The code that writes the values TO THE SERVER.
    *
-   * `module.exports = async function ({ qiymatlar, ssh, appId }) { ... }`
+   * `module.exports = async function ({ values, ssh, appId }) { ... }`
    *
-   * `ssh.envYoz()` va `ssh.buyruq()` platforma tomonidan beriladi — AI shell
-   * satri yozmaydi (`amal-bajar.ts` dagi izohga q.).
+   * `ssh.writeEnv()` and `ssh.command()` are provided by the platform — the AI
+   * does not write shell lines (see the comment in `action-run.ts`).
    */
-  yoz: string
+  write: string
   /**
-   * Joriy qiymatlarni SERVERDAN o'qiydigan kod (ixtiyoriy).
+   * The code that reads the current values FROM THE SERVER (optional).
    *
-   * ⚠️ SIR QAYTARMASLIGI KERAK. Sir kalit qaytarilsa u tashlanadi va
-   * ogohlantirish yoziladi — token server → platforma → brauzer yo'lini
-   * bosib o'tmasligi kerak.
+   * ⚠️ IT MUST NOT RETURN SECRETS. If a secret key is returned it is dropped
+   * and a warning is recorded — a token must not travel the
+   * server → platform → browser path.
    *
-   * Berilmasa forma bo'sh ochiladi (faqat `standart` qiymatlar bilan).
+   * When it is not given the form opens empty (with `default` values only).
    */
-  oqi?: string
+  read?: string
 }
 
 /**
- * Foydalanuvchi bosadigan amal — restart, stop, keshni tozalash.
+ * An action the user presses — restart, stop, clear the cache.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ ⚠️ ISHONCH DARAJASI — `states` BILAN BIR XIL.                        │
+ * │ ⚠️ TRUST LEVEL — THE SAME AS `states`.                              │
  * │                                                                      │
- * │ Amal kodi server jarayonida, platformaning to'liq huquqi bilan       │
- * │ ishlaydi. Farqi: `states` AVTOMATIK takrorlanadi, amal esa           │
- * │ foydalanuvchi BOSGANDA bir marta ishlaydi va auditga tushadi.        │
+ * │ The action code runs in the server process with the platform's full  │
+ * │ privileges. The difference: `states` repeats AUTOMATICALLY, while an │
+ * │ action runs once WHEN the user presses it and lands in the audit     │
+ * │ log.                                                                 │
  * │                                                                      │
- * │ Ruxsat qatlamidan O'TMAYDI (`bash` tool'idan farqli) — bu ongli      │
- * │ vaqtinchalik qaror. Klassifikator ulanish nuqtasi:                   │
- * │ `platform-server/src/amal-bajar.ts` → `kodniTekshir()`.              │
+ * │ It does NOT go through the permission layer (unlike the `bash` tool) │
+ * │ — a conscious temporary decision. The classifier hook point is       │
+ * │ `platform-server/src/action-run.ts` → `validateCode()`.              │
  * └──────────────────────────────────────────────────────────────────────┘
  */
-export interface AppAmali {
+export interface AppAction {
   /**
-   * Amal nomi — URL yo'liga tushadi (`POST /api/apps/:id/amal/:nom`).
+   * The action name — it lands in the URL path
+   * (`POST /api/apps/:id/action/:name`).
    *
-   * `AppState.nom` bilan bir xil naqsh va bir xil sabab: yo'l chiqishini
-   * (`../`) va kodlash muammolarini butunlay yopadi.
+   * The same pattern and the same reason as `AppState.name`: it fully closes
+   * off path traversal (`../`) and encoding problems.
    */
-  nom: string
-  yorliq: string
-  izoh?: string
-  /** Audit darajasi — berilmasa `'o'zgartirish'` */
-  xavf?: AuditLevel
+  name: string
+  label: string
+  hint?: string
+  /** The audit level — `'write'` when not given */
+  risk?: AuditLevel
   /**
-   * `true` — UI bosishdan oldin tasdiq so'raydi.
+   * `true` — the UI asks for confirmation before pressing.
    *
-   * ⚠️ Bu TASODIFIY bosishga qarshi, HUJUMGA qarshi emas: tekshiruv UI
-   * tomonda va API'ni to'g'ridan chaqirgan kod uni o'tkazib yuboradi.
+   * ⚠️ This guards against ACCIDENTAL clicks, not against an ATTACK: the check
+   * is on the UI side and code calling the API directly skips it.
    */
-  tasdiq?: boolean
-  /** `module.exports = async function ({ ssh, sozlama, appId }) { ... }` */
-  kod: string
+  confirm?: boolean
+  /** `module.exports = async function ({ ssh, setting, appId }) { ... }` */
+  code: string
   /**
-   * Amal tugagandan keyin MAJBURIY yangilanadigan state nomlari.
+   * The names of the states that MUST be refreshed after the action finishes.
    *
-   * Restart bosilganda status darhol yangilanishi kerak — keshdagi eski
-   * qiymat interval tugashini kutib turmasin.
+   * When restart is pressed the status has to update immediately — the stale
+   * cached value should not wait for the interval to elapse.
    */
-  yangila?: string[]
+  refresh?: string[]
 }
 
 export interface AppManifest {
@@ -727,37 +739,38 @@ export interface AppManifest {
   status: 'running' | 'idle'
   widgets: Widget[]
   /**
-   * Ko'rinishga beriladigan BOSHLANG'ICH ma'lumot.
+   * The INITIAL data handed to the view.
    *
-   * `states` bo'lsa, ularning hisoblangan natijalari shu obyekt ustiga
-   * yoziladi (`data[state.nom]`). Ya'ni bu — birinchi renderdagi qiymat,
-   * keyin jonli ma'lumot bilan almashadi.
+   * When there are `states`, their computed results are written on top of this
+   * object (`data[state.name]`). So this is the value for the first render,
+   * which is then replaced with live data.
    *
-   * `unknown` ataylab: shakl har ilovada boshqacha va uni AI belgilaydi.
-   * Chegara mazmunga emas, HAJMGA qo'yiladi (`manifest-tekshir.ts`).
+   * `unknown` is deliberate: the shape differs per app and the AI decides it.
+   * The limit is on SIZE, not on content (`manifest-validate.ts`).
    */
   data?: Record<string, unknown>
   /**
-   * Jonli ma'lumot manbalari — har biri o'z intervali bilan.
+   * Live data sources — each with its own interval.
    *
-   * Bo'lmasa dashboard statik qoladi (`data` dagi qiymatlar o'zgarmaydi).
+   * Without them the dashboard stays static (the values in `data` do not
+   * change).
    */
   states?: AppState[]
-  /** Bo'lmasa — `widgets` render qilinadi. Ikkalasi ham bo'lishi mumkin. */
+  /** Without it `widgets` is rendered. Both may be present. */
   view?: AppView
   /**
-   * Sozlamalar formasi — bo'lmasa forma ko'rsatilmaydi.
+   * The settings form — without it no form is shown.
    *
-   * Qiymatlar SERVERDAGI ilovaga yoziladi, platformaga emas (yuqoridagi
-   * qatlam izohiga q.).
+   * The values are written to the app ON THE SERVER, not to the platform (see
+   * the layer comment above).
    */
-  sozlamalar?: AppSozlamalari
-  /** Foydalanuvchi bosadigan amallar — bo'lmasa tugmalar ko'rsatilmaydi */
-  amallar?: AppAmali[]
+  settings?: AppSettings
+  /** The actions the user presses — without them no buttons are shown */
+  actions?: AppAction[]
 }
 
 // ---------------------------------------------------------------------------
-// Qurilish rejalari — orchestrator shu shaklda oqim yuboradi
+// Build plans — the orchestrator streams in this shape
 // ---------------------------------------------------------------------------
 
 export interface BuildStep {
@@ -782,145 +795,151 @@ export interface BuildPlan {
 }
 
 // ---------------------------------------------------------------------------
-// AI modellari — server foydalanuvchi PC'sida aniqlaganlarini shu shaklda beradi
+// AI models — the server reports what it detected on the user's PC in this shape
 // ---------------------------------------------------------------------------
 
 /**
- * Provider qanday to'lov modeli bilan ulangani.
+ * The billing model the provider is connected under.
  *
- * Foydalanuvchi uchun bu narxdan ham muhim: `obuna` da tokenlar oylik to'lovga
- * kiradi, `kalit` da esa har token alohida hisoblanadi. Ikkalasi bir xil
- * ko'rinsa foydalanuvchi bilmay pullik kanaldan ishlatib yuboradi.
+ * For the user this matters even more than the price: with `subscription` the
+ * tokens are covered by the monthly payment, while with `apiKey` every token
+ * is billed separately. If the two looked the same the user would
+ * unknowingly burn through a paid channel.
  *
- * UI matn tahlil qilmasligi uchun alohida maydon — `manba` satri erkin matn
- * (masalan `~/.codex (ChatGPT obunasi)`) va o'zgarishi mumkin.
+ * It is a separate field so the UI does not have to parse text — the `source`
+ * string is free-form (for example `~/.codex (ChatGPT subscription)`) and may
+ * change.
  */
-export type ManbaTuri = 'obuna' | 'kalit' | 'mahalliy'
+export type BillingKind = 'subscription' | 'apiKey' | 'local'
 
-/** Bitta ishlatishga tayyor model (provideri sozlangan) */
+/** A single ready-to-use model (its provider is configured) */
 export interface ModelInfo {
   /** Provider id: 'openrouter', 'ollama', 'anthropic' ... */
   provider: string
-  /** Provider ko'rsatiladigan nomi: 'OpenRouter', 'Ollama' */
+  /** The provider's display name: 'OpenRouter', 'Ollama' */
   providerName: string
   /** Model id: 'anthropic/claude-sonnet-4.5', 'qwen3:8b' */
   id: string
-  /** Model ko'rsatiladigan nomi */
+  /** The model's display name */
   name: string
   contextWindow: number
-  /** Model o'ylash (reasoning) rejimini qo'llaydimi */
+  /** Whether the model supports thinking (reasoning) mode */
   reasoning: boolean
-  /** Rasm kiritishni qo'llaydimi */
+  /** Whether it supports image input */
   vision: boolean
-  /** 1 million token uchun narx (AQSh dollarida). Mahalliy modellarda 0. */
+  /** Price per 1 million tokens (in US dollars). 0 for local models. */
   cost: { input: number; output: number }
-  /** Kalit qayerdan topilgani: 'OPENROUTER_API_KEY', 'Ollama (mahalliy)' ... */
-  manba: string
-  /** To'lov modeli — obuna / API kaliti / mahalliy */
-  manbaTuri: ManbaTuri
+  /** Where the key was found: 'OPENROUTER_API_KEY', 'Ollama (local)' ... */
+  source: string
+  /** The billing model — subscription / API key / local */
+  billing: BillingKind
 }
 
-/** Aniqlangan provider — model tanlagichda guruh sarlavhasi uchun */
+/** A detected provider — for the group header in the model picker */
 export interface ProviderInfo {
   id: string
   name: string
-  manba: string
-  /** To'lov modeli — obuna / API kaliti / mahalliy */
-  manbaTuri: ManbaTuri
-  /** Nechta modeli mavjud */
-  modelSoni: number
+  source: string
+  /** The billing model — subscription / API key / local */
+  billing: BillingKind
+  /** How many models are available */
+  modelCount: number
 }
 
-/** Aniqlash natijasida yuz bergan muammo (fatal emas, faqat ma'lumot) */
-export interface AniqlashOgohlantirish {
-  manba: string
-  sabab: string
+/** A problem that occurred during detection (not fatal, informational only) */
+export interface DetectWarning {
+  source: string
+  reason: string
 }
 
 // ---------------------------------------------------------------------------
-// Chat sessiyalari — backend saqlaydigan yangi tiplar
+// Chat sessions — the new types the backend stores
 // ---------------------------------------------------------------------------
 
 export interface ChatSession {
   id: string
   title: string
   /**
-   * Sessiya boshlanganda tanlangan provider va model. Birinchi xabar
-   * yuborilgunga qadar ikkalasi ham `undefined`. Bir marta o'rnatilgach
-   * provider o'zgarmaydi — suhbat o'rtasida providerni almashtirish
-   * kontekst formatini buzadi (thinking bloklari, tool id'lari mos kelmaydi).
+   * The provider and model selected when the session started. Both are
+   * `undefined` until the first message is sent. Once set, the provider does
+   * not change — swapping providers mid-conversation breaks the context format
+   * (thinking blocks and tool ids no longer match).
    */
   provider?: string
   model?: string
   /**
-   * Sessiya ulangan loyiha. `undefined` bo'lsa agent tool'lari sessiyaning
-   * o'z papkasida ishlaydi; ulangan bo'lsa loyiha papkasida — ya'ni bir
-   * loyihaning hamma suhbatlari bitta fayllar to'plamini ko'radi.
+   * The project the session is attached to. When `undefined`, the agent tools
+   * work in the session's own folder; when attached, in the project folder —
+   * that is, every conversation of one project sees a single set of files.
    */
   projectId?: string
   createdAt: string
   updatedAt: string
   /**
-   * Suhbatdagi xabarlar soni. Faqat RO'YXAT so'rovida (`GET /api/chat/sessions`)
-   * to'ldiriladi — bitta sessiya so'ralganda ortiqcha hisob-kitob shart emas.
+   * The number of messages in the conversation. Only filled in on the LIST
+   * request (`GET /api/chat/sessions`) — when a single session is requested
+   * the extra computation is unnecessary.
    *
-   * UI shu bilan "bo'sh suhbat" ni ajratadi: sessiya yaratilib, birinchi
-   * xabar yuborilmasdan tashlab ketilishi oddiy holat.
+   * The UI uses it to spot an "empty conversation": creating a session and
+   * abandoning it before the first message is an ordinary situation.
    */
-  xabarlarSoni?: number
+  messageCount?: number
 }
 
 // ---------------------------------------------------------------------------
-// Loyihalar (project / workspace)
+// Projects (project / workspace)
 // ---------------------------------------------------------------------------
 
 /**
- * Loyiha — nom bilan bog'langan ish papkasi.
+ * A project — a work directory bound to a name.
  *
- * Papkani platforma o'zi yaratadi (`~/.platforma/loyihalar/<slug>/`),
- * foydalanuvchi yo'l bermaydi: ixtiyoriy yo'l qabul qilinsa, agent tool'lari
- * uchun chegara `/` ga ham qo'yilishi mumkin bo'lardi.
+ * The platform creates the folder itself (`~/.platforma/loyihalar/<slug>/`);
+ * the user does not supply a path: if an arbitrary path were accepted, the
+ * boundary for the agent tools could end up being `/`.
  */
 export interface Project {
   id: string
   name: string
-  /** To'liq yo'l — UI uni faqat ko'rsatadi, o'zgartira olmaydi */
-  papka: string
+  /** The full path — the UI only displays it, it cannot change it */
+  folder: string
   createdAt: string
-  /** Shu loyihaga ulangan chat sessiyalari soni */
-  chatlarSoni?: number
+  /** The number of chat sessions attached to this project */
+  chatCount?: number
 }
 
 /**
- * Chatga biriktirilgan fayl yoki rasm.
+ * A file or image attached to a chat.
  *
- * Rasm ham, oddiy fayl ham DISKDA yashaydi (sessiyaning yuklama papkasida)
- * va agent ularni mavjud `read`/`grep`/`bash` tool'lari bilan o'zi o'qiydi.
- * LLM'ga base64 bo'lib uzatilmaydi — promptga faqat yo'l va qisqa eslatma
- * tushadi. Shu sababli fayl va rasm uchun yagona oqim bor.
+ * Both images and ordinary files live ON DISK (in the session's upload folder)
+ * and the agent reads them itself with the existing `read`/`grep`/`bash`
+ * tools. They are not passed to the LLM as base64 — only the path and a short
+ * note go into the prompt. That is why there is a single flow for files and
+ * images.
  */
-export interface ChatBiriktirma {
+export interface ChatAttachment {
   id: string
   sessionId: string
   /**
-   * `rasm` — agent `read` bilan o'qiganda LLM uni ko'radi (model vision
-   * qo'llashi shart); `fayl` — oddiy fayl, mazmuni matn sifatida o'qiladi.
+   * `image` — when the agent reads it with `read` the LLM sees it (the model
+   * must support vision); `file` — an ordinary file whose contents are read as
+   * text.
    *
-   * Tur MAGIC BYTES bo'yicha aniqlanadi: kengaytmaga ham, mijoz bergan
-   * `content-type` ga ham ishonilmaydi (`.png` deb atalgan ZIP — fayl).
+   * The kind is determined by MAGIC BYTES: neither the extension nor the
+   * `content-type` the client sent is trusted (a ZIP called `.png` is a file).
    */
-  tur: 'rasm' | 'fayl'
-  /** Foydalanuvchi bergan nom — UI shuni ko'rsatadi */
-  aslNom: string
+  kind: 'image' | 'file'
+  /** The name the user gave — this is what the UI shows */
+  originalName: string
   /**
-   * Ish papkasiga NISBATAN yo'l — agent shu bo'yicha o'qiydi.
+   * The path RELATIVE to the work directory — the agent reads by it.
    *
-   * Absolut yo'l ATAYLAB berilmaydi: loyiha papkasi ko'chirilsa yozuv
-   * buzilmaydi va mijoz serverning fayl tuzilmasini ko'rmaydi.
+   * An absolute path is DELIBERATELY not given: the record survives the
+   * project folder being moved, and the client does not get to see the
+   * server's file layout.
    */
-  yol: string
+  path: string
   mime: string
-  hajm: number
+  size: number
   createdAt: string
 }
 
@@ -929,42 +948,45 @@ export interface ChatMessage {
   sessionId: string
   role: 'user' | 'assistant'
   text: string
-  /** @deprecated Eski demo oqimi uchun. Yangi kod `toolCards` ishlatadi. */
+  /** @deprecated For the old demo flow. New code uses `toolCards`. */
   toolCard?: ToolCard
-  /** Agent shu javob davomida bajargan tool chaqiruvlari, tartib bo'yicha */
-  toolCards?: ToolChaqiruv[]
+  /** The tool calls the agent made during this reply, in order */
+  toolCards?: ToolCall[]
   /**
-   * LLM ko'radigan to'liq kontekst — pi-agent-core ning `AgentMessage[]`
-   * massivi xom holda (tool call'lar, tool NATIJALARI, thinking bloklari).
+   * The full context the LLM sees — pi-agent-core's `AgentMessage[]` array in
+   * its raw form (tool calls, tool RESULTS, thinking blocks).
    *
-   * `text` dan farqi: `text` — UI ko'rsatadigan toza javob matni,
-   * bu esa keyingi turn'da LLM'ga qaytariladigan tarix. Tool natijalari
-   * faqat shu yerda bo'ladi, ya'ni usiz agent har turn xotirasini yo'qotadi.
+   * How it differs from `text`: `text` is the clean reply text the UI shows,
+   * while this is the history handed back to the LLM on the next turn. Tool
+   * results exist only here, so without it the agent loses its memory every
+   * turn.
    *
-   * Tip `unknown[]`: `@platforma/shared` AI paketiga bog'lanmasligi kerak
-   * (UI ham shu tiplarni import qiladi). Aniq tip serverda tiklanadi.
+   * The type is `unknown[]`: `@platforma/shared` must not depend on the AI
+   * package (the UI imports these types too). The precise type is restored on
+   * the server.
    *
-   * Eski xabarlarda (004-migratsiyadan oldin) `undefined` — u holda tarix
-   * `text` dan quriladi.
+   * `undefined` in old messages (before migration 004) — in that case the
+   * history is built from `text`.
    */
   agentMessages?: unknown[]
   /**
-   * Provider aytgan kontekst hajmi (token). Compaction qarori shunga
-   * tayanadi — butun tarixni qayta hisoblash o'rniga aniq raqam.
+   * The context size (in tokens) reported by the provider. The compaction
+   * decision relies on it — an exact number instead of recomputing the whole
+   * history.
    */
   contextTokens?: number
   /**
-   * Shu xabarga biriktirilgan fayllar (faqat `role: 'user'` da bo'ladi).
+   * The files attached to this message (only present for `role: 'user'`).
    *
-   * `toolCards` bilan bir xil naqsh: alohida jadvalda saqlanadi va
-   * `xabarlarOqi()` ularni xabarga ulab beradi.
+   * The same pattern as `toolCards`: they are stored in a separate table and
+   * `readMessages()` joins them onto the message.
    */
-  biriktirmalar?: ChatBiriktirma[]
+  attachments?: ChatAttachment[]
   createdAt: string
 }
 
 // ---------------------------------------------------------------------------
-// Qurilish sessiyalari — chat'dan boshlangan "yasab ber" oqimining holati
+// Build sessions — the state of the "build it for me" flow started from a chat
 // ---------------------------------------------------------------------------
 
 export type BuildSessionStatus = 'running' | 'waiting_choice' | 'done' | 'failed'
@@ -977,7 +999,7 @@ export interface BuildSession {
 }
 
 // ---------------------------------------------------------------------------
-// Ilovaning DB'dagi yozuvi (manifest + hayot sikli)
+// The app's record in the DB (manifest + lifecycle)
 // ---------------------------------------------------------------------------
 
 export interface AppRecord {

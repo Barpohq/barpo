@@ -1,4 +1,4 @@
-"""Baza qatlami — SQLite ulanishi, migratsiyalar va yordamchi funksiyalar."""
+"""Database layer — SQLite connection, migrations and helper functions."""
 
 from core.db.database import (
     check_schema,

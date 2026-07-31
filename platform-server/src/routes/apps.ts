@@ -1,27 +1,27 @@
-// Ilova manifestlari — UI sidebar'dagi "Ilovalar" bo'limi va AppView shu
-// endpointlardan oziqlanadi.
+// App manifests — the "Apps" section of the UI sidebar and AppView are both
+// fed from these endpoints.
 
 import { Hono } from 'hono'
 import {
-  amalBandmi,
-  amalniBajar,
-  sozlamalarniOqi,
-  sozlamalarniYoz,
-} from '../amal-bajar.ts'
-import { auditYoz } from '../audit.ts'
-import { ilovaOqi, ilovalarOqi } from '../repo.ts'
-import { intervalniTogrila } from '../state-bajar.ts'
-import { stateniOl } from '../state-kesh.ts'
+  isActionBusy,
+  runAction,
+  readAppSettings,
+  writeAppSettings,
+} from '../action-run.ts'
+import { auditWrite } from '../audit.ts'
+import { readApp, readApps } from '../repo.ts'
+import { normaliseInterval } from '../state-run.ts'
+import { getState } from '../state-cache.ts'
 
 export const appsRoutes = new Hono()
 
-// Manifestlar ro'yxati — UI faqat manifestlarni kutadi, DB metadata emas
+// The list of manifests — the UI only expects manifests, not DB metadata
 appsRoutes.get('/apps', (c) => {
-  return c.json({ apps: ilovalarOqi().map((a) => a.manifest) })
+  return c.json({ apps: readApps().map((a) => a.manifest) })
 })
 
 appsRoutes.get('/apps/:id', (c) => {
-  const record = ilovaOqi(c.req.param('id'))
+  const record = readApp(c.req.param('id'))
   if (!record) return c.json({ error: 'App not found' }, 404)
   return c.json({
     manifest: record.manifest,
@@ -32,305 +32,309 @@ appsRoutes.get('/apps/:id', (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// Jonli statelar
+// Live states
 // ---------------------------------------------------------------------------
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ BU — AI YOZMAYDIGAN, OLDINDAN TAYYOR API.                            │
+// │ THIS IS A READY-MADE API THE AI DOES NOT WRITE.                      │
 // │                                                                      │
-// │ Agent hech qachon yangi endpoint qo'shmaydi. U faqat state KODINI    │
-// │ yozadi (`manifest.states`), quyidagi ikki marshrut esa o'zgarmaydi.  │
-// │ Frontend shularni polling qiladi va yangi qiymatlarni oladi.         │
+// │ The agent never adds a new endpoint. It only writes state CODE       │
+// │ (`manifest.states`); the two routes below never change. The frontend │
+// │ polls them and gets the new values.                                  │
 // └──────────────────────────────────────────────────────────────────────┘
 
 /**
- * Bitta state qiymati.
+ * A single state value.
  *
- * Kesh interval bo'yicha ishlaydi: interval ichida kelgan so'rovlar
- * saqlangan natijani oladi, kod qayta bajarilmaydi (`state-kesh.ts`).
- * `?majburiy=1` — keshni chetlab o'tadi ("yangilash" tugmasi uchun).
+ * The cache works on the interval: requests arriving inside the interval get
+ * the stored result and the code is not re-run (`state-cache.ts`).
+ * `?force=1` bypasses the cache (for the "refresh" button).
  */
-appsRoutes.get('/apps/:id/state/:nom', async (c) => {
+appsRoutes.get('/apps/:id/state/:name', async (c) => {
   const appId = c.req.param('id')
-  const nom = c.req.param('nom')
+  const name = c.req.param('name')
 
-  const record = ilovaOqi(appId)
+  const record = readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
-  const state = record.manifest.states?.find((s) => s.nom === nom)
-  if (!state) return c.json({ error: `State not found: ${nom}` }, 404)
+  const state = record.manifest.states?.find((s) => s.name === name)
+  if (!state) return c.json({ error: `State not found: ${name}` }, 404)
 
-  const natija = await stateniOl(
+  const result = await getState(
     appId,
-    state.nom,
-    state.kod,
-    intervalniTogrila(state.interval),
-    c.req.query('majburiy') === '1',
+    state.name,
+    state.code,
+    normaliseInterval(state.interval),
+    c.req.query('force') === '1',
   )
 
-  // Kod yiqilsa ham HTTP 200: bu server xatosi emas, ma'lumot xatosi.
-  // Frontend `ok: false` ni ko'rib eski qiymatni saqlab qoladi va
-  // dashboardni yiqitmaydi.
-  return c.json(natija)
+  // Even when the code fails this is HTTP 200: it is a data error, not a
+  // server error. The frontend sees `ok: false`, keeps the previous value and
+  // does not take the dashboard down with it.
+  return c.json(result)
 })
 
 /**
- * Hamma statelar bir so'rovda.
+ * Every state in one request.
  *
- * Sahifa OCHILGANDA ishlatiladi: 6 ta state uchun 6 ta so'rov o'rniga
- * bitta. Keyingi yangilanishlar har state uchun alohida boradi, chunki
- * ularning intervallari har xil (CPU 5s, disk 30s).
+ * Used WHEN THE PAGE OPENS: one request instead of six for six states.
+ * Subsequent refreshes go per state, because their intervals differ (CPU 5s,
+ * disk 30s).
  */
 appsRoutes.get('/apps/:id/state', async (c) => {
   const appId = c.req.param('id')
-  const record = ilovaOqi(appId)
+  const record = readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
-  const statelar = record.manifest.states ?? []
-  // Parallel: sekin state (masalan `ssh`) qolganlarini kutdirmasin.
-  const natijalar = await Promise.all(
-    statelar.map(async (s) => ({
-      nom: s.nom,
-      natija: await stateniOl(appId, s.nom, s.kod, intervalniTogrila(s.interval)),
+  const states = record.manifest.states ?? []
+  // In parallel: a slow state (`ssh`, say) must not hold up the rest.
+  const results = await Promise.all(
+    states.map(async (s) => ({
+      name: s.name,
+      result: await getState(appId, s.name, s.code, normaliseInterval(s.interval)),
     })),
   )
 
-  const javob: Record<string, unknown> = {}
-  for (const { nom, natija } of natijalar) javob[nom] = natija
-  return c.json({ statelar: javob })
+  const response: Record<string, unknown> = {}
+  for (const { name, result } of results) response[name] = result
+  return c.json({ states: response })
 })
 
 // ---------------------------------------------------------------------------
-// Boshqaruv qatlami — sozlamalar (forma) va amallar (tugma)
+// The controls layer — settings (a form) and actions (a button)
 // ---------------------------------------------------------------------------
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ BU HAM — AI YOZMAYDIGAN, OLDINDAN TAYYOR API.                        │
+// │ THIS IS ALSO A READY-MADE API THE AI DOES NOT WRITE.                 │
 // │                                                                      │
-// │ `states` bilan bir xil qoida: uch marshrut o'zgarmaydi, AI faqat      │
-// │ KOD beradi (`sozlamalar.yoz`, `sozlamalar.oqi`, `amallar[].kod`).     │
+// │ The same rule as for `states`: the three routes never change, the AI  │
+// │ only supplies CODE (`settings.write`, `settings.read`,                │
+// │ `actions[].code`).                                                    │
 // │                                                                      │
-// │ HAQIQAT MANBAI — SERVER. Qiymatlar serverdagi ilovaning o'z           │
-// │ konfiguratsiyasiga yoziladi, platforma bazasiga EMAS (`types.ts`      │
-// │ dagi boshqaruv qatlami izohiga q.).                                   │
+// │ THE SERVER IS THE SOURCE OF TRUTH. Values are written into the app's  │
+// │ own configuration on the server, NOT into the platform database (see  │
+// │ the controls-layer note in `types.ts`).                               │
 // └──────────────────────────────────────────────────────────────────────┘
 
-/** Amal bajargan aktyor — audit uchun. Hozircha yagona foydalanuvchi. */
-const AKTYOR = 'user'
+/** The actor that ran the action — for the audit log. A single user for now. */
+const ACTOR = 'user'
 
 /**
- * Sozlama sxemasi va joriy qiymatlar.
+ * The settings schema and the current values.
  *
  * ┌────────────────────────────────────────────────────────────────────┐
- * │ SIR QIYMATLAR QAYTARILMAYDI — faqat `ornatilgan` bayrog'i.          │
+ * │ SECRET VALUES ARE NEVER RETURNED — only the `isSet` flag.          │
  * │                                                                    │
- * │ Bu qatlamning markaziy qoidasi: token server → platforma → brauzer  │
- * │ yo'lini bosmaydi. Foydalanuvchi joriy tokenni ko'rmaydi, faqat       │
- * │ yangisini yozadi.                                                   │
+ * │ This is the central rule of the layer: a token never travels the    │
+ * │ server → platform → browser path. The user does not see the current │
+ * │ token, they only write a new one.                                   │
  * └────────────────────────────────────────────────────────────────────┘
  */
-appsRoutes.get('/apps/:id/sozlama', async (c) => {
+appsRoutes.get('/apps/:id/settings', async (c) => {
   const appId = c.req.param('id')
-  const record = ilovaOqi(appId)
+  const record = readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
-  const sozlamalar = record.manifest.sozlamalar
-  if (!sozlamalar) return c.json({ error: 'This app has no settings' }, 404)
+  const settings = record.manifest.settings
+  if (!settings) return c.json({ error: 'This app has no settings' }, 404)
 
-  const oqilgan = await sozlamalarniOqi(sozlamalar, { appId, sozlama: {} })
+  const read = await readAppSettings(settings, { appId, setting: {} })
 
-  // Sir maydonlar uchun: qiymat emas, HOLAT. Qiymatning o'zi
-  // `sozlamalarniOqi` da tashlangan; `ornatilgan` faqat "serverda bo'sh
-  // bo'lmagan qiymat bor" degan bayroqni beradi.
-  const ornatilgan: Record<string, boolean> = {}
-  for (const maydon of sozlamalar.maydonlar) {
-    if (maydon.turi !== 'sir') continue
-    ornatilgan[maydon.kalit] = (oqilgan.ornatilgan ?? []).includes(maydon.kalit)
+  // For secret fields: not the value, but the STATE. The value itself is
+  // dropped inside `readAppSettings`; `isSet` only carries the flag "there is
+  // a non-empty value on the server".
+  const isSet: Record<string, boolean> = {}
+  for (const field of settings.fields) {
+    if (field.kind !== 'secret') continue
+    isSet[field.key] = (read.isSet ?? []).includes(field.key)
   }
 
   return c.json({
-    maydonlar: sozlamalar.maydonlar,
-    qiymatlar: oqilgan.qiymatlar,
-    ornatilgan,
-    // O'qish yiqilsa forma BARIBIR ko'rsatiladi (bo'sh qiymatlar bilan):
-    // foydalanuvchi yangi qiymat yozib tuzatishi mumkin.
-    ...(oqilgan.ok ? {} : { ogohlantirish: oqilgan.xato }),
+    fields: settings.fields,
+    values: read.values,
+    isSet,
+    // If reading failed the form is shown ANYWAY (with empty values): the user
+    // can fix it by writing new values.
+    ...(read.ok ? {} : { warning: read.error }),
   })
 })
 
 /**
- * Sozlama qiymatlarini serverga yozadi.
+ * Writes the setting values to the server.
  *
- * BO'SH SIR — "O'ZGARTIRMADIM": forma sir maydonini bo'sh ko'rsatadi, ya'ni
- * "tegmadim" holati ham bo'sh satr bo'lib keladi. Bo'shni yuborsak mavjud
- * token o'chib ketardi (`mcp-kredensial.ts` dagi bilan bir xil qaror).
+ * AN EMPTY SECRET MEANS "I DID NOT CHANGE IT": the form shows a secret field
+ * empty, so the "I did not touch it" state also arrives as an empty string. If
+ * we sent the empty one through, the existing token would be wiped (the same
+ * decision as in `mcp-credentials.ts`).
  */
-appsRoutes.put('/apps/:id/sozlama', async (c) => {
+appsRoutes.put('/apps/:id/settings', async (c) => {
   const appId = c.req.param('id')
-  const record = ilovaOqi(appId)
+  const record = readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
-  const sozlamalar = record.manifest.sozlamalar
-  if (!sozlamalar) return c.json({ error: 'This app has no settings' }, 404)
+  const settings = record.manifest.settings
+  if (!settings) return c.json({ error: 'This app has no settings' }, 404)
 
-  let tana: unknown
+  let body: unknown
   try {
-    tana = await c.req.json()
+    body = await c.req.json()
   } catch {
     return c.json({ error: 'Expected JSON' }, 400)
   }
 
-  const xom =
-    tana && typeof tana === 'object' && !Array.isArray(tana)
-      ? ((tana as { qiymatlar?: unknown }).qiymatlar ?? tana)
+  const raw =
+    body && typeof body === 'object' && !Array.isArray(body)
+      ? ((body as { values?: unknown }).values ?? body)
       : null
-  if (!xom || typeof xom !== 'object' || Array.isArray(xom)) {
-    return c.json({ error: '`qiymatlar` must be an object' }, 400)
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: '`values` must be an object' }, 400)
   }
 
-  const kirish = xom as Record<string, unknown>
-  const qiymatlar: Record<string, string> = {}
-  const xatolar: string[] = []
+  const input = raw as Record<string, unknown>
+  const values: Record<string, string> = {}
+  const errors: string[] = []
 
-  for (const maydon of sozlamalar.maydonlar) {
-    const berilgan = kirish[maydon.kalit]
+  for (const field of settings.fields) {
+    const given = input[field.key]
 
-    // Kelmagan maydon — tegilmagan. Sxemada yo'q kalitlar ham shu yerda
-    // tushib qoladi: kod faqat e'lon qilingan maydonlarni ko'radi.
-    if (berilgan === undefined || berilgan === null) {
-      if (maydon.majburiy && maydon.turi !== 'sir') {
-        // Sir uchun bu xato EMAS: u allaqachon serverda bo'lishi mumkin.
-        xatolar.push(`"${maydon.yorliq}" is required`)
+    // A field that did not arrive was not touched. Keys absent from the schema
+    // also fall out here: the code only ever sees declared fields.
+    if (given === undefined || given === null) {
+      if (field.required && field.kind !== 'secret') {
+        // For a secret this is NOT an error: it may already be on the server.
+        errors.push(`"${field.label}" is required`)
       }
       continue
     }
 
-    const qiymat =
-      typeof berilgan === 'string'
-        ? berilgan
-        : typeof berilgan === 'number' || typeof berilgan === 'boolean'
-          ? String(berilgan)
+    const value =
+      typeof given === 'string'
+        ? given
+        : typeof given === 'number' || typeof given === 'boolean'
+          ? String(given)
           : null
 
-    if (qiymat === null) {
-      xatolar.push(`"${maydon.yorliq}": value must be text`)
+    if (value === null) {
+      errors.push(`"${field.label}": value must be text`)
       continue
     }
 
-    // Bo'sh sir — "o'zgartirmadim" (yuqoridagi izohga q.)
-    if (maydon.turi === 'sir' && qiymat.length === 0) continue
+    // An empty secret means "I did not change it" (see the note above)
+    if (field.kind === 'secret' && value.length === 0) continue
 
-    if (maydon.majburiy && qiymat.trim().length === 0) {
-      xatolar.push(`"${maydon.yorliq}" is required`)
+    if (field.required && value.trim().length === 0) {
+      errors.push(`"${field.label}" is required`)
       continue
     }
 
     // ┌────────────────────────────────────────────────────────────────┐
-    // │ INJECTION HIMOYASINING UCHINCHI QATLAMI.                       │
+    // │ THE THIRD LAYER OF INJECTION PROTECTION.                       │
     // │                                                                │
-    // │ Naqsh serverga UZATISHDAN OLDIN tekshiriladi — buzuq qiymat     │
-    // │ `.env` ga umuman bormaydi.                                     │
+    // │ The pattern is checked BEFORE anything is sent to the server — │
+    // │ a malformed value never reaches `.env` at all.                 │
     // └────────────────────────────────────────────────────────────────┘
-    if (maydon.naqsh && qiymat.length > 0) {
-      let mos = false
+    if (field.pattern && value.length > 0) {
+      let matches = false
       try {
-        mos = new RegExp(maydon.naqsh).test(qiymat)
+        matches = new RegExp(field.pattern).test(value)
       } catch {
-        // Naqsh `manifest-tekshir.ts` da tekshirilgan, bu yerga yaroqsizi
-        // kelmasligi kerak. Kelsa — validatsiyani O'TKAZIB yuboramiz,
-        // chunki foydalanuvchini o'zi tuzata olmaydigan xato bilan
-        // qamalda qoldirish yomonroq.
-        mos = true
+        // The pattern was already checked in `manifest-validate.ts`, so an
+        // invalid one should never get here. If one does, we SKIP the
+        // validation: locking the user out with an error they cannot fix
+        // themselves is worse.
+        matches = true
       }
-      if (!mos) {
-        xatolar.push(maydon.naqshIzohi || `"${maydon.yorliq}" does not match the required format`)
+      if (!matches) {
+        errors.push(field.patternHint || `"${field.label}" does not match the required format`)
         continue
       }
     }
 
-    if (maydon.turi === 'raqam' && qiymat.trim().length > 0 && !Number.isFinite(Number(qiymat))) {
-      xatolar.push(`"${maydon.yorliq}" must be a number`)
+    if (field.kind === 'number' && value.trim().length > 0 && !Number.isFinite(Number(value))) {
+      errors.push(`"${field.label}" must be a number`)
       continue
     }
 
-    qiymatlar[maydon.kalit] = qiymat
+    values[field.key] = value
   }
 
-  if (xatolar.length > 0) return c.json({ ok: false, xatolar }, 400)
+  if (errors.length > 0) return c.json({ ok: false, errors }, 400)
 
-  if (Object.keys(qiymatlar).length === 0) {
-    return c.json({ ok: false, xatolar: ['No values changed'] }, 400)
+  if (Object.keys(values).length === 0) {
+    return c.json({ ok: false, errors: ['No values changed'] }, 400)
   }
 
-  const natija = await sozlamalarniYoz(sozlamalar, qiymatlar, { appId, sozlama: {} })
+  const result = await writeAppSettings(settings, values, { appId, setting: {} })
 
-  // Audit: sozlamalar o'zgarishi holat o'zgartiradi, ya'ni yozilishi SHART.
-  // KALITLAR yoziladi, QIYMATLAR emas — sir auditga tushmasligi kerak.
-  auditYoz(
-    AKTYOR,
-    `Settings saved: ${Object.keys(qiymatlar).join(', ')}`,
+  // Audit: a settings change alters state, so it MUST be recorded. The KEYS
+  // are written, the VALUES are not — a secret must never reach the audit log.
+  auditWrite(
+    ACTOR,
+    `Settings saved: ${Object.keys(values).join(', ')}`,
     appId,
-    "o'zgartirish",
-    natija.ok ? 'OK' : 'rad etildi',
+    'write',
+    result.ok ? 'OK' : 'denied',
   )
 
-  // Yozish yiqilsa 200 EMAS: forma foydalanuvchiga aniq xato ko'rsatishi kerak.
-  return c.json(natija, natija.ok ? 200 : 500)
+  // If the write fails this is NOT a 200: the form has to show the user a
+  // precise error.
+  return c.json(result, result.ok ? 200 : 500)
 })
 
 /**
- * Amalni bajaradi.
+ * Runs an action.
  *
- * `tasdiq` UI tomonda so'raladi — bu marshrut uni TEKSHIRMAYDI. Sabab
- * `types.ts` da yozilgan: tasdiq tasodifiy bosishga qarshi, hujumga qarshi
- * emas.
+ * `confirm` is asked for on the UI side — this route DOES NOT check it. The
+ * reason is written down in `types.ts`: confirmation guards against an
+ * accidental click, not against an attack.
  */
-appsRoutes.post('/apps/:id/amal/:nom', async (c) => {
+appsRoutes.post('/apps/:id/action/:name', async (c) => {
   const appId = c.req.param('id')
-  const nom = c.req.param('nom')
+  const name = c.req.param('name')
 
-  const record = ilovaOqi(appId)
+  const record = readApp(appId)
   if (!record) return c.json({ error: 'App not found' }, 404)
 
-  const amal = record.manifest.amallar?.find((a) => a.nom === nom)
-  if (!amal) return c.json({ error: `Action not found: ${nom}` }, 404)
+  const action = record.manifest.actions?.find((a) => a.name === name)
+  if (!action) return c.json({ error: `Action not found: ${name}` }, 404)
 
-  // Band bo'lsa 409: UI tugmani o'chirib turadi, lekin ikki brauzer oynasi
-  // yoki sekin tarmoq bir vaqtda ikki so'rov yuborishi mumkin. Qulf
-  // `amalniBajar` ichida ham bor — bu javob shunchaki aniqroq.
-  const bandEdi = amalBandmi(appId, nom)
+  // A 409 if it is busy: the UI disables the button, but two browser windows
+  // or a slow network can still send two requests at once. The lock exists
+  // inside `runAction` as well — this response is simply more precise.
+  const wasBusy = isActionBusy(appId, name)
 
-  // Sirsiz sozlama qiymatlari kodga beriladi — masalan konteyner nomi.
-  const sozlamalar = record.manifest.sozlamalar
-  const sozlama = sozlamalar
-    ? (await sozlamalarniOqi(sozlamalar, { appId, sozlama: {} })).qiymatlar
+  // The non-secret setting values are handed to the code — the container name,
+  // for instance.
+  const schema = record.manifest.settings
+  const setting = schema
+    ? (await readAppSettings(schema, { appId, setting: {} })).values
     : {}
 
-  const natija = await amalniBajar(amal, { appId, sozlama })
+  const result = await runAction(action, { appId, setting })
 
-  auditYoz(
-    AKTYOR,
-    `Action executed: ${amal.yorliq}`,
+  auditWrite(
+    ACTOR,
+    `Action executed: ${action.label}`,
     appId,
-    amal.xavf ?? "o'zgartirish",
-    natija.ok ? 'OK' : 'rad etildi',
+    action.risk ?? 'write',
+    result.ok ? 'OK' : 'denied',
   )
 
-  // Amaldan keyin ko'rsatilgan statelar MAJBURIY yangilanadi: restart
-  // bosilganda status darhol o'zgarishi kerak, kesh interval tugashini
-  // kutib turmasin.
-  const yangilangan: Record<string, unknown> = {}
-  if (natija.ok && amal.yangila?.length) {
-    const statelar = record.manifest.states ?? []
+  // The states listed on the action are refreshed FORCIBLY afterwards: when
+  // restart is pressed the status has to change immediately, not wait for the
+  // cache interval to run out.
+  const refreshed: Record<string, unknown> = {}
+  if (result.ok && action.refresh?.length) {
+    const states = record.manifest.states ?? []
     await Promise.all(
-      amal.yangila.map(async (stateNomi) => {
-        const state = statelar.find((s) => s.nom === stateNomi)
+      action.refresh.map(async (stateName) => {
+        const state = states.find((s) => s.name === stateName)
         if (!state) return
-        yangilangan[stateNomi] = await stateniOl(
+        refreshed[stateName] = await getState(
           appId,
-          state.nom,
-          state.kod,
-          intervalniTogrila(state.interval),
+          state.name,
+          state.code,
+          normaliseInterval(state.interval),
           true,
         )
       }),
@@ -338,8 +342,8 @@ appsRoutes.post('/apps/:id/amal/:nom', async (c) => {
   }
 
   return c.json({
-    ...natija,
-    ...(bandEdi ? { bandEdi: true } : {}),
-    ...(Object.keys(yangilangan).length > 0 ? { statelar: yangilangan } : {}),
+    ...result,
+    ...(wasBusy ? { wasBusy: true } : {}),
+    ...(Object.keys(refreshed).length > 0 ? { states: refreshed } : {}),
   })
 })

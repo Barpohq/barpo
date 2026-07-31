@@ -1,111 +1,111 @@
 # @platforma/config
 
-Platformaning sozlamalar qatlami. Foydalanuvchi agent xulqini, tool'larni va
-ruxsat tizimini fayl orqali boshqaradi.
+The platform's settings layer. The user controls agent behaviour, tools and
+the permission system through a file.
 
 ```ts
 import { config } from '@platforma/config'
 
-const { config: sozlama, ogohlantirishlar } = config({ ishPapkasi })
-sozlama.agent.siqish.zaxiraTokenlar   // → 16384
+const { config: settings, warnings } = config({ workDir })
+settings.agent.compaction.reserveTokens   // → 16384
 ```
 
-## Fayllar qayerda
+## Where the files live
 
-Ikki qatlam, yuqoridagisi pastdagini bosadi:
+Two layers; the upper one overrides the lower.
 
-| Qatlam | Yo'l | Vazifa |
+| Layer | Path | Purpose |
 |---|---|---|
-| global | `~/.platforma/config.json` | foydalanuvchining odatiy sozlamalari |
-| loyiha | `<ish papkasi>/.platforma/config.json` | shu ish uchun cheklov |
+| global | `~/.platforma/config.json` | the user's usual settings |
+| project | `<work dir>/.platforma/config.json` | a restriction for this job |
 
-Global papkani `PLATFORMA_CONFIG_PAPKA` bilan ko'chirish mumkin (testlarda
-shunday qilinadi).
+The global directory can be moved with `PLATFORM_CONFIG_DIR` (that is what
+the tests do).
 
-Ikkalasi ham majburiy emas — fayl bo'lmasa standart qiymatlar ishlaydi.
+Neither file is required — with no file at all the defaults are used.
 
-## Loyiha configi nimani QILA OLMAYDI
+## What the project config CANNOT do
 
-Loyiha fayli repo bilan birga keladi, ya'ni uni begona odam yozgan bo'lishi
-mumkin. Shuning uchun u **xavfsizlik chegarasini pasaytira olmaydi**:
+The project file ships with the repo, meaning someone else may have written
+it. So it **cannot lower the security boundary**:
 
-| Sozlama | Loyiha nima qila oladi |
+| Setting | What the project can do |
 |---|---|
-| `ruxsat.rejim` | faqat `tasdiq` ga tushira oladi, `auto` ga ko'tara olmaydi |
-| `ruxsat.qoshimchaTaqiqlar` | faqat qo'sha oladi, olib tashlay olmaydi |
-| `agent.toollar.yoqilgan` | faqat toraytira oladi, kengaytira olmaydi |
-| qolganlari | erkin bosadi (xavfsizlikka tegishli emas) |
+| `permission.mode` | only lower it to `confirm`, never raise it to `auto` |
+| `permission.extraDenyList` | only add entries, never remove them |
+| `agent.tools.enabled` | only narrow it, never widen it |
+| everything else | overrides freely (not security-relevant) |
 
-Bu `loyihaChekloviniQoll()` da amalga oshiriladi va testlar bilan majburlanadi.
-pi'ning "project trust" muammosi bilan bir xil sabab: repo sizning
-sozlamalaringizni o'zgartira olmasligi kerak.
+This is implemented in `applyProjectRestriction()` and enforced by tests.
+Same reasoning as pi's "project trust" problem: a repo must not be able to
+change your settings.
 
-## Xato bo'lsa nima bo'ladi
+## What happens on an error
 
-**Config o'qish hech qachon xato tashlamaydi va platformani to'xtatmaydi.**
+**Reading the config never throws and never stops the platform.**
 
-| Holat | Natija |
+| Case | Result |
 |---|---|
-| fayl yo'q | standart qiymatlar, ogohlantirishsiz |
-| buzuq JSON | standart qiymatlar + ogohlantirish |
-| noto'g'ri tur (`"ha"` o'rniga `true`) | standart qiymat + ogohlantirish |
-| chegaradan chiqqan son | chegaraga **kesiladi** + ogohlantirish |
-| ro'yxatda noto'g'ri element | faqat o'sha element tashlanadi |
-| notanish maydon (imlo xatosi) | e'tiborsiz + ogohlantirish |
+| no file | defaults, no warning |
+| malformed JSON | defaults + a warning |
+| wrong kind (`"yes"` instead of `true`) | default value + a warning |
+| a number outside its range | **clamped** to the range + a warning |
+| a bad element in a list | only that element is dropped |
+| unknown field (a typo) | ignored + a warning |
 
-Chegaradan chiqqan son standartga emas, chegaraga kesiladi: foydalanuvchi
-niyati aniq ("kattaroq qilmoqchi edim"), shunchaki ruxsat etilgan oraliqqa
-keltiriladi.
+A number outside its range is clamped to the range rather than reset to the
+default: the user's intent is clear ("I wanted it bigger"), so it is simply
+brought into the allowed range.
 
-Ogohlantirishlar `ogohlantirishlar` ro'yxatida qaytadi — server ularni
-log'ga yozadi va keyinchalik UI ko'rsatadi.
+Warnings come back in the `warnings` list — the server logs them and the UI
+will show them later.
 
-## Sozlama qo'shish
+## Adding a setting
 
-Bitta joyga yoziladi — `src/sxema.ts` dagi `MAYDONLAR`:
+It is written in one place — `FIELDS` in `src/schema.ts`:
 
 ```ts
 {
-  yol: 'agent.siqish.zaxiraTokenlar',
-  tur: 'son',
-  standart: 16384,
-  izoh: "Context window'ning summary uchun ajratilgan qismi.",
-  eng: { kam: 1000, kop: 200_000 },
+  path: 'agent.compaction.reserveTokens',
+  kind: 'number',
+  default: 16384,
+  hint: "The part of the context window reserved for the summary.",
+  range: { min: 1000, max: 200_000 },
 }
 ```
 
-Keyin `Config` tipiga mos maydon qo'shiladi va sxema yangilanadi:
+Then add a matching field to the `Config` type and update the schema:
 
 ```bash
 bun run schema
 ```
 
-Validatsiya, standart qiymat, JSON Schema va (keyinchalik) web forma —
-hammasi shu ta'rifdan avtomatik keladi. `sxema.test.ts` `MAYDONLAR` va
-`Config` tipi mos kelishini majburlaydi, `schema.test.ts` esa `schema.json`
-eskirmaganini tekshiradi.
+Validation, the default value, the JSON Schema and (later) the web form all
+follow automatically from that one spec. `validate.test.ts` enforces that
+`FIELDS` and the `Config` type match, and `schema.test.ts` checks that
+`schema.json` is not stale.
 
-## Nima uchun JSON
+## Why JSON
 
-Web UI keyinchalik shu faylni yozadi. JSON Schema'dan forma avtomatik
-quriladi va validatsiya bir joyda qoladi. JSONC/TOML odam o'qishi uchun
-qulayroq, lekin web ↔ fayl aylanishida izohlar yo'qoladi — ya'ni foydalanuvchi
-yozgan izoh birinchi saqlashda o'chib ketardi.
+The web UI will later write this file. The form is built automatically from
+the JSON Schema and validation stays in one place. JSONC/TOML are nicer for
+a human to read, but comments are lost on a web ↔ file round trip — a
+comment the user wrote would be wiped on the first save.
 
-Tahrirlagichda avtomatik to'ldirish uchun faylning boshiga qo'ying:
+For editor autocompletion, put this at the top of the file:
 
 ```json
 { "$schema": "https://.../schema.json" }
 ```
 
-`namuna-config.json` — barcha sozlamalar standart qiymatlari bilan.
+`example-config.json` holds all settings with their default values.
 
-## Testlar
+## Tests
 
 ```bash
 bun test
 ```
 
-49 test. Asosiy majburlanadigan xulqlar: axlat kirsa ham ishlaydigan config
-chiqadi, loyiha configi xavfsizlik chegarasini pasaytira olmaydi, standart
-qiymatlar ulashilgan obyekt sifatida sizib ketmaydi.
+49 tests. The main enforced behaviours: even garbage input yields a working
+config, the project config cannot lower the security boundary, and default
+values never leak out as shared objects.

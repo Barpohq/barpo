@@ -1,175 +1,180 @@
-// WebSocket hub — ulangan mijozlar registri va event tarqatish.
+// WebSocket hub — the registry of connected clients and event fan-out.
 //
-// Har ulanish uchun `UlanishHolati` saqlanadi: obuna bo'lgan kanallar to'plami.
-// Mijoz `sub` yuborgunga qadar hech qanday kanalga obuna emas, ya'ni faqat
-// kanalsiz eventlarni (`hello`) oladi. Bu ataylab: UI o'ziga kerak kanallarni
-// aniq so'raydi, ortiqcha trafik ketmaydi.
+// A `ConnectionState` is kept for every connection: the set of channels it has
+// subscribed to. Until the client sends `sub` it is subscribed to nothing, i.e.
+// it only receives channel-less events (`hello`). This is deliberate: the UI
+// asks for exactly the channels it needs and no surplus traffic is sent.
 //
-// Bu modul HTTP qatlamidan mustaqil — `Bun.serve` websocket handlerlari shu
-// yerdagi funksiyalarni chaqiradi (src/index.ts da ulanadi).
+// This module is independent of the HTTP layer — the `Bun.serve` websocket
+// handlers call the functions here (wired up in src/index.ts).
 
 import type { ServerWebSocket } from 'bun'
 import {
-  clientEventMi,
-  eventKanali,
-  eventSessiyasi,
+  isClientEvent,
+  eventChannel,
+  eventSession,
   PROTOCOL_VERSION,
   type ClientEvent,
   type ServerEvent,
 } from '@platforma/shared'
 
-/** Har bir WS ulanishiga biriktiriladigan ma'lumot */
-export interface UlanishHolati {
+/** The data attached to every WS connection */
+export interface ConnectionState {
   id: string
   channels: Set<string>
   /**
-   * Mijoz kuzatayotgan chat sessiyasi (`sub.sessionId`).
+   * The chat session the client is watching (`sub.sessionId`).
    *
-   * `undefined` — sessiya ko'rsatilmagan: mijoz kanaldagi HAMMA sessiyaning
-   * eventlarini oladi (eski xulq, orqaga moslik uchun saqlangan).
+   * `undefined` — no session given: the client receives the events of EVERY
+   * session on the channel (the old behaviour, kept for backwards
+   * compatibility).
    */
   sessionId?: string
 }
 
-export type PlatformaWS = ServerWebSocket<UlanishHolati>
+export type PlatformWS = ServerWebSocket<ConnectionState>
 
-/** Mijozdan kelgan eventni qayta ishlovchi — orchestrator shu yerga ulanadi */
-export type ClientEventHandler = (event: ClientEvent, ws: PlatformaWS) => void
+/** Handles an event coming from a client — the orchestrator hooks in here */
+export type ClientEventHandler = (event: ClientEvent, ws: PlatformWS) => void
 
 export class WsHub {
-  private ulanishlar = new Set<PlatformaWS>()
-  private handlerlar: ClientEventHandler[] = []
+  private connections = new Set<PlatformWS>()
+  private handlers: ClientEventHandler[] = []
 
-  /** Hozir ulangan mijozlar soni */
-  get soni(): number {
-    return this.ulanishlar.size
+  /** The number of clients connected right now */
+  get count(): number {
+    return this.connections.size
   }
 
   /**
-   * Yangi ulanish ochildi: registrga qo'shiladi va `hello` yuboriladi.
+   * A new connection was opened: it is added to the registry and sent `hello`.
    */
-  ulandi(ws: PlatformaWS): void {
-    this.ulanishlar.add(ws)
-    this.yubor(ws, { type: 'hello', version: PROTOCOL_VERSION })
+  connected(ws: PlatformWS): void {
+    this.connections.add(ws)
+    this.send(ws, { type: 'hello', version: PROTOCOL_VERSION })
   }
 
-  /** Ulanish yopildi */
-  uzildi(ws: PlatformaWS): void {
-    this.ulanishlar.delete(ws)
+  /** The connection was closed */
+  disconnected(ws: PlatformWS): void {
+    this.connections.delete(ws)
   }
 
   /**
-   * Mijozdan kelgan xom xabar. `sub` shu yerda qayta ishlanadi, qolgan
-   * eventlar ro'yxatdan o'tgan handlerlarga uzatiladi.
+   * A raw message from a client. `sub` is handled here, every other event is
+   * passed on to the registered handlers.
    */
-  xabarKeldi(ws: PlatformaWS, xom: string): void {
-    let qiymat: unknown
+  messageReceived(ws: PlatformWS, raw: string): void {
+    let value: unknown
     try {
-      qiymat = JSON.parse(xom)
+      value = JSON.parse(raw)
     } catch {
-      return // buzuq JSON — jimgina tashlab yuboriladi
+      return // malformed JSON — dropped silently
     }
 
-    if (!clientEventMi(qiymat)) return
-    const event = qiymat
+    if (!isClientEvent(value)) return
+    const event = value
 
     if (event.type === 'sub') {
-      for (const kanal of event.channels) ws.data.channels.add(kanal)
-      // Sessiya berilgan bo'lsa mijoz shu sessiyaga "ko'chadi".
-      //   `null`      → filtr olib tashlanadi (yana hamma sessiya ko'rinadi);
-      //   maydon yo'q → oldingi tanlov saqlanadi (mijoz faqat yangi kanal
-      //                 qo'shayotgan bo'lishi mumkin, sessiyani unutmasin).
+      for (const channel of event.channels) ws.data.channels.add(channel)
+      // If a session is given the client "moves" to that session.
+      //   `null`        → the filter is removed (every session is visible again);
+      //   field absent  → the previous choice is kept (the client may only be
+      //                   adding a channel and should not lose its session).
       if (event.sessionId !== undefined) {
         ws.data.sessionId = event.sessionId ?? undefined
       }
       return
     }
 
-    for (const h of this.handlerlar) h(event, ws)
+    for (const h of this.handlers) h(event, ws)
   }
 
   /**
-   * Mijoz eventlari uchun handler qo'shadi (orchestrator `chat.send` va
-   * `chat.choice` ni shu orqali oladi). Bekor qiluvchi funksiya qaytaradi.
+   * Registers a handler for client events (this is how the orchestrator
+   * receives `chat.send` and `chat.choice`). Returns a function that
+   * unregisters it.
    */
-  handlerQosh(h: ClientEventHandler): () => void {
-    this.handlerlar.push(h)
+  addHandler(h: ClientEventHandler): () => void {
+    this.handlers.push(h)
     return () => {
-      const i = this.handlerlar.indexOf(h)
-      if (i >= 0) this.handlerlar.splice(i, 1)
+      const i = this.handlers.indexOf(h)
+      if (i >= 0) this.handlers.splice(i, 1)
     }
   }
 
   /**
-   * Eventni tegishli kanalga obuna bo'lgan hamma mijozga yuboradi.
-   * Kanalsiz eventlar (hello) hammaga ketadi.
-   * Yuborilgan mijozlar sonini qaytaradi.
+   * Sends the event to every client subscribed to the relevant channel.
+   * Channel-less events (hello) go to everyone.
+   * Returns the number of clients it was sent to.
    *
-   * IKKI BOSQICHLI FILTR:
-   *   1) kanal — mijoz kanalga obuna bo'lmagan bo'lsa event ketmaydi;
-   *   2) sessiya — sessiyali event (chat.*) faqat o'sha sessiyani
-   *      kuzatayotgan mijozga boradi.
+   * TWO-STAGE FILTER:
+   *   1) channel — if the client is not subscribed to the channel the event
+   *      does not go out;
+   *   2) session — a session-bound event (chat.*) only reaches the client that
+   *      is watching that session.
    *
-   * Ikkinchi filtr nima uchun kerak: oldin faqat kanal tekshirilardi, ya'ni
-   * `chat` kanaliga obuna bo'lgan HAR QANDAY mijoz hamma sessiyaning
-   * javoblarini olardi. Ikki brauzer oynasi ochilsa, biri ikkinchisining
-   * `chat.delta` (javob matni), `chat.tool` (bajarilgan buyruqlar) va
-   * `chat.permission` (ruxsat so'rovlari) eventlarini ko'rardi. Bu ham UI
-   * xatosi (begona matn boshqa oynaga oqadi), ham ma'lumot sizishi.
+   * Why the second filter is needed: only the channel used to be checked, so
+   * ANY client subscribed to the `chat` channel received the responses of every
+   * session. With two browser windows open, one would see the other's
+   * `chat.delta` (the response text), `chat.tool` (the commands that ran) and
+   * `chat.permission` (permission requests) events. That is both a UI fault
+   * (someone else's text flows into the wrong window) and an information leak.
    *
-   * Sessiya ko'rsatmagan mijoz eski xulqni oladi — hamma sessiyani ko'radi.
+   * A client that did not name a session gets the old behaviour — it sees
+   * every session.
    */
   broadcast(event: ServerEvent): number {
-    const kanal = eventKanali(event)
-    const sessiya = eventSessiyasi(event)
-    const matn = JSON.stringify(event)
-    let soni = 0
+    const channel = eventChannel(event)
+    const session = eventSession(event)
+    const text = JSON.stringify(event)
+    let count = 0
 
-    for (const ws of this.ulanishlar) {
-      if (kanal !== null && !ws.data.channels.has(kanal)) continue
-      // Sessiyali event: mijoz boshqa sessiyani kuzatayotgan bo'lsa o'tkazamiz.
-      // `ws.data.sessionId === undefined` — sessiya tanlamagan mijoz, hammasini oladi.
+    for (const ws of this.connections) {
+      if (channel !== null && !ws.data.channels.has(channel)) continue
+      // Session-bound event: skipped if the client is watching another session.
+      // `ws.data.sessionId === undefined` — the client picked no session and
+      // receives everything.
       if (
-        sessiya !== null &&
+        session !== null &&
         ws.data.sessionId !== undefined &&
-        ws.data.sessionId !== sessiya
+        ws.data.sessionId !== session
       ) {
         continue
       }
       try {
-        ws.send(matn)
-        soni++
+        ws.send(text)
+        count++
       } catch {
-        // yopilib ulgurgan soket — registrdan chiqariladi
-        this.ulanishlar.delete(ws)
+        // a socket that has already closed — removed from the registry
+        this.connections.delete(ws)
       }
     }
-    return soni
+    return count
   }
 
-  /** Bitta mijozga yo'naltirilgan yuborish (kanal filtri qo'llanmaydi) */
-  yubor(ws: PlatformaWS, event: ServerEvent): void {
+  /** Sending to a single client (the channel filter is not applied) */
+  send(ws: PlatformWS, event: ServerEvent): void {
     try {
       ws.send(JSON.stringify(event))
     } catch {
-      this.ulanishlar.delete(ws)
+      this.connections.delete(ws)
     }
   }
 
-  /** Testlar uchun: hamma ulanishni tozalash */
-  tozala(): void {
-    this.ulanishlar.clear()
-    this.handlerlar = []
+  /** For tests: clear every connection */
+  clear(): void {
+    this.connections.clear()
+    this.handlers = []
   }
 }
 
-/** Butun jarayon uchun yagona hub */
+/** The single hub for the whole process */
 export const hub = new WsHub()
 
-let _idHisoblagich = 0
+let _idCounter = 0
 
-/** Yangi ulanish uchun holat obyekti */
-export function yangiUlanishHolati(): UlanishHolati {
-  _idHisoblagich += 1
-  return { id: `ws-${_idHisoblagich}`, channels: new Set<string>() }
+/** The state object for a new connection */
+export function newConnectionState(): ConnectionState {
+  _idCounter += 1
+  return { id: `ws-${_idCounter}`, channels: new Set<string>() }
 }

@@ -1,315 +1,316 @@
-// SSH qatlami — serverlarga parolsiz ulanishning butun mexanikasi.
+// SSH layer — the whole mechanism behind passwordless connections to servers.
 //
-// Model:
+// The model:
 //
-//   1) PLATFORMA KALITI — ~/.platforma/ssh/id_ed25519 (+ .pub). Foydalanuvchi
-//      shaxsiy kalitidan ATAYLAB alohida: platformani bekor qilish = serverdan
-//      bitta shu kalitni o'chirish, shaxsiy kalitga tegilmaydi.
+//   1) PLATFORM KEY — ~/.platforma/ssh/id_ed25519 (+ .pub). DELIBERATELY kept
+//      separate from the user's personal key: revoking the platform means
+//      removing this one key from the server, the personal key is untouched.
 //
-//   2) BOSHQARILADIGAN CONFIG — ~/.platforma/ssh/config. Har server uchun
-//      Host bloki (alias, host, port, user, kalit). ~/.ssh/config ga faqat
-//      BITTA `Include` qatori qo'shiladi — foydalanuvchi fayliga boshqa
-//      tegilmaydi. Shu tufayli terminaldagi `ssh <server-nomi>` ham ishlaydi.
+//   2) MANAGED CONFIG — ~/.platforma/ssh/config. One Host block per server
+//      (alias, host, port, user, key). Only a SINGLE `Include` line is added
+//      to ~/.ssh/config — nothing else in the user's file is touched. That is
+//      also why `ssh <server-name>` works straight from the terminal.
 //
-//   3) KALIT JOYLASH — birinchi ulanishda root'ning authorized_keys'iga
-//      ochiq kalit qo'shiladi. Ikki yo'l: foydalanuvchining mavjud kaliti
-//      allaqachon kirsa (BatchMode), parol umuman kerak emas; aks holda
-//      bir martalik parol sshpass orqali beriladi (SSHPASS env — argv'da
-//      ko'rinmaydi, bazaga YOZILMAYDI).
+//   3) KEY INSTALL — on the first connection the public key is appended to
+//      root's authorized_keys. Two routes: if the user's existing key already
+//      gets in (BatchMode), no password is needed at all; otherwise a one-off
+//      password is passed via sshpass (the SSHPASS env var — it never appears
+//      in argv and is NEVER WRITTEN to the database).
 //
-// Barcha tashqi buyruqlar `BuyruqBajaruvchi` orqali o'tadi — testlar uni
-// soxta bajaruvchi bilan almashtiradi (dbOrnat bilan bir xil uslub).
+// Every external command goes through `CommandRunner` — tests swap it for a
+// fake runner (the same style as `setDb`).
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Server, ServerMetrika } from '@platforma/shared'
+import type { Server, ServerMetrics } from '@platforma/shared'
 
 // ---------------------------------------------------------------------------
-// Buyruq bajaruvchi (testlarda almashtiriladi)
+// Command runner (swapped out in tests)
 // ---------------------------------------------------------------------------
 
-export interface BuyruqNatija {
-  kod: number
+export interface CommandResult {
+  code: number
   stdout: string
   stderr: string
 }
 
 /**
- * Buyruq bajarish imkoniyatlari.
+ * Options for running a command.
  *
- * `stdin` — MAXFIY MA'LUMOT UZATISH YO'LI. Token argumentga tushsa u
- * serverdagi `ps` chiqishida va shell tarixida ko'rinardi; stdin esa faqat
- * jarayonning o'ziga boradi (`ssh.envYoz()` shuni ishlatadi).
+ * `stdin` — THE CHANNEL FOR SECRET DATA. A token passed as an argument would
+ * show up in the server's `ps` output and in the shell history; stdin goes
+ * only to the process itself (`ssh.writeEnv()` relies on this).
  *
- * `timeoutMs` — standart chegarani ko'chirish uchun: `docker restart` +
- * healthcheck 20 soniyaga sig'maydi (`amal-bajar.ts`).
+ * `timeoutMs` — to override the default limit: `docker restart` plus a
+ * healthcheck does not fit into 20 seconds (`action-run.ts`).
  */
-export interface BuyruqImkoniyat {
+export interface CommandOptions {
   env?: Record<string, string>
   stdin?: string
   timeoutMs?: number
 }
 
-export type BuyruqBajaruvchi = (
+export type CommandRunner = (
   argv: string[],
-  imkoniyat?: BuyruqImkoniyat,
-) => Promise<BuyruqNatija>
+  options?: CommandOptions,
+) => Promise<CommandResult>
 
-/** SSH sessiyasi osilib qolmasin — ConnectTimeout'dan tashqari JS tomonda ham chegara */
-const BUYRUQ_TIMEOUT_MS = 20_000
+/** Keep an SSH session from hanging — a JS-side limit on top of ConnectTimeout */
+const COMMAND_TIMEOUT_MS = 20_000
 
-const standartBajaruvchi: BuyruqBajaruvchi = async (argv, imkoniyat) => {
-  const stdin = imkoniyat?.stdin
+const defaultRunner: CommandRunner = async (argv, options) => {
+  const stdin = options?.stdin
 
   const proc = Bun.spawn(argv, {
-    env: { ...process.env, ...imkoniyat?.env },
+    env: { ...process.env, ...options?.env },
     stdout: 'pipe',
     stderr: 'pipe',
-    // Berilmasa `ignore` — avvalgi xulq saqlanadi (jarayon stdin kutib
-    // osilib qolmasin).
+    // When not supplied, `ignore` — the previous behaviour is preserved (so
+    // the process does not hang waiting on stdin).
     stdin: stdin === undefined ? 'ignore' : 'pipe',
   })
 
-  // Yozishni DARHOL boshlaymiz, `await` qilmasdan: katta stdin va to'lgan
-  // quvur holatida yozishni kutib turib chiqishni o'qimasak, ikki tomon
-  // bir-birini kutib deadlock bo'lardi.
+  // Start writing IMMEDIATELY, without `await`: with a large stdin and a full
+  // pipe, waiting for the write to finish without draining the output would
+  // deadlock — both sides would be waiting for each other.
   if (stdin !== undefined) {
-    const yozish = (async () => {
+    const write = (async () => {
       try {
         proc.stdin!.write(stdin)
         await proc.stdin!.end()
       } catch {
-        // Jarayon stdin'ni o'qimasdan yopilgan bo'lishi mumkin (EPIPE) —
-        // bu buyruq natijasini bekor qilmaydi, chiqish kodi o'zi aytadi.
+        // The process may have exited without reading stdin (EPIPE) — that
+        // does not invalidate the command result, the exit code speaks for
+        // itself.
       }
     })()
-    // Yutilgan xato bo'lmasin
-    void yozish
+    // Make sure the error is not swallowed silently
+    void write
   }
 
-  const soat = setTimeout(() => proc.kill(), imkoniyat?.timeoutMs ?? BUYRUQ_TIMEOUT_MS)
+  const timer = setTimeout(() => proc.kill(), options?.timeoutMs ?? COMMAND_TIMEOUT_MS)
   try {
-    const [stdout, stderr, kod] = await Promise.all([
+    const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
     ])
-    return { kod, stdout, stderr }
+    return { code, stdout, stderr }
   } finally {
-    clearTimeout(soat)
+    clearTimeout(timer)
   }
 }
 
-let bajaruvchi: BuyruqBajaruvchi = standartBajaruvchi
+let runner: CommandRunner = defaultRunner
 
-/** Testlar uchun: soxta bajaruvchi o'rnatish (null — standartga qaytarish) */
-export function bajaruvchiOrnat(b: BuyruqBajaruvchi | null): void {
-  bajaruvchi = b ?? standartBajaruvchi
+/** For tests: install a fake runner (null — restore the default) */
+export function setCommandRunner(r: CommandRunner | null): void {
+  runner = r ?? defaultRunner
 }
 
 /**
- * Joriy bajaruvchi orqali buyruq ishga tushiradi.
+ * Runs a command through the current runner.
  *
- * `ilova-ssh.ts` uchun ochilgan: u ham SOXTA bajaruvchidan o'tishi kerak,
- * aks holda ilova amallari testlarida haqiqiy `ssh` chaqirilardi. Modul
- * ichidagi `bajaruvchi` o'zgaruvchisiga to'g'ridan murojaat qilish import
- * paytida nusxa olib qolardi (`bajaruvchiOrnat` keyin ishlamasdi).
+ * Exposed for `app-ssh.ts`: it also has to go through the FAKE runner,
+ * otherwise app-action tests would call the real `ssh`. Referring to this
+ * module's `runner` variable directly would capture a copy at import time
+ * (and `setCommandRunner` would then have no effect).
  */
-export function sshBajar(
+export function sshRun(
   argv: string[],
-  imkoniyat?: BuyruqImkoniyat,
-): Promise<BuyruqNatija> {
-  return bajaruvchi(argv, imkoniyat)
+  options?: CommandOptions,
+): Promise<CommandResult> {
+  return runner(argv, options)
 }
 
 // ---------------------------------------------------------------------------
-// Yo'llar
+// Paths
 // ---------------------------------------------------------------------------
 
-/** Platforma SSH papkasi (kalit + config + known_hosts). Testlarda env bilan ko'chiriladi. */
-export function sshIldizi(): string {
-  const env = process.env.PLATFORMA_SSH?.trim()
+/** The platform SSH directory (key + config + known_hosts). Relocatable via env in tests. */
+export function sshRoot(): string {
+  const env = process.env.PLATFORM_SSH?.trim()
   if (env) return env
   return join(homedir(), '.platforma', 'ssh')
 }
 
-/** Foydalanuvchining ~/.ssh/config fayli. Testlarda env bilan ko'chiriladi. */
-export function userSshConfigYoli(): string {
-  const env = process.env.PLATFORMA_USER_SSH_CONFIG?.trim()
+/** The user's ~/.ssh/config file. Relocatable via env in tests. */
+export function userSshConfigPath(): string {
+  const env = process.env.PLATFORM_USER_SSH_CONFIG?.trim()
   if (env) return env
   return join(homedir(), '.ssh', 'config')
 }
 
-export function kalitYoli(): string {
-  return join(sshIldizi(), 'id_ed25519')
+export function keyPath(): string {
+  return join(sshRoot(), 'id_ed25519')
 }
 
-export function boshqarilganConfigYoli(): string {
-  return join(sshIldizi(), 'config')
+export function managedConfigPath(): string {
+  return join(sshRoot(), 'config')
 }
 
-function knownHostsYoli(): string {
-  return join(sshIldizi(), 'known_hosts')
+function knownHostsPath(): string {
+  return join(sshRoot(), 'known_hosts')
 }
 
 // ---------------------------------------------------------------------------
-// Kalit
+// Key
 // ---------------------------------------------------------------------------
 
 /**
- * Platforma kalit juftligini kafolatlaydi va OCHIQ kalit matnini qaytaradi.
- * Kalit bir marta yaratiladi, parolsiz (`-N ''`) — usiz "parolsiz ulanish"
- * degan maqsadning o'zi yo'qqa chiqadi.
+ * Guarantees the platform key pair exists and returns the PUBLIC key text.
+ * The key is generated once, without a passphrase (`-N ''`) — with one, the
+ * whole point of "passwordless connections" would disappear.
  */
-export async function kalitTaminla(): Promise<string> {
-  const maxfiy = kalitYoli()
-  const ochiq = `${maxfiy}.pub`
+export async function ensureKey(): Promise<string> {
+  const secret = keyPath()
+  const publicKey = `${secret}.pub`
 
-  mkdirSync(sshIldizi(), { recursive: true, mode: 0o700 })
+  mkdirSync(sshRoot(), { recursive: true, mode: 0o700 })
 
-  if (!existsSync(ochiq)) {
-    const n = await bajaruvchi([
+  if (!existsSync(publicKey)) {
+    const r = await runner([
       'ssh-keygen',
       '-t', 'ed25519',
       '-N', '',
       '-C', 'platforma',
-      '-f', maxfiy,
+      '-f', secret,
       '-q',
     ])
-    if (n.kod !== 0) {
-      throw new Error(`ssh-keygen error: ${n.stderr.trim() || n.stdout.trim()}`)
+    if (r.code !== 0) {
+      throw new Error(`ssh-keygen error: ${r.stderr.trim() || r.stdout.trim()}`)
     }
   }
 
-  return readFileSync(ochiq, 'utf-8').trim()
+  return readFileSync(publicKey, 'utf-8').trim()
 }
 
 // ---------------------------------------------------------------------------
-// Config fayllar
+// Config files
 // ---------------------------------------------------------------------------
 
 /**
- * Boshqariladigan config'ni bazadagi serverlar ro'yxatidan TO'LIQ qayta yozadi.
- * Haqiqat manbai baza — faylni qo'lda tahrirlash keyingi yozuvda yo'qoladi
- * (skilllardagi `.platforma/skills/` bilan bir xil qoida).
+ * Rewrites the managed config IN FULL from the server list in the database.
+ * The database is the source of truth — hand edits to the file are lost on
+ * the next write (the same rule as `.platforma/skills/` for skills).
  *
- * `UserKnownHostsFile` + `accept-new` shu yerda: birinchi ulanishda host
- * kaliti so'ralmaydi (interaktiv prompt serverda osilib qolardi) va
- * foydalanuvchining ~/.ssh/known_hosts'iga ham tegilmaydi.
+ * `UserKnownHostsFile` + `accept-new` live here: the host key is not asked
+ * for on the first connection (an interactive prompt would hang the server)
+ * and the user's ~/.ssh/known_hosts is left alone as well.
  */
-export function boshqarilganConfigYoz(serverlar: Server[]): void {
-  mkdirSync(sshIldizi(), { recursive: true, mode: 0o700 })
+export function writeManagedConfig(servers: Server[]): void {
+  mkdirSync(sshRoot(), { recursive: true, mode: 0o700 })
 
-  const bosh =
+  const header =
     '# Managed by the platform — DO NOT EDIT BY HAND.\n' +
     '# Rewritten in full from the server list in the database on every save.\n'
 
-  const bloklar = serverlar.map((s) =>
+  const blocks = servers.map((s) =>
     [
       `Host ${s.name}`,
       `  HostName ${s.host}`,
       `  User ${s.username}`,
       `  Port ${s.port}`,
-      `  IdentityFile ${kalitYoli()}`,
+      `  IdentityFile ${keyPath()}`,
       '  IdentitiesOnly yes',
-      `  UserKnownHostsFile ${knownHostsYoli()}`,
+      `  UserKnownHostsFile ${knownHostsPath()}`,
       '  StrictHostKeyChecking accept-new',
     ].join('\n'),
   )
 
-  writeFileSync(boshqarilganConfigYoli(), `${bosh}\n${bloklar.join('\n\n')}\n`, { mode: 0o600 })
+  writeFileSync(managedConfigPath(), `${header}\n${blocks.join('\n\n')}\n`, { mode: 0o600 })
 }
 
 /**
- * ~/.ssh/config boshiga `Include` qatorini qo'shadi (bir marta).
+ * Adds the `Include` line at the TOP of ~/.ssh/config (once).
  *
- * AYNAN BOSHIGA: OpenSSH'da `Include` biror `Host` blokidan KEYIN kelsa,
- * o'sha blokning ichiga tegishli bo'lib qoladi va global ishlamaydi.
- * Mavjud tarkib o'zgarishsiz pastda qoladi.
+ * IT MUST BE AT THE TOP: in OpenSSH an `Include` that comes AFTER some `Host`
+ * block belongs to that block and does not apply globally. The existing
+ * contents stay unchanged below it.
  */
-export function includeTaminla(): void {
-  const yol = userSshConfigYoli()
-  const qator = `Include ${boshqarilganConfigYoli()}`
+export function ensureInclude(): void {
+  const path = userSshConfigPath()
+  const line = `Include ${managedConfigPath()}`
 
-  const mavjud = existsSync(yol) ? readFileSync(yol, 'utf-8') : ''
-  if (mavjud.split('\n').some((q) => q.trim() === qator)) return
+  const existing = existsSync(path) ? readFileSync(path, 'utf-8') : ''
+  if (existing.split('\n').some((l) => l.trim() === line)) return
 
-  mkdirSync(dirname(yol), { recursive: true, mode: 0o700 })
-  const izoh = '# Platform servers (line added automatically)\n'
-  writeFileSync(yol, `${izoh}${qator}\n\n${mavjud}`)
-  chmodSync(yol, 0o600)
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  const note = '# Platform servers (line added automatically)\n'
+  writeFileSync(path, `${note}${line}\n\n${existing}`)
+  chmodSync(path, 0o600)
 }
 
 // ---------------------------------------------------------------------------
-// Kalitni serverga joylash
+// Installing the key on a server
 // ---------------------------------------------------------------------------
 
-/** Umumiy ssh opsiyalari — joylash bosqichida server hali config'da yo'q */
-function ulanishOpsiyalari(port: number): string[] {
+/** Shared ssh options — during the install step the server is not in the config yet */
+function connectionOptions(port: number): string[] {
   return [
     '-o', 'ConnectTimeout=10',
     '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', `UserKnownHostsFile=${knownHostsYoli()}`,
+    '-o', `UserKnownHostsFile=${knownHostsPath()}`,
     '-p', String(port),
   ]
 }
 
 /**
- * Ochiq kalitni masofadagi userning authorized_keys'iga qo'shadigan skript.
- * Idempotent: kalit bor bo'lsa qayta yozilmaydi (grep -qxF).
- * Kalit matni ed25519 uchun faqat [A-Za-z0-9+/= -] belgilardan iborat —
- * bitta qo'shtirnoq ichida xavfsiz.
+ * The script that appends the public key to the remote user's authorized_keys.
+ * Idempotent: if the key is already there it is not written again (grep -qxF).
+ * An ed25519 key consists only of [A-Za-z0-9+/= -] characters — safe inside a
+ * single pair of quotes.
  */
-function joylashSkripti(ochiqKalit: string): string {
+function installScript(publicKey: string): string {
   return (
     'mkdir -p ~/.ssh && chmod 700 ~/.ssh && ' +
     'touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && ' +
-    `{ grep -qxF '${ochiqKalit}' ~/.ssh/authorized_keys || echo '${ochiqKalit}' >> ~/.ssh/authorized_keys; }`
+    `{ grep -qxF '${publicKey}' ~/.ssh/authorized_keys || echo '${publicKey}' >> ~/.ssh/authorized_keys; }`
   )
 }
 
-export interface JoylashManzil {
+export interface InstallTarget {
   host: string
   port: number
   username: string
 }
 
 /**
- * Platforma ochiq kalitini serverga joylaydi.
+ * Installs the platform public key on a server.
  *
- * Tartib:
- *   1) parolsiz urinish — foydalanuvchining mavjud kalitlari (ssh-agent,
- *      ~/.ssh/id_*) allaqachon kira olsa, parol umuman kerak emas;
- *   2) parol berilgan bo'lsa — sshpass orqali bir martalik autentifikatsiya.
+ * The order:
+ *   1) try without a password — if the user's existing keys (ssh-agent,
+ *      ~/.ssh/id_*) already get in, no password is needed at all;
+ *   2) if a password was supplied — a one-off authentication via sshpass.
  *
- * Muvaffaqiyatsiz bo'lsa foydalanuvchiga ko'rsatiladigan aniq xato tashlaydi.
+ * On failure it throws a precise error meant to be shown to the user.
  */
-export async function kalitJoyla(manzil: JoylashManzil, parol?: string): Promise<void> {
-  const ochiqKalit = await kalitTaminla()
-  const skript = joylashSkripti(ochiqKalit)
-  const nishon = `${manzil.username}@${manzil.host}`
+export async function installKey(target: InstallTarget, password?: string): Promise<void> {
+  const publicKey = await ensureKey()
+  const script = installScript(publicKey)
+  const destination = `${target.username}@${target.host}`
 
-  // 1) Mavjud kalitlar bilan urinish. BatchMode — parol so'ramasin (prompt
-  // server jarayonida javobsiz osilib qolardi).
-  const kalitBilan = await bajaruvchi([
+  // 1) Try with the existing keys. BatchMode — do not ask for a password
+  // (the prompt would hang unanswered inside the server process).
+  const withKey = await runner([
     'ssh',
     '-o', 'BatchMode=yes',
-    ...ulanishOpsiyalari(manzil.port),
-    nishon,
-    skript,
+    ...connectionOptions(target.port),
+    destination,
+    script,
   ])
-  if (kalitBilan.kod === 0) return
+  if (withKey.code === 0) return
 
-  if (!parol) {
+  if (!password) {
     throw new Error(
-      `Could not log in to ${nishon} with your existing SSH keys. ` +
+      `Could not log in to ${destination} with your existing SSH keys. ` +
         `Enter a password or install your key on the server first. ` +
-        `(ssh: ${kalitBilan.stderr.trim().split('\n').pop() ?? 'unknown error'})`,
+        `(ssh: ${withKey.stderr.trim().split('\n').pop() ?? 'unknown error'})`,
     )
   }
 
-  // 2) Parol bilan — sshpass talab qilinadi.
+  // 2) With a password — sshpass is required.
   if (!Bun.which('sshpass')) {
     throw new Error(
       "Connecting with a password requires 'sshpass' to be installed " +
@@ -317,58 +318,61 @@ export async function kalitJoyla(manzil: JoylashManzil, parol?: string): Promise
     )
   }
 
-  // Parol SSHPASS env orqali (-e): argv'da ko'rinmaydi, `ps` ham ko'rmaydi.
-  const parolBilan = await bajaruvchi(
+  // The password travels via the SSHPASS env var (-e): it never appears in
+  // argv, so `ps` cannot see it either.
+  const withPassword = await runner(
     [
       'sshpass',
       '-e',
       'ssh',
       '-o', 'NumberOfPasswordPrompts=1',
       '-o', 'PubkeyAuthentication=no',
-      ...ulanishOpsiyalari(manzil.port),
-      nishon,
-      skript,
+      ...connectionOptions(target.port),
+      destination,
+      script,
     ],
-    { env: { SSHPASS: parol } },
+    { env: { SSHPASS: password } },
   )
-  if (parolBilan.kod !== 0) {
-    const sabab = parolBilan.stderr.trim().split('\n').pop() ?? ''
-    if (parolBilan.kod === 5 || /denied/i.test(sabab)) {
-      throw new Error(`Wrong password, or ${nishon} does not allow password logins.`)
+  if (withPassword.code !== 0) {
+    const reason = withPassword.stderr.trim().split('\n').pop() ?? ''
+    if (withPassword.code === 5 || /denied/i.test(reason)) {
+      throw new Error(`Wrong password, or ${destination} does not allow password logins.`)
     }
-    throw new Error(`Could not connect to ${nishon}: ${sabab || `exit code ${parolBilan.kod}`}`)
+    throw new Error(
+      `Could not connect to ${destination}: ${reason || `exit code ${withPassword.code}`}`,
+    )
   }
 }
 
 // ---------------------------------------------------------------------------
-// Tekshirish va metrika
+// Checks and metrics
 // ---------------------------------------------------------------------------
 
 /**
- * Boshqariladigan config orqali parolsiz ulanishni tasdiqlaydi.
- * `-F` bilan FAQAT platforma config'i o'qiladi — foydalanuvchining shaxsiy
- * sozlamalari (ProxyJump va h.k.) platforma xulq-atvoriga aralashmaydi.
+ * Confirms that a passwordless connection works through the managed config.
+ * With `-F` ONLY the platform config is read — the user's personal settings
+ * (ProxyJump and so on) cannot interfere with the platform's behaviour.
  */
-export async function ulanishniTekshir(nom: string): Promise<void> {
-  const n = await bajaruvchi([
+export async function checkConnection(name: string): Promise<void> {
+  const r = await runner([
     'ssh',
-    '-F', boshqarilganConfigYoli(),
+    '-F', managedConfigPath(),
     '-o', 'BatchMode=yes',
     '-o', 'ConnectTimeout=8',
-    nom,
+    name,
     'true',
   ])
-  if (n.kod !== 0) {
-    throw new Error(n.stderr.trim().split('\n').pop() ?? `ssh exit code ${n.kod}`)
+  if (r.code !== 0) {
+    throw new Error(r.stderr.trim().split('\n').pop() ?? `ssh exit code ${r.code}`)
   }
 }
 
 /**
- * Bitta SSH chaqiruvi bilan hamma metrika. Chiqish qatorlari KEY=value
- * ko'rinishida — parser tartibga bog'lanmaydi, yetishmagan qator metrika
- * maydonini shunchaki bo'sh qoldiradi.
+ * All the metrics in a single SSH call. The output lines are KEY=value, so
+ * the parser does not depend on their order and a missing line simply leaves
+ * that metric field empty.
  */
-const METRIKA_SKRIPTI = [
+const METRICS_SCRIPT = [
   `echo "UPTIME=$(uptime -p 2>/dev/null || uptime)"`,
   `echo "LOAD=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)"`,
   `echo "NPROC=$(nproc 2>/dev/null || echo 1)"`,
@@ -376,73 +380,69 @@ const METRIKA_SKRIPTI = [
   `df -kP / 2>/dev/null | awk 'NR==2{print "DISK="$2" "$3}'`,
 ].join('; ')
 
-/** "up 3 days, 4 hours" → "3 kun 4 soat" — inglizcha chiqishni tarjima qiladi */
-function uptimeTarjima(xom: string): string {
-  return xom
+/** "up 3 days, 4 hours" → "3 days 4 hours" — tidies up the uptime output */
+function formatUptime(raw: string): string {
+  return raw
     .replace(/^up\s+/, '')
-    .replace(/(\d+)\s+weeks?/g, '$1 hafta')
-    .replace(/(\d+)\s+days?/g, '$1 kun')
-    .replace(/(\d+)\s+hours?/g, '$1 soat')
-    .replace(/(\d+)\s+minutes?/g, '$1 daqiqa')
     .replace(/,/g, '')
     .trim()
 }
 
-function foiz(band: number, jami: number): number | undefined {
-  if (!Number.isFinite(band) || !Number.isFinite(jami) || jami <= 0) return undefined
-  return Math.min(100, Math.max(0, Math.round((band / jami) * 100)))
+function percent(used: number, total: number): number | undefined {
+  if (!Number.isFinite(used) || !Number.isFinite(total) || total <= 0) return undefined
+  return Math.min(100, Math.max(0, Math.round((used / total) * 100)))
 }
 
-/** METRIKA_SKRIPTI chiqishini ServerMetrika'ga aylantiradi (testlar uchun alohida) */
-export function metrikaTahlil(stdout: string): ServerMetrika {
-  const q = new Map<string, string>()
-  for (const qator of stdout.split('\n')) {
-    const i = qator.indexOf('=')
-    if (i > 0) q.set(qator.slice(0, i), qator.slice(i + 1).trim())
+/** Turns METRICS_SCRIPT output into ServerMetrics (kept separate for tests) */
+export function parseMetrics(stdout: string): ServerMetrics {
+  const values = new Map<string, string>()
+  for (const line of stdout.split('\n')) {
+    const i = line.indexOf('=')
+    if (i > 0) values.set(line.slice(0, i), line.slice(i + 1).trim())
   }
 
-  const m: ServerMetrika = { holat: 'ulangan' }
+  const m: ServerMetrics = { status: 'connected' }
 
-  const uptime = q.get('UPTIME')
-  if (uptime) m.uptime = uptimeTarjima(uptime)
+  const uptime = values.get('UPTIME')
+  if (uptime) m.uptime = formatUptime(uptime)
 
-  const load = Number(q.get('LOAD'))
-  const nproc = Number(q.get('NPROC'))
+  const load = Number(values.get('LOAD'))
+  const nproc = Number(values.get('NPROC'))
   if (Number.isFinite(load) && Number.isFinite(nproc) && nproc > 0) {
     m.cpu = Math.min(100, Math.max(0, Math.round((load / nproc) * 100)))
   }
 
-  const ram = q.get('RAM')?.split(' ').map(Number)
-  if (ram?.length === 2) m.ram = foiz(ram[1]!, ram[0]!)
+  const ram = values.get('RAM')?.split(' ').map(Number)
+  if (ram?.length === 2) m.ram = percent(ram[1]!, ram[0]!)
 
-  const disk = q.get('DISK')?.split(' ').map(Number)
-  if (disk?.length === 2) m.disk = foiz(disk[1]!, disk[0]!)
+  const disk = values.get('DISK')?.split(' ').map(Number)
+  if (disk?.length === 2) m.disk = percent(disk[1]!, disk[0]!)
 
   return m
 }
 
-/** Serverning jonli holatini o'qiydi. Ulanib bo'lmasa holat='xato' qaytadi (throw EMAS). */
-export async function metrikaOl(nom: string): Promise<ServerMetrika> {
-  let n: BuyruqNatija
+/** Reads a server's live status. If it cannot connect, status='error' is returned (it does NOT throw). */
+export async function fetchMetrics(name: string): Promise<ServerMetrics> {
+  let r: CommandResult
   try {
-    n = await bajaruvchi([
+    r = await runner([
       'ssh',
-      '-F', boshqarilganConfigYoli(),
+      '-F', managedConfigPath(),
       '-o', 'BatchMode=yes',
       '-o', 'ConnectTimeout=8',
-      nom,
-      METRIKA_SKRIPTI,
+      name,
+      METRICS_SCRIPT,
     ])
-  } catch (xato) {
-    return { holat: 'xato', xato: xato instanceof Error ? xato.message : String(xato) }
+  } catch (error) {
+    return { status: 'error', error: error instanceof Error ? error.message : String(error) }
   }
 
-  if (n.kod !== 0) {
+  if (r.code !== 0) {
     return {
-      holat: 'xato',
-      xato: n.stderr.trim().split('\n').pop() ?? `ssh exit code ${n.kod}`,
+      status: 'error',
+      error: r.stderr.trim().split('\n').pop() ?? `ssh exit code ${r.code}`,
     }
   }
 
-  return metrikaTahlil(n.stdout)
+  return parseMetrics(r.stdout)
 }

@@ -1,133 +1,133 @@
-// Chat oqimi: validatsiya, sessiya provider qulfi va migratsiya 002.
+// The chat flow: validation, the session's provider lock and migration 002.
 //
-// LLM'ning o'zi chaqirilmaydi — tarmoqqa chiqmaydigan testlar. Haqiqiy oqim
-// orchestrator.test.ts da soxta LLM bilan sinaladi.
+// The LLM itself is never called — these tests do not go near the network. The
+// real stream is exercised in orchestrator.test.ts with a fake LLM.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
 import type { ChatSession } from '@platforma/shared'
-import { keshniOrnat, keshniTozala } from '@platforma/ai'
+import { setCache, clearCache } from '@platforma/ai'
 import { app } from '../src/app.ts'
-import { bazaOch, dbOrnat } from '../src/db.ts'
+import { openDb, setDb } from '../src/db.ts'
 import {
-  biriktirmaYoz,
-  sessiyaModelniOzgart,
-  sessiyaModelQulfla,
-  sessiyaOqi,
-  sessiyaYarat,
-  xabarlarOqi,
-  xabarYoz,
+  writeAttachment,
+  changeSessionModel,
+  lockSessionModel,
+  readSession,
+  createSession,
+  readMessages,
+  writeMessage,
 } from '../src/repo.ts'
 import { hub } from '../src/ws/hub.ts'
 
 let db: Database
 
 beforeEach(() => {
-  db = bazaOch(':memory:')
-  dbOrnat(db)
+  db = openDb(':memory:')
+  setDb(db)
 })
 
 afterEach(() => {
-  dbOrnat(null)
-  hub.tozala()
+  setDb(null)
+  hub.clear()
   db.close()
 })
 
-async function yubor(tana: unknown): Promise<{ status: number; body: Record<string, string> }> {
-  const javob = await app.request('/api/chat/send', {
+async function send(body: unknown): Promise<{ status: number; body: Record<string, string> }> {
+  const response = await app.request('/api/chat/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(tana),
+    body: JSON.stringify(body),
   })
-  return { status: javob.status, body: (await javob.json()) as Record<string, string> }
+  return { status: response.status, body: (await response.json()) as Record<string, string> }
 }
 
-describe('migratsiya 002 — sessiya modeli', () => {
-  test('chat_sessions da provider va model ustunlari bor', () => {
-    const ustunlar = db
+describe('migration 002 — the session model', () => {
+  test('chat_sessions has provider and model columns', () => {
+    const columns = db
       .query<{ name: string }, []>('PRAGMA table_info(chat_sessions)')
       .all()
-      .map((u) => u.name)
-    expect(ustunlar).toContain('provider')
-    expect(ustunlar).toContain('model')
+      .map((c) => c.name)
+    expect(columns).toContain('provider')
+    expect(columns).toContain('model')
   })
 
-  test('yangi sessiyada provider va model bo\'sh', () => {
-    const s = sessiyaYarat('sinov', db)
+  test('a new session has no provider or model yet', () => {
+    const s = createSession('test', db)
     expect(s.provider).toBeUndefined()
     expect(s.model).toBeUndefined()
   })
 
-  test('sessiyaModelQulfla faqat birinchi marta yozadi', () => {
-    const s = sessiyaYarat('sinov', db)
+  test('lockSessionModel only writes the first time', () => {
+    const s = createSession('test', db)
 
-    expect(sessiyaModelQulfla(s.id, 'ollama', 'qwen3:8b', db)).toBe(true)
-    expect(sessiyaOqi(s.id, db)?.provider).toBe('ollama')
+    expect(lockSessionModel(s.id, 'ollama', 'qwen3:8b', db)).toBe(true)
+    expect(readSession(s.id, db)?.provider).toBe('ollama')
 
-    // Ikkinchi urinish o'zgartirmaydi — poyga holatiga qarshi himoya
-    expect(sessiyaModelQulfla(s.id, 'anthropic', 'claude-haiku-4-5', db)).toBe(false)
-    expect(sessiyaOqi(s.id, db)?.provider).toBe('ollama')
+    // A second attempt changes nothing — protection against a race
+    expect(lockSessionModel(s.id, 'anthropic', 'claude-haiku-4-5', db)).toBe(false)
+    expect(readSession(s.id, db)?.provider).toBe('ollama')
   })
 
-  test('sessiyaModelniOzgart providerni saqlab modelni almashtiradi', () => {
-    const s = sessiyaYarat('sinov', db)
-    sessiyaModelQulfla(s.id, 'ollama', 'qwen3:0.6b', db)
-    sessiyaModelniOzgart(s.id, 'qwen3:8b', db)
+  test('changeSessionModel swaps the model but keeps the provider', () => {
+    const s = createSession('test', db)
+    lockSessionModel(s.id, 'ollama', 'qwen3:0.6b', db)
+    changeSessionModel(s.id, 'qwen3:8b', db)
 
-    const yangilangan = sessiyaOqi(s.id, db)
-    expect(yangilangan?.provider).toBe('ollama')
-    expect(yangilangan?.model).toBe('qwen3:8b')
+    const updated = readSession(s.id, db)
+    expect(updated?.provider).toBe('ollama')
+    expect(updated?.model).toBe('qwen3:8b')
   })
 })
 
-describe('POST /api/chat/send — validatsiya', () => {
-  test('JSON bo\'lmagan tana 400', async () => {
-    const javob = await app.request('/api/chat/send', {
+describe('POST /api/chat/send — validation', () => {
+  test('a body that is not JSON gives 400', async () => {
+    const response = await app.request('/api/chat/send', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: 'bu json emas',
+      body: 'this is not json',
     })
-    expect(javob.status).toBe(400)
+    expect(response.status).toBe(400)
   })
 
-  test('sessionId yo\'q — 400', async () => {
-    const { status, body } = await yubor({ text: 'salom' })
+  test('no sessionId — 400', async () => {
+    const { status, body } = await send({ text: 'hello' })
     expect(status).toBe(400)
     expect(body.error).toContain('sessionId')
   })
 
-  test('bo\'sh matn — 400', async () => {
-    const s = sessiyaYarat('sinov', db)
-    const { status, body } = await yubor({ sessionId: s.id, text: '   ' })
+  test('empty text — 400', async () => {
+    const s = createSession('test', db)
+    const { status, body } = await send({ sessionId: s.id, text: '   ' })
     expect(status).toBe(400)
     expect(body.error).toContain('empty')
   })
 
-  test('mavjud bo\'lmagan sessiya — 404', async () => {
-    const { status } = await yubor({
-      sessionId: 'yoq-bunday',
-      text: 'salom',
+  test('a session that does not exist — 404', async () => {
+    const { status } = await send({
+      sessionId: 'no-such-thing',
+      text: 'hello',
       model: { provider: 'ollama', model: 'x' },
     })
     expect(status).toBe(404)
   })
 
-  test('birinchi xabarda model tanlanmagan — 400', async () => {
-    const s = sessiyaYarat('sinov', db)
-    const { status, body } = await yubor({ sessionId: s.id, text: 'salom' })
+  test('no model chosen on the first message — 400', async () => {
+    const s = createSession('test', db)
+    const { status, body } = await send({ sessionId: s.id, text: 'hello' })
     expect(status).toBe(400)
     expect(body.error).toContain('model')
   })
 })
 
-describe('POST /api/chat/send — provider qulfi', () => {
-  test('qulflangan sessiyada boshqa provider 409 beradi', async () => {
-    const s = sessiyaYarat('sinov', db)
-    sessiyaModelQulfla(s.id, 'ollama', 'qwen3:0.6b', db)
+describe('POST /api/chat/send — the provider lock', () => {
+  test('a different provider in a locked session gives 409', async () => {
+    const s = createSession('test', db)
+    lockSessionModel(s.id, 'ollama', 'qwen3:0.6b', db)
 
-    const { status, body } = await yubor({
+    const { status, body } = await send({
       sessionId: s.id,
-      text: 'salom',
+      text: 'hello',
       model: { provider: 'anthropic', model: 'claude-haiku-4-5' },
     })
     expect(status).toBe(409)
@@ -136,195 +136,196 @@ describe('POST /api/chat/send — provider qulfi', () => {
   })
 })
 
-describe('migratsiya 003 — tool kartalari', () => {
-  test('chat_messages da tool_cards ustuni bor', () => {
-    const ustunlar = db
+describe('migration 003 — tool cards', () => {
+  test('chat_messages has a tool_cards column', () => {
+    const columns = db
       .query<{ name: string }, []>('PRAGMA table_info(chat_messages)')
       .all()
-      .map((u) => u.name)
-    expect(ustunlar).toContain('tool_cards')
-    // Eski ustun ham joyida
-    expect(ustunlar).toContain('tool_card')
+      .map((c) => c.name)
+    expect(columns).toContain('tool_cards')
+    // The old column is still in place
+    expect(columns).toContain('tool_card')
   })
 
-  test('tool kartalari yozilib qayta o\'qiladi', () => {
-    const s = sessiyaYarat('sinov', db)
-    xabarYoz(
+  test('tool cards are written and read back', () => {
+    const s = createSession('test', db)
+    writeMessage(
       {
         sessionId: s.id,
         role: 'assistant',
-        text: 'tayyor',
+        text: 'ready',
         toolCards: [
-          { id: 't1', nom: 'read', args: 'a.txt', holat: 'tugadi', natija: 'salom' },
-          { id: 't2', nom: 'bash', args: 'ls', holat: 'xato', natija: 'xato' },
+          { id: 't1', name: 'read', args: 'a.txt', status: 'done', result: 'hello' },
+          { id: 't2', name: 'bash', args: 'ls', status: 'error', result: 'error' },
         ],
       },
       db,
     )
 
-    const xabarlar = xabarlarOqi(s.id, db)
-    expect(xabarlar[0]?.toolCards).toHaveLength(2)
-    expect(xabarlar[0]?.toolCards?.[0]?.nom).toBe('read')
-    expect(xabarlar[0]?.toolCards?.[1]?.holat).toBe('xato')
+    const messages = readMessages(s.id, db)
+    expect(messages[0]?.toolCards).toHaveLength(2)
+    expect(messages[0]?.toolCards?.[0]?.name).toBe('read')
+    expect(messages[0]?.toolCards?.[1]?.status).toBe('error')
   })
 
-  test('tool kartasiz xabar undefined qaytaradi', () => {
-    const s = sessiyaYarat('sinov', db)
-    xabarYoz({ sessionId: s.id, role: 'user', text: 'salom' }, db)
-    expect(xabarlarOqi(s.id, db)[0]?.toolCards).toBeUndefined()
+  test('a message with no tool card returns undefined', () => {
+    const s = createSession('test', db)
+    writeMessage({ sessionId: s.id, role: 'user', text: 'hello' }, db)
+    expect(readMessages(s.id, db)[0]?.toolCards).toBeUndefined()
   })
 })
 
 describe('POST /api/chat/permission', () => {
-  test('noto\'g\'ri javob qiymati 400', async () => {
-    const javob = await app.request('/api/chat/permission', {
+  test('an invalid answer value gives 400', async () => {
+    const response = await app.request('/api/chat/permission', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: 's', sorovId: 'r', javob: 'nimadir' }),
+      body: JSON.stringify({ sessionId: 's', requestId: 'r', answer: 'something' }),
     })
-    expect(javob.status).toBe(400)
+    expect(response.status).toBe(400)
   })
 
-  test('sessionId yo\'q — 400', async () => {
-    const javob = await app.request('/api/chat/permission', {
+  test('no sessionId — 400', async () => {
+    const response = await app.request('/api/chat/permission', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sorovId: 'r', javob: 'ruxsat' }),
+      body: JSON.stringify({ requestId: 'r', answer: 'allow' }),
     })
-    expect(javob.status).toBe(400)
+    expect(response.status).toBe(400)
   })
 
-  test('mavjud bo\'lmagan so\'rov 404', async () => {
-    const javob = await app.request('/api/chat/permission', {
+  test('a request that does not exist gives 404', async () => {
+    const response = await app.request('/api/chat/permission', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: 's', sorovId: 'yoq-bunday', javob: 'ruxsat' }),
+      body: JSON.stringify({ sessionId: 's', requestId: 'no-such-thing', answer: 'allow' }),
     })
-    expect(javob.status).toBe(404)
+    expect(response.status).toBe(404)
   })
 })
 
 describe('GET /api/chat/running', () => {
-  // Oqim ketayotgan holat orchestrator.test.ts da sinaladi — u yerda LLM
-  // moduli soxtalashtirilgan. Bu yerda shakl va bo'sh holat tekshiriladi.
+  // A stream actually in flight is exercised in orchestrator.test.ts, where the
+  // LLM module is faked. Here the shape and the empty case are checked.
 
-  test("hech narsa ishlamayotganda bo'sh ro'yxat qaytadi", async () => {
-    const javob = await app.request('/api/chat/running')
-    expect(javob.status).toBe(200)
-    expect(await javob.json()).toEqual({ running: [] })
+  test('an empty list comes back when nothing is running', async () => {
+    const response = await app.request('/api/chat/running')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ running: [] })
   })
 
-  test("`running` maydoni har doim massiv — UI shartsiz map qiladi", async () => {
-    const javob = await app.request('/api/chat/running')
-    const tana = (await javob.json()) as { running: unknown }
-    expect(Array.isArray(tana.running)).toBe(true)
-  })
-})
-
-describe('GET /api/chat/sessions — model maydonlari', () => {
-  test('qulflangan sessiya provider va modelni qaytaradi', async () => {
-    const s = sessiyaYarat('sinov', db)
-    sessiyaModelQulfla(s.id, 'openrouter', 'anthropic/claude-haiku-4.5', db)
-
-    const javob = await app.request('/api/chat/sessions')
-    const { sessions } = (await javob.json()) as { sessions: ChatSession[] }
-    const topilgan = sessions.find((x) => x.id === s.id)
-
-    expect(topilgan?.provider).toBe('openrouter')
-    expect(topilgan?.model).toBe('anthropic/claude-haiku-4.5')
+  test('`running` is always an array — the UI maps it unconditionally', async () => {
+    const response = await app.request('/api/chat/running')
+    const body = (await response.json()) as { running: unknown }
+    expect(Array.isArray(body.running)).toBe(true)
   })
 })
 
-// URL'dan suhbatni tiklash uchun: sahifa `#chat/<uuid>` bilan ochilganda UI
-// shu marshrutdan sessiyaning modelini va loyihasini oladi.
-describe('GET /api/chat/sessions/:id — URL dan tiklash', () => {
-  test('mavjud sessiyani qaytaradi', async () => {
-    const s = sessiyaYarat('tiklanadigan', db)
+describe('GET /api/chat/sessions — the model fields', () => {
+  test('a locked session returns its provider and model', async () => {
+    const s = createSession('test', db)
+    lockSessionModel(s.id, 'openrouter', 'anthropic/claude-haiku-4.5', db)
 
-    const javob = await app.request(`/api/chat/sessions/${s.id}`)
-    expect(javob.status).toBe(200)
+    const response = await app.request('/api/chat/sessions')
+    const { sessions } = (await response.json()) as { sessions: ChatSession[] }
+    const found = sessions.find((x) => x.id === s.id)
 
-    const { session } = (await javob.json()) as { session: ChatSession }
+    expect(found?.provider).toBe('openrouter')
+    expect(found?.model).toBe('anthropic/claude-haiku-4.5')
+  })
+})
+
+// For restoring a conversation from the URL: when the page is opened with
+// `#chat/<uuid>` the UI takes the session's model and project from this route.
+describe('GET /api/chat/sessions/:id — restoring from the URL', () => {
+  test('an existing session comes back', async () => {
+    const s = createSession('restorable', db)
+
+    const response = await app.request(`/api/chat/sessions/${s.id}`)
+    expect(response.status).toBe(200)
+
+    const { session } = (await response.json()) as { session: ChatSession }
     expect(session.id).toBe(s.id)
-    expect(session.title).toBe('tiklanadigan')
+    expect(session.title).toBe('restorable')
   })
 
-  test('modelni qaytaradi — UI shu bilan provayderni tiklaydi', async () => {
-    const s = sessiyaYarat('modelli', db)
-    sessiyaModelQulfla(s.id, 'openai-codex', 'gpt-5.6-luna', db)
+  test('it returns the model — this is how the UI restores the provider', async () => {
+    const s = createSession('with a model', db)
+    lockSessionModel(s.id, 'openai-codex', 'gpt-5.6-luna', db)
 
-    const javob = await app.request(`/api/chat/sessions/${s.id}`)
-    const { session } = (await javob.json()) as { session: ChatSession }
+    const response = await app.request(`/api/chat/sessions/${s.id}`)
+    const { session } = (await response.json()) as { session: ChatSession }
 
     expect(session.provider).toBe('openai-codex')
     expect(session.model).toBe('gpt-5.6-luna')
   })
 
-  test("yo'q sessiya uchun 404 — UI buni bo'sh chatga tushish signali deb biladi", async () => {
-    const javob = await app.request('/api/chat/sessions/00000000-0000-4000-8000-000000000000')
-    expect(javob.status).toBe(404)
+  test('404 for a session that is gone — the UI reads that as "fall back to an empty chat"', async () => {
+    const response = await app.request('/api/chat/sessions/00000000-0000-4000-8000-000000000000')
+    expect(response.status).toBe(404)
   })
 
-  test("id o'rniga axlat kelsa ham 500 emas, 404", async () => {
-    const javob = await app.request('/api/chat/sessions/uuid-emas')
-    expect(javob.status).toBe(404)
+  test('rubbish in place of an id gives 404, not 500', async () => {
+    const response = await app.request('/api/chat/sessions/not-a-uuid')
+    expect(response.status).toBe(404)
   })
 })
 
-// Biriktirmalar `/chat/send` da ID bo'yicha bog'lanadi. Vision qorovuli ham
-// shu yerda — bu yagona nuqta, chunki model AYNAN bu yerda qulflanadi.
-describe('POST /api/chat/send — biriktirmalar', () => {
-  /** Bog'lanmagan biriktirma yozuvi (fayl tizimiga tegilmaydi) */
-  function biriktirma(sessionId: string, tur: 'rasm' | 'fayl' = 'fayl') {
-    return biriktirmaYoz(
+// Attachments are linked by id in `/chat/send`. The vision guard is here too —
+// this is the single point at which it can live, because the model is locked
+// EXACTLY here.
+describe('POST /api/chat/send — attachments', () => {
+  /** An unlinked attachment record (the file system is not touched) */
+  function attachment(sessionId: string, kind: 'image' | 'file' = 'file') {
+    return writeAttachment(
       {
         sessionId,
-        tur,
-        nom: 'a.png',
-        aslNom: 'a.png',
-        yol: 'fayllar/a.png',
-        mime: tur === 'rasm' ? 'image/png' : 'application/octet-stream',
-        hajm: 100,
+        kind,
+        name: 'a.png',
+        originalName: 'a.png',
+        path: 'fayllar/a.png',
+        mime: kind === 'image' ? 'image/png' : 'application/octet-stream',
+        size: 100,
       },
       db,
     )
   }
 
-  test('biriktirma xabarga bog\'lanadi', async () => {
-    const s = sessiyaYarat('sinov', db)
-    const b = biriktirma(s.id)
+  test('an attachment is linked to the message', async () => {
+    const s = createSession('test', db)
+    const a = attachment(s.id)
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
-      text: 'buni tekshir',
+      text: 'take a look at this',
       model: { provider: 'ollama', model: 'x' },
-      biriktirmalar: [b.id],
+      attachments: [a.id],
     })
 
     expect(status).toBe(202)
-    const xabarlar = xabarlarOqi(s.id, db)
-    expect(xabarlar[0]?.biriktirmalar).toHaveLength(1)
+    const messages = readMessages(s.id, db)
+    expect(messages[0]?.attachments).toHaveLength(1)
   })
 
-  // Foydalanuvchi rasm tashlab hech narsa yozmasligi tabiiy holat
-  test('biriktirma bo\'lsa bo\'sh matn ham o\'tadi', async () => {
-    const s = sessiyaYarat('sinov', db)
-    const b = biriktirma(s.id)
+  // A user dropping in an image and writing nothing is a normal thing to do
+  test('empty text passes when there is an attachment', async () => {
+    const s = createSession('test', db)
+    const a = attachment(s.id)
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
       text: '',
       model: { provider: 'ollama', model: 'x' },
-      biriktirmalar: [b.id],
+      attachments: [a.id],
     })
 
     expect(status).toBe(202)
   })
 
-  test('biriktirmasiz bo\'sh matn baribir 400', async () => {
-    const s = sessiyaYarat('sinov', db)
+  test('empty text with no attachment is still 400', async () => {
+    const s = createSession('test', db)
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
       text: '  ',
       model: { provider: 'ollama', model: 'x' },
@@ -333,160 +334,162 @@ describe('POST /api/chat/send — biriktirmalar', () => {
     expect(status).toBe(400)
   })
 
-  // XAVFSIZLIK: mijoz ixtiyoriy id yuborishi mumkin
-  test('boshqa sessiyaning biriktirma id\'si — 404', async () => {
-    const bir = sessiyaYarat('bir', db)
-    const ikki = sessiyaYarat('ikki', db)
-    const begona = biriktirma(ikki.id)
+  // SECURITY: the client can send any id it likes
+  test("another session's attachment id — 404", async () => {
+    const one = createSession('one', db)
+    const two = createSession('two', db)
+    const foreign = attachment(two.id)
 
-    const { status, body } = await yubor({
-      sessionId: bir.id,
-      text: 'salom',
+    const { status, body } = await send({
+      sessionId: one.id,
+      text: 'hello',
       model: { provider: 'ollama', model: 'x' },
-      biriktirmalar: [begona.id],
+      attachments: [foreign.id],
     })
 
     expect(status).toBe(404)
     expect(body.error).toContain('Attachment')
-    // Xabar YOZILMASLIGI kerak — bazada yetim user xabari qolmasin
-    expect(xabarlarOqi(bir.id, db)).toHaveLength(0)
+    // The message MUST NOT be written — no orphaned user message may be left
+    // in the database
+    expect(readMessages(one.id, db)).toHaveLength(0)
   })
 
-  test('yo\'q biriktirma id\'si — 404', async () => {
-    const s = sessiyaYarat('sinov', db)
+  test('an attachment id that does not exist — 404', async () => {
+    const s = createSession('test', db)
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
-      text: 'salom',
+      text: 'hello',
       model: { provider: 'ollama', model: 'x' },
-      biriktirmalar: ['yo-q-id'],
+      attachments: ['no-such-id'],
     })
 
     expect(status).toBe(404)
   })
 
-  test('biriktirmalar massiv bo\'lmasa — 400', async () => {
-    const s = sessiyaYarat('sinov', db)
+  test('attachments that is not an array — 400', async () => {
+    const s = createSession('test', db)
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
-      text: 'salom',
+      text: 'hello',
       model: { provider: 'ollama', model: 'x' },
-      biriktirmalar: 'massiv emas',
+      attachments: 'not an array',
     })
 
     expect(status).toBe(400)
   })
 
-  test('bo\'sh biriktirmalar massivi muammosiz o\'tadi', async () => {
-    const s = sessiyaYarat('sinov', db)
+  test('an empty attachments array passes without trouble', async () => {
+    const s = createSession('test', db)
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
-      text: 'salom',
+      text: 'hello',
       model: { provider: 'ollama', model: 'x' },
-      biriktirmalar: [],
+      attachments: [],
     })
 
     expect(status).toBe(202)
   })
 })
 
-// Vision qorovuli model KESHIGA tayanadi. Kesh bo'sh bo'lsa qorovul
-// o'tkazib yuboradi (noaniqlikda taqiqlamaymiz) — shuning uchun testlar
-// keshni o'zi to'ldiradi.
-describe('POST /api/chat/send — vision qorovuli', () => {
-  function biriktirma(sessionId: string, tur: 'rasm' | 'fayl') {
-    return biriktirmaYoz(
+// The vision guard leans on the model CACHE. With an empty cache the guard lets
+// things through (we do not forbid on uncertainty) — which is why these tests
+// fill the cache themselves.
+describe('POST /api/chat/send — the vision guard', () => {
+  function attachment(sessionId: string, kind: 'image' | 'file') {
+    return writeAttachment(
       {
         sessionId,
-        tur,
-        nom: 'a',
-        aslNom: 'a',
-        yol: 'fayllar/a',
-        mime: tur === 'rasm' ? 'image/png' : 'application/octet-stream',
-        hajm: 10,
+        kind,
+        name: 'a',
+        originalName: 'a',
+        path: 'fayllar/a',
+        mime: kind === 'image' ? 'image/png' : 'application/octet-stream',
+        size: 10,
       },
       db,
     )
   }
 
-  /** Kesh: bitta provider, ikki model — biri vision'li, biri emas */
-  function keshniToldir() {
-    keshniOrnat({
+  /** The cache: one provider, two models — one with vision, one without */
+  function fillCache() {
+    setCache({
       models: [
-        { provider: 'ollama', providerName: 'Ollama', id: 'ko-radigan', name: 'Ko\'radigan', contextWindow: 8000, reasoning: false, vision: true, cost: { input: 0, output: 0 }, manba: 'test', manbaTuri: 'mahalliy' },
-        { provider: 'ollama', providerName: 'Ollama', id: 'ko-rmaydigan', name: 'Ko\'rmaydigan', contextWindow: 8000, reasoning: false, vision: false, cost: { input: 0, output: 0 }, manba: 'test', manbaTuri: 'mahalliy' },
+        { provider: 'ollama', providerName: 'Ollama', id: 'seeing', name: 'Seeing', contextWindow: 8000, reasoning: false, vision: true, cost: { input: 0, output: 0 }, source: 'test', billing: 'local' },
+        { provider: 'ollama', providerName: 'Ollama', id: 'unseeing', name: 'Unseeing', contextWindow: 8000, reasoning: false, vision: false, cost: { input: 0, output: 0 }, source: 'test', billing: 'local' },
       ],
       providers: [],
-      ogohlantirishlar: [],
-      vaqt: new Date().toISOString(),
+      warnings: [],
+      time: new Date().toISOString(),
     })
   }
 
   afterEach(() => {
-    keshniTozala()
+    clearCache()
   })
 
-  test('vision\'siz modelga rasm — 400, xabar YOZILMAYDI', async () => {
-    keshniToldir()
-    const s = sessiyaYarat('sinov', db)
-    const b = biriktirma(s.id, 'rasm')
+  test('an image for a model without vision — 400, and the message IS NOT WRITTEN', async () => {
+    fillCache()
+    const s = createSession('test', db)
+    const a = attachment(s.id, 'image')
 
-    const { status, body } = await yubor({
+    const { status, body } = await send({
       sessionId: s.id,
-      text: 'bu nima?',
-      model: { provider: 'ollama', model: 'ko-rmaydigan' },
-      biriktirmalar: [b.id],
+      text: 'what is this?',
+      model: { provider: 'ollama', model: 'unseeing' },
+      attachments: [a.id],
     })
 
     expect(status).toBe(400)
     expect(body.error).toContain('images')
-    expect(body.detail).toContain("Ko'rmaydigan")
-    // Rad etilgan xabar bazada qolmasligi kerak
-    expect(xabarlarOqi(s.id, db)).toHaveLength(0)
+    expect(body.detail).toContain('Unseeing')
+    // A rejected message must not be left behind in the database
+    expect(readMessages(s.id, db)).toHaveLength(0)
   })
 
-  test('vision\'siz modelga FAYL — o\'tadi', async () => {
-    keshniToldir()
-    const s = sessiyaYarat('sinov', db)
-    const b = biriktirma(s.id, 'fayl')
+  test('a FILE for a model without vision — passes', async () => {
+    fillCache()
+    const s = createSession('test', db)
+    const a = attachment(s.id, 'file')
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
-      text: 'tekshir',
-      model: { provider: 'ollama', model: 'ko-rmaydigan' },
-      biriktirmalar: [b.id],
+      text: 'check this',
+      model: { provider: 'ollama', model: 'unseeing' },
+      attachments: [a.id],
     })
 
     expect(status).toBe(202)
   })
 
-  test('vision\'li modelga rasm — o\'tadi', async () => {
-    keshniToldir()
-    const s = sessiyaYarat('sinov', db)
-    const b = biriktirma(s.id, 'rasm')
+  test('an image for a model with vision — passes', async () => {
+    fillCache()
+    const s = createSession('test', db)
+    const a = attachment(s.id, 'image')
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
-      text: 'bu nima?',
-      model: { provider: 'ollama', model: 'ko-radigan' },
-      biriktirmalar: [b.id],
+      text: 'what is this?',
+      model: { provider: 'ollama', model: 'seeing' },
+      attachments: [a.id],
     })
 
     expect(status).toBe(202)
   })
 
-  // Noaniqlikda taqiqlamaymiz: kesh bo'sh bo'lsa provider o'z xatosini beradi
-  test('kesh bo\'sh — qorovul o\'tkazib yuboradi', async () => {
-    const s = sessiyaYarat('sinov', db)
-    const b = biriktirma(s.id, 'rasm')
+  // We do not forbid on uncertainty: with an empty cache the provider reports
+  // its own error
+  test('an empty cache — the guard lets it through', async () => {
+    const s = createSession('test', db)
+    const a = attachment(s.id, 'image')
 
-    const { status } = await yubor({
+    const { status } = await send({
       sessionId: s.id,
-      text: 'bu nima?',
-      model: { provider: 'ollama', model: 'nomalum' },
-      biriktirmalar: [b.id],
+      text: 'what is this?',
+      model: { provider: 'ollama', model: 'unknown' },
+      attachments: [a.id],
     })
 
     expect(status).toBe(202)

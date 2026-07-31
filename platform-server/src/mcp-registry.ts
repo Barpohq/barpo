@@ -1,49 +1,49 @@
-// Rasmiy MCP registry klienti — https://registry.modelcontextprotocol.io
+// Official MCP registry client — https://registry.modelcontextprotocol.io
 //
-// `github.ts` bilan bir xil qoidalar: har so'rovda timeout, aniq xato
-// xabarlari, tashqi ma'lumotga ishonmaslik.
+// The same rules as `github.ts`: a timeout on every request, precise error
+// messages, no trust in external data.
 //
-// FARQLARI:
-//   - autentifikatsiya YO'Q va rate limit e'lon qilinmagan (ochiq API);
-//   - SAHIFALASH `cursor` orqali;
-//   - `isLatest` FILTRI SHART (pastga q.).
+// THE DIFFERENCES:
+//   - there is NO authentication and no published rate limit (open API);
+//   - PAGINATION goes through `cursor`;
+//   - the `isLatest` FILTER IS MANDATORY (see below).
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ `server.json` KONVENSIYASI BILAN BIR XIL SXEMA.                      │
+// │ THE SAME SCHEMA AS THE `server.json` CONVENTION.                     │
 // │                                                                      │
-// │ Registry qaytaradigan `server` obyekti va repo ildizidagi            │
-// │ `server.json` fayli AYNI JSON shaklda (rasmiy publish formati).      │
-// │ Shuning uchun `registryYozuvniAylantir()` ikkala manba uchun ham     │
-// │ ishlatiladi (`mcp-github.ts`) — konvertatsiya mantig'i bir joyda.    │
+// │ The `server` object the registry returns and the `server.json` file  │
+// │ at a repo root have THE SAME JSON shape (the official publish        │
+// │ format). That is why `convertRegistryEntry()` is used for both       │
+// │ sources (`mcp-github.ts`) — the conversion logic lives in one place. │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import type { McpKatalogYozuvi, McpSozlamaMaydoni } from '@platforma/shared'
+import type { McpCatalogEntry, McpSettingField } from '@platforma/shared'
 
 const REGISTRY_API = 'https://registry.modelcontextprotocol.io/v0/servers'
 const TIMEOUT_MS = 30_000
 
-/** Bir qidiruvda qaytariladigan eng ko'p yozuv */
-export const MAKS_REGISTRY_NATIJA = 50
+/** The largest number of entries a single search returns */
+export const MAX_REGISTRY_RESULTS = 50
 
-/** Sahifalash tsikli uchun qat'iy chegara — cheksiz aylanish bo'lmasin */
-const MAKS_SAHIFA = 10
+/** A hard cap on the pagination loop — so it can never spin forever */
+const MAX_PAGES = 10
 
 // ---------------------------------------------------------------------------
-// Registry sxemasi (bizga kerak bo'lgan qism)
+// The registry schema (the part we need)
 // ---------------------------------------------------------------------------
 
-/** `KeyValueInput` — env o'zgaruvchisi yoki HTTP sarlavha tavsifi */
-export interface RegistryKirish {
+/** `KeyValueInput` — the description of an env variable or an HTTP header */
+export interface RegistryInput {
   name?: string
   description?: string
   isRequired?: boolean
   isSecret?: boolean
   default?: string
-  /** Shablon bo'lishi mumkin: `Bearer {api_key}` */
+  /** May be a template: `Bearer {api_key}` */
   value?: string
 }
 
-/** `Argument` — pozitsion yoki nomli */
+/** `Argument` — positional or named */
 export interface RegistryArgument {
   type?: 'positional' | 'named'
   name?: string
@@ -51,38 +51,38 @@ export interface RegistryArgument {
   isRequired?: boolean
 }
 
-export interface RegistryPaket {
+export interface RegistryPackage {
   registryType?: string
   registryBaseUrl?: string
   identifier?: string
   version?: string
-  /** `npx` | `uvx` | `docker` — qaysi ishga tushirgich */
+  /** `npx` | `uvx` | `docker` — which launcher to use */
   runtimeHint?: string
   transport?: { type?: string }
   runtimeArguments?: RegistryArgument[]
   packageArguments?: RegistryArgument[]
-  environmentVariables?: RegistryKirish[]
+  environmentVariables?: RegistryInput[]
 }
 
 export interface RegistryRemote {
   type?: string
   url?: string
-  headers?: RegistryKirish[]
+  headers?: RegistryInput[]
 }
 
-export interface RegistryServerYozuvi {
+export interface RegistryServerEntry {
   /** Reverse-DNS: `io.github.owner/repo` */
   name?: string
   description?: string
   title?: string
   version?: string
-  packages?: RegistryPaket[]
+  packages?: RegistryPackage[]
   remotes?: RegistryRemote[]
 }
 
-interface RegistryJavobi {
+interface RegistryResponse {
   servers?: {
-    server?: RegistryServerYozuvi
+    server?: RegistryServerEntry
     _meta?: {
       'io.modelcontextprotocol.registry/official'?: { isLatest?: boolean; status?: string }
     }
@@ -91,131 +91,131 @@ interface RegistryJavobi {
 }
 
 // ---------------------------------------------------------------------------
-// Qidiruv
+// Search
 // ---------------------------------------------------------------------------
 
 /**
- * Registry'da qidiradi.
+ * Searches the registry.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ `isLatest` FILTRI SHART — bu jonli API'da tekshirilgan.              │
+ * │ THE `isLatest` FILTER IS MANDATORY — verified against the live API.  │
  * │                                                                      │
- * │ Registry bir serverni HAR VERSIYASI bilan alohida yozuv qilib        │
- * │ qaytaradi (`com.example/github` 1.0.3, 1.0.4, 1.0.5 …). Filtrsiz     │
- * │ foydalanuvchi ro'yxatda bir xil nomni o'n marta ko'rardi.            │
+ * │ The registry returns a separate entry for EVERY VERSION of the same  │
+ * │ server (`com.example/github` 1.0.3, 1.0.4, 1.0.5 …). Without the     │
+ * │ filter the user would see the same name ten times in the list.       │
  * │                                                                      │
- * │ `isLatest !== false` deb tekshiramiz (`=== true` emas): maydon       │
- * │ umuman bo'lmasa yozuvni TASHLAMAYMIZ — API kelajakda metadata        │
- * │ shaklini o'zgartirsa katalog bo'sh bo'lib qolmasin.                  │
+ * │ We test `isLatest !== false` (not `=== true`): when the field is     │
+ * │ absent altogether we DO NOT DROP the entry — if the API changes the  │
+ * │ shape of its metadata later, the catalog must not go empty.          │
  * └──────────────────────────────────────────────────────────────────────┘
  *
- * XATO TASHLAYDI — chaqiruvchi (route) uni 502 ga aylantiradi.
+ * THROWS — the caller (the route) turns the error into a 502.
  */
-export async function registryQidir(
-  soz: string,
+export async function registrySearch(
+  term: string,
   limit = 30,
-): Promise<RegistryServerYozuvi[]> {
-  const natija: RegistryServerYozuvi[] = []
-  const korilganNomlar = new Set<string>()
+): Promise<RegistryServerEntry[]> {
+  const result: RegistryServerEntry[] = []
+  const seenNames = new Set<string>()
   let cursor: string | undefined
-  let sahifa = 0
+  let page = 0
 
   do {
     const url = new URL(REGISTRY_API)
-    if (soz.trim()) url.searchParams.set('search', soz.trim())
-    url.searchParams.set('limit', String(Math.min(limit, MAKS_REGISTRY_NATIJA)))
+    if (term.trim()) url.searchParams.set('search', term.trim())
+    url.searchParams.set('limit', String(Math.min(limit, MAX_REGISTRY_RESULTS)))
     if (cursor) url.searchParams.set('cursor', cursor)
 
-    let javob: Response
+    let response: Response
     try {
-      javob = await fetch(url, {
+      response = await fetch(url, {
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })
-    } catch (xato) {
-      // Tarmoq xatosi yoki timeout — sabab aniq bo'lsin
-      const sabab = xato instanceof Error ? xato.message : String(xato)
-      throw new Error(`Could not reach the MCP registry: ${sabab}`)
+    } catch (error) {
+      // A network error or a timeout — make the reason explicit
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new Error(`Could not reach the MCP registry: ${reason}`)
     }
 
-    if (!javob.ok) {
-      throw new Error(`MCP registry error: ${javob.status} ${javob.statusText}`)
+    if (!response.ok) {
+      throw new Error(`MCP registry error: ${response.status} ${response.statusText}`)
     }
 
-    let malumot: RegistryJavobi
+    let data: RegistryResponse
     try {
-      malumot = (await javob.json()) as RegistryJavobi
+      data = (await response.json()) as RegistryResponse
     } catch {
       throw new Error('The MCP registry response is not JSON')
     }
 
-    for (const yozuv of malumot.servers ?? []) {
-      const server = yozuv.server
+    for (const entry of data.servers ?? []) {
+      const server = entry.server
       if (!server?.name) continue
-      const meta = yozuv._meta?.['io.modelcontextprotocol.registry/official']
+      const meta = entry._meta?.['io.modelcontextprotocol.registry/official']
       if (meta?.isLatest === false) continue
-      // Bir nom ikki marta tushmasin (metadata yo'q yozuvlar uchun himoya)
-      if (korilganNomlar.has(server.name)) continue
-      korilganNomlar.add(server.name)
-      natija.push(server)
-      if (natija.length >= limit) return natija
+      // Do not let the same name arrive twice (a guard for entries with no metadata)
+      if (seenNames.has(server.name)) continue
+      seenNames.add(server.name)
+      result.push(server)
+      if (result.length >= limit) return result
     }
 
-    cursor = malumot.metadata?.nextCursor
-    sahifa += 1
-  } while (cursor && sahifa < MAKS_SAHIFA)
+    cursor = data.metadata?.nextCursor
+    page += 1
+  } while (cursor && page < MAX_PAGES)
 
-  return natija
+  return result
 }
 
 // ---------------------------------------------------------------------------
-// Katalog shakliga aylantirish
+// Conversion into the catalog shape
 // ---------------------------------------------------------------------------
 
-type XomYozuv = Omit<McpKatalogYozuvi, 'id' | 'manbaId' | 'createdAt'>
+type RawEntry = Omit<McpCatalogEntry, 'id' | 'sourceId' | 'createdAt'>
 
 /**
- * Sozlama nomi qabul qilinadimi.
+ * Whether a setting name is acceptable.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ IKKI QATLAMLI HIMOYANING BIRINCHISI.                                 │
+ * │ THE FIRST OF TWO PROTECTIVE LAYERS.                                  │
  * │                                                                      │
- * │ Yozuv UCHINCHI TOMON qo'lida: u `environmentVariables[].name` ga      │
- * │ ixtiyoriy nom yozishi mumkin. `NODE_OPTIONS` yoki `LD_PRELOAD` kabi   │
- * │ nom bilan u ISHONCHLI paketning jarayonini o'ziga bo'ysundirardi      │
- * │ (batafsil: `platform-ai/src/mcp-transport.ts` dagi                   │
- * │ `TAQIQLANGAN_ENV` izohi).                                            │
+ * │ The entry is in THIRD-PARTY hands: it may put any name it likes into │
+ * │ `environmentVariables[].name`. With a name such as `NODE_OPTIONS` or │
+ * │ `LD_PRELOAD` it would take over the process of a TRUSTED package     │
+ * │ (details: the `FORBIDDEN_ENV` comment in                             │
+ * │ `platform-ai/src/mcp-transport.ts`).                                 │
  * │                                                                      │
- * │ Bunday maydonni KATALOGGA UMUMAN KIRITMAYMIZ — u UI'da oddiy         │
- * │ sozlama bo'lib ko'rinmasligi kerak. Ikkinchi qatlam (transport)       │
- * │ baribir tekshiradi, lekin foydalanuvchiga yolg'on maydon              │
- * │ ko'rsatmaslik ham muhim.                                             │
+ * │ Such a field NEVER ENTERS THE CATALOG AT ALL — it must not show up   │
+ * │ in the UI as an ordinary setting. The second layer (the transport)   │
+ * │ checks it anyway, but not showing the user a bogus field matters     │
+ * │ just as much.                                                        │
  * └──────────────────────────────────────────────────────────────────────┘
  *
- * Shakl ham tekshiriladi: env nomi / HTTP sarlavha nomi uchun oddiy
- * belgilar yetarli. `=`, bo'shliq, yangi qator kabi belgilar bo'lgan nom
- * hech qanday holatda to'g'ri emas.
+ * The shape is checked too: plain characters are enough for an env name or
+ * an HTTP header name. A name containing `=`, a space or a newline is never
+ * legitimate under any circumstances.
  *
- * Eksport qilingan — test va `routes/mcp.ts` (qo'lda qo'shish) shundan
- * foydalanadi, ya'ni qoida bitta joyda.
+ * Exported — the tests and `routes/mcp.ts` (manual add) use it as well, so
+ * the rule lives in a single place.
  */
-export function sozlamaNomiToqrimi(nom: string): boolean {
-  if (!nom || nom.length > 200) return false
-  // Faqat harf, raqam, `_` va `-` (HTTP sarlavhalarida `-` ishlatiladi)
-  if (!/^[A-Za-z0-9_-]+$/.test(nom)) return false
-  return !XAVFLI_SOZLAMA_NOMLARI.has(nom.toUpperCase())
+export function isValidSettingName(name: string): boolean {
+  if (!name || name.length > 200) return false
+  // Letters, digits, `_` and `-` only (HTTP headers use `-`)
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) return false
+  return !DANGEROUS_SETTING_NAMES.has(name.toUpperCase())
 }
 
 /**
- * Katalogga kiritilmaydigan nomlar.
+ * Names that are kept out of the catalog.
  *
- * `mcp-transport.ts` dagi `TAQIQLANGAN_ENV` bilan MOS bo'lishi kerak.
- * Ikki ro'yxat ataylab alohida: bu paket `platform-ai` ga bog'liq emas
- * (qatlam chegarasi), lekin ikkalasi bir xil maqsadga xizmat qiladi.
- * Transport qatlami — yakuniy hakam; bu yerda esa yozuv katalogga
- * tushmasligi ta'minlanadi.
+ * This must STAY IN STEP with `FORBIDDEN_ENV` in `mcp-transport.ts`. The two
+ * lists are deliberately separate: this package does not depend on
+ * `platform-ai` (a layer boundary), yet both serve the same purpose. The
+ * transport layer is the final arbiter; here we make sure the entry never
+ * reaches the catalog in the first place.
  */
-const XAVFLI_SOZLAMA_NOMLARI = new Set([
+const DANGEROUS_SETTING_NAMES = new Set([
   'LD_PRELOAD',
   'LD_LIBRARY_PATH',
   'LD_AUDIT',
@@ -241,32 +241,32 @@ const XAVFLI_SOZLAMA_NOMLARI = new Set([
 ])
 
 /**
- * `KeyValueInput` → bizning sozlama maydoni.
+ * `KeyValueInput` → our own setting field.
  *
- * Nomi qabul qilinmasa `null` — chaqiruvchi uni o'tkazib yuboradi.
+ * Returns `null` when the name is not acceptable — the caller skips it.
  */
-function kirishniAylantir(k: RegistryKirish): McpSozlamaMaydoni | null {
+function convertInput(k: RegistryInput): McpSettingField | null {
   if (!k.name) return null
-  if (!sozlamaNomiToqrimi(k.name)) return null
-  const maydon: McpSozlamaMaydoni = {
-    nom: k.name,
-    majburiy: k.isRequired === true,
-    maxfiy: k.isSecret === true,
+  if (!isValidSettingName(k.name)) return null
+  const field: McpSettingField = {
+    name: k.name,
+    required: k.isRequired === true,
+    secret: k.isSecret === true,
   }
-  if (k.description) maydon.izoh = k.description
-  if (k.default) maydon.standart = k.default
-  return maydon
+  if (k.description) field.hint = k.description
+  if (k.default) field.default = k.default
+  return field
 }
 
 /**
- * `Argument` → buyruq satri bo'lagi.
+ * `Argument` → a piece of the command line.
  *
- * Nomli argument ikki bo'lakka aylanadi (`--flag`, `qiymat`) — `Bun.spawn`
- * argv MASSIVI bilan ishlaydi, ya'ni ular alohida element bo'lishi kerak.
- * Bitta satrga qo'shsak (`--flag qiymat`) server uni bitta argument deb
- * qabul qilardi.
+ * A named argument becomes two pieces (`--flag`, `value`) — `Bun.spawn`
+ * works with an argv ARRAY, so they have to be separate elements. Joined
+ * into one string (`--flag value`) the server would take it as a single
+ * argument.
  */
-function argumentniAylantir(a: RegistryArgument): string[] {
+function convertArgument(a: RegistryArgument): string[] {
   if (a.type === 'named' && a.name) {
     return a.value ? [a.name, a.value] : [a.name]
   }
@@ -274,15 +274,15 @@ function argumentniAylantir(a: RegistryArgument): string[] {
 }
 
 /**
- * Ishga tushirish buyrug'ini aniqlaydi.
+ * Works out the launch command.
  *
- * `runtimeHint` bo'lsa unga ishonamiz. Bo'lmasa paket turidan xulosa
- * qilamiz — bu ekotizimdagi amaldagi konvensiya (`npm` → `npx`,
- * `pypi` → `uvx`, `oci` → `docker`).
+ * When `runtimeHint` is present we trust it. Otherwise we infer it from the
+ * package type — that is the convention in force across the ecosystem
+ * (`npm` → `npx`, `pypi` → `uvx`, `oci` → `docker`).
  */
-function buyruqniAniqla(paket: RegistryPaket): string | null {
-  if (paket.runtimeHint) return paket.runtimeHint
-  switch (paket.registryType) {
+function detectCommand(pkg: RegistryPackage): string | null {
+  if (pkg.runtimeHint) return pkg.runtimeHint
+  switch (pkg.registryType) {
     case 'npm':
       return 'npx'
     case 'pypi':
@@ -290,69 +290,70 @@ function buyruqniAniqla(paket: RegistryPaket): string | null {
     case 'oci':
       return 'docker'
     default:
-      // `nuget`, `mcpb` va boshqalar uchun ishga tushirgich noma'lum —
-      // taxmin qilib buzuq yozuv yaratgandan ko'ra tashlab ketamiz.
+      // For `nuget`, `mcpb` and the rest the launcher is unknown — we skip
+      // the entry rather than guess and create a broken one.
       return null
   }
 }
 
 /**
- * Registry (yoki `server.json`) yozuvini katalog shakliga aylantiradi.
+ * Converts a registry (or `server.json`) entry into the catalog shape.
  *
- * BIRINCHI mos variant tanlanadi: avval stdio paket, topilmasa masofaviy
- * ulanish. Server ikkalasini ham e'lon qilgan bo'lsa stdio afzal —
- * mahalliy jarayon tashqi xizmatga bog'liq emas va tezroq.
+ * THE FIRST matching variant wins: a stdio package first, and a remote
+ * connection if none is found. When a server advertises both, stdio is
+ * preferred — a local process does not depend on an external service and is
+ * faster.
  *
- * `null` qaytsa — yozuvni ishlatib bo'lmaydi (na paket, na remote, yoki
- * ishga tushirgich noma'lum). Chaqiruvchi uni o'tkazib yuboradi va
- * ogohlantirish qo'shadi.
+ * A `null` return means the entry is unusable (no package, no remote, or an
+ * unknown launcher). The caller skips it and adds a warning.
  */
-export function registryYozuvniAylantir(s: RegistryServerYozuvi): XomYozuv | null {
+export function convertRegistryEntry(s: RegistryServerEntry): RawEntry | null {
   if (!s.name) return null
 
-  const tavsif = s.description ?? ''
-  const sozlamalar = (kirishlar?: RegistryKirish[]): McpSozlamaMaydoni[] =>
-    (kirishlar ?? []).map(kirishniAylantir).filter((m): m is McpSozlamaMaydoni => m !== null)
+  const description = s.description ?? ''
+  const settings = (inputs?: RegistryInput[]): McpSettingField[] =>
+    (inputs ?? []).map(convertInput).filter((f): f is McpSettingField => f !== null)
 
-  for (const paket of s.packages ?? []) {
-    // Faqat stdio: boshqa transport turlari paket ichida uchramaydi, lekin
-    // kelajakda paydo bo'lsa uni jimgina stdio deb ishlatish xato bo'lardi.
-    if (paket.transport?.type && paket.transport.type !== 'stdio') continue
-    if (!paket.identifier) continue
+  for (const pkg of s.packages ?? []) {
+    // stdio only: other transport kinds do not appear inside a package, but
+    // if they show up in future it would be wrong to silently treat them as
+    // stdio.
+    if (pkg.transport?.type && pkg.transport.type !== 'stdio') continue
+    if (!pkg.identifier) continue
 
-    const buyruq = buyruqniAniqla(paket)
-    if (!buyruq) continue
+    const command = detectCommand(pkg)
+    if (!command) continue
 
-    const argumentlar = [
-      ...(paket.runtimeArguments ?? []).flatMap(argumentniAylantir),
-      // Paket identifikatori: `npx -y @a/b` dagi `@a/b`. Docker uchun
-      // bu image nomi (`ghcr.io/x/y:1.0`).
-      paket.identifier,
-      ...(paket.packageArguments ?? []).flatMap(argumentniAylantir),
+    const args = [
+      ...(pkg.runtimeArguments ?? []).flatMap(convertArgument),
+      // The package identifier: the `@a/b` in `npx -y @a/b`. For Docker this
+      // is the image name (`ghcr.io/x/y:1.0`).
+      pkg.identifier,
+      ...(pkg.packageArguments ?? []).flatMap(convertArgument),
     ]
 
     return {
-      nom: s.name,
-      tavsif,
+      name: s.name,
+      description,
       transport: 'stdio',
-      buyruq,
-      argumentlar,
-      sozlamalar: sozlamalar(paket.environmentVariables),
+      command,
+      args,
+      settings: settings(pkg.environmentVariables),
     }
   }
 
-  for (const masofaviy of s.remotes ?? []) {
-    if (!masofaviy.url) continue
-    // `streamable-http` va `sse` — ikkalasini ham bitta transport ishlaydi
-    if (masofaviy.type && masofaviy.type !== 'streamable-http' && masofaviy.type !== 'sse') {
+  for (const remote of s.remotes ?? []) {
+    if (!remote.url) continue
+    // `streamable-http` and `sse` — one transport handles both
+    if (remote.type && remote.type !== 'streamable-http' && remote.type !== 'sse') {
       continue
     }
     return {
-      nom: s.name,
-      tavsif,
+      name: s.name,
+      description,
       transport: 'http',
-      url: masofaviy.url,
-      sozlamalar: sozlamalar(masofaviy.headers),
+      url: remote.url,
+      settings: settings(remote.headers),
     }
   }
 
@@ -360,37 +361,39 @@ export function registryYozuvniAylantir(s: RegistryServerYozuvi): XomYozuv | nul
 }
 
 /**
- * O'rin egallovchilarni almashtiradi: `Bearer {api_key}` → `Bearer sk-…`.
+ * Substitutes placeholders: `Bearer {api_key}` → `Bearer sk-…`.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ SHELL ISHLATILMAYDI. Almashtirish oddiy matn amali va natija         │
- * │ `Bun.spawn` argv MASSIVI elementi bo'ladi. Ya'ni qiymat ichidagi     │
- * │ `;rm -rf ~` kabi matn hech qachon buyruq bo'lib bajarilmaydi.        │
+ * │ NO SHELL IS INVOLVED. The substitution is a plain text operation and │
+ * │ the result becomes an element of the `Bun.spawn` argv ARRAY. That is,│
+ * │ text such as `;rm -rf ~` inside a value is never executed as a       │
+ * │ command.                                                             │
  * │                                                                      │
- * │ Bu rasmiy MCP spec tavsiyasi (`Argument` ta'rifidagi ogohlantirish). │
+ * │ This is what the official MCP spec recommends (the warning in the    │
+ * │ `Argument` definition).                                              │
  * └──────────────────────────────────────────────────────────────────────┘
  *
- * Nomlar `{...}` ichida turli shaklda bo'lishi mumkin (`{api_key}`,
- * `{API_KEY}`) — solishtirish katta-kichik harf farqsiz va `_`/`-` farqsiz
- * qilinadi, chunki registry yozuvlarida ular izchil emas.
+ * Names inside `{...}` come in various shapes (`{api_key}`, `{API_KEY}`) —
+ * the comparison ignores case and ignores `_`/`-`, because registry entries
+ * are not consistent about them.
  */
-export function orinEgallovchilarniAlmashtir(
-  matn: string,
-  qiymatlar: Record<string, string>,
+export function substitutePlaceholders(
+  text: string,
+  values: Record<string, string>,
 ): string {
-  if (!matn.includes('{')) return matn
+  if (!text.includes('{')) return text
 
-  // Kalitlarni normal shaklga keltirib xarita quramiz
-  const xarita = new Map<string, string>()
-  for (const [nom, qiymat] of Object.entries(qiymatlar)) {
-    xarita.set(nom.toLowerCase().replace(/[_-]/g, ''), qiymat)
+  // Build a map with the keys normalised
+  const map = new Map<string, string>()
+  for (const [name, value] of Object.entries(values)) {
+    map.set(name.toLowerCase().replace(/[_-]/g, ''), value)
   }
 
-  return matn.replace(/\{([\w.-]+)\}/g, (butun, nom: string) => {
-    const qiymat = xarita.get(nom.toLowerCase().replace(/[_-]/g, ''))
-    // Topilmasa O'ZGARISHSIZ qoldiramiz: bo'sh satr qilsak server
-    // "argument berilmadi" emas, "argument bo'sh" deb tushunardi va xato
-    // xabari chalg'ituvchi bo'lardi.
-    return qiymat ?? butun
+  return text.replace(/\{([\w.-]+)\}/g, (whole, name: string) => {
+    const value = map.get(name.toLowerCase().replace(/[_-]/g, ''))
+    // When nothing is found we leave it UNCHANGED: an empty string would
+    // make the server read it as "the argument is empty" rather than "the
+    // argument was not given", and its error message would mislead.
+    return value ?? whole
   })
 }

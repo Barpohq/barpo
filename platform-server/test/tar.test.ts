@@ -1,144 +1,144 @@
-// Tar o'quvchi — asosan ZIP-SLIP himoyasi sinaladi.
+// The tar reader — mostly a zip-slip defence test.
 //
-// Arxiv begona GitHub repo'sidan keladi, ya'ni ichidagi yo'llar dushmanona
-// bo'lishi mumkin. `yolniTozala` yagona to'siq — u yiqilsa, arxiv nishon
-// papkadan tashqariga yozib ketardi.
+// The archive comes from a stranger's GitHub repo, so the paths inside it may
+// be hostile. `sanitisePath` is the only barrier — if it fell over, the
+// archive could write outside the target folder.
 
 import { describe, expect, test } from 'bun:test'
-import { tarOqi, yolniTozala } from '../src/tar.ts'
+import { readTar, sanitisePath } from '../src/tar.ts'
 
-describe('yolniTozala — zip-slip himoyasi', () => {
-  test('oddiy yo\'l o\'tadi', () => {
-    expect(yolniTozala('a/b/c.txt')).toBe('a/b/c.txt')
+describe('sanitisePath — zip-slip defence', () => {
+  test('an ordinary path passes through', () => {
+    expect(sanitisePath('a/b/c.txt')).toBe('a/b/c.txt')
   })
 
-  test('`..` bo\'lagi RAD ETILADI', () => {
-    expect(yolniTozala('../evil.txt')).toBeNull()
-    expect(yolniTozala('a/../../evil.txt')).toBeNull()
-    expect(yolniTozala('a/b/../../../etc/passwd')).toBeNull()
+  test('a `..` segment is REJECTED', () => {
+    expect(sanitisePath('../evil.txt')).toBeNull()
+    expect(sanitisePath('a/../../evil.txt')).toBeNull()
+    expect(sanitisePath('a/b/../../../etc/passwd')).toBeNull()
   })
 
-  test('absolut yo\'l rad etiladi', () => {
-    expect(yolniTozala('/etc/passwd')).toBeNull()
-    expect(yolniTozala('/root/.ssh/authorized_keys')).toBeNull()
+  test('an absolute path is rejected', () => {
+    expect(sanitisePath('/etc/passwd')).toBeNull()
+    expect(sanitisePath('/root/.ssh/authorized_keys')).toBeNull()
   })
 
-  test('Windows disk prefiksi rad etiladi', () => {
-    expect(yolniTozala('C:/Windows/system32')).toBeNull()
+  test('a Windows drive prefix is rejected', () => {
+    expect(sanitisePath('C:/Windows/system32')).toBeNull()
   })
 
-  test('teskari chiziq ham ajratuvchi deb qaraladi', () => {
-    // `..\..\x` ni oddiy fayl nomi deb o'tkazib yubormaslik kerak
-    expect(yolniTozala('..\\..\\evil.txt')).toBeNull()
-    expect(yolniTozala('a\\b\\c.txt')).toBe('a/b/c.txt')
+  test('a backslash counts as a separator too', () => {
+    // `..\..\x` must not slip through as an ordinary file name
+    expect(sanitisePath('..\\..\\evil.txt')).toBeNull()
+    expect(sanitisePath('a\\b\\c.txt')).toBe('a/b/c.txt')
   })
 
-  test('NUL belgisi rad etiladi', () => {
-    expect(yolniTozala('a/\0b')).toBeNull()
+  test('a NUL byte is rejected', () => {
+    expect(sanitisePath('a/\0b')).toBeNull()
   })
 
-  test('ortiqcha `.` va bo\'sh bo\'laklar tozalanadi', () => {
-    expect(yolniTozala('./a//b/./c')).toBe('a/b/c')
+  test('redundant `.` and empty segments are cleaned away', () => {
+    expect(sanitisePath('./a//b/./c')).toBe('a/b/c')
   })
 
-  test('bo\'sh yo\'l null', () => {
-    expect(yolniTozala('')).toBeNull()
-    expect(yolniTozala('.')).toBeNull()
-    expect(yolniTozala('/')).toBeNull()
+  test('an empty path is null', () => {
+    expect(sanitisePath('')).toBeNull()
+    expect(sanitisePath('.')).toBeNull()
+    expect(sanitisePath('/')).toBeNull()
   })
 })
 
 // ---------------------------------------------------------------------------
 
-/** Test uchun minimal tar arxivi quradi */
-function tarQur(fayllar: { yol: string; mazmun: string; tur?: string }[]): Uint8Array {
-  const bloklar: Uint8Array[] = []
+/** Builds a minimal tar archive for the tests */
+function buildTar(files: { path: string; contents: string; kind?: string }[]): Uint8Array {
+  const blocks: Uint8Array[] = []
 
-  for (const f of fayllar) {
-    const sarlavha = new Uint8Array(512)
-    const kodlovchi = new TextEncoder()
+  for (const f of files) {
+    const header = new Uint8Array(512)
+    const encoder = new TextEncoder()
 
-    const nom = kodlovchi.encode(f.yol)
-    sarlavha.set(nom.subarray(0, 100), 0)
+    const name = encoder.encode(f.path)
+    header.set(name.subarray(0, 100), 0)
 
-    const mazmun = kodlovchi.encode(f.mazmun)
-    // Hajm — 11 raqamli sakkizlik + NUL
-    const hajm = mazmun.length.toString(8).padStart(11, '0')
-    sarlavha.set(kodlovchi.encode(hajm), 124)
-    sarlavha[135] = 0
+    const contents = encoder.encode(f.contents)
+    // Size — 11 octal digits plus a NUL
+    const size = contents.length.toString(8).padStart(11, '0')
+    header.set(encoder.encode(size), 124)
+    header[135] = 0
 
-    sarlavha[156] = (f.tur ?? '0').charCodeAt(0)
+    header[156] = (f.kind ?? '0').charCodeAt(0)
 
-    bloklar.push(sarlavha)
+    blocks.push(header)
 
-    const toldirilgan = new Uint8Array(Math.ceil(mazmun.length / 512) * 512)
-    toldirilgan.set(mazmun)
-    bloklar.push(toldirilgan)
+    const padded = new Uint8Array(Math.ceil(contents.length / 512) * 512)
+    padded.set(contents)
+    blocks.push(padded)
   }
 
-  // Oxiri: ikkita bo'sh blok
-  bloklar.push(new Uint8Array(1024))
+  // The end marker: two empty blocks
+  blocks.push(new Uint8Array(1024))
 
-  const jami = bloklar.reduce((s, b) => s + b.length, 0)
-  const natija = new Uint8Array(jami)
-  let ofset = 0
-  for (const b of bloklar) {
-    natija.set(b, ofset)
-    ofset += b.length
+  const total = blocks.reduce((s, b) => s + b.length, 0)
+  const result = new Uint8Array(total)
+  let offset = 0
+  for (const b of blocks) {
+    result.set(b, offset)
+    offset += b.length
   }
-  return natija
+  return result
 }
 
-describe('tarOqi', () => {
-  test('oddiy fayllar o\'qiladi', () => {
-    const arxiv = tarQur([
-      { yol: 'repo/SKILL.md', mazmun: 'salom' },
-      { yol: 'repo/scripts/x.sh', mazmun: 'echo hi' },
+describe('readTar', () => {
+  test('ordinary files are read out', () => {
+    const archive = buildTar([
+      { path: 'repo/SKILL.md', contents: 'hello' },
+      { path: 'repo/scripts/x.sh', contents: 'echo hi' },
     ])
 
-    const natija = tarOqi(arxiv, 1024 * 1024)
-    expect(natija).toHaveLength(2)
-    expect(natija[0]?.yol).toBe('repo/SKILL.md')
-    expect(new TextDecoder().decode(natija[0]?.mazmun)).toBe('salom')
+    const result = readTar(archive, 1024 * 1024)
+    expect(result).toHaveLength(2)
+    expect(result[0]?.path).toBe('repo/SKILL.md')
+    expect(new TextDecoder().decode(result[0]?.contents)).toBe('hello')
   })
 
-  test('XAVFLI YO\'LLI yozuv jim tashlanadi, qolgani o\'qiladi', () => {
-    const arxiv = tarQur([
-      { yol: 'repo/yaxshi.txt', mazmun: 'ok' },
-      { yol: '../../etc/passwd', mazmun: 'yovuz' },
-      { yol: 'repo/yana-yaxshi.txt', mazmun: 'ok2' },
+  test('an entry with a DANGEROUS PATH is dropped silently, the rest is read', () => {
+    const archive = buildTar([
+      { path: 'repo/good.txt', contents: 'ok' },
+      { path: '../../etc/passwd', contents: 'evil' },
+      { path: 'repo/also-good.txt', contents: 'ok2' },
     ])
 
-    const natija = tarOqi(arxiv, 1024 * 1024)
-    expect(natija).toHaveLength(2)
-    expect(natija.every((f) => !f.yol.includes('..'))).toBe(true)
-    expect(natija.every((f) => !f.yol.startsWith('/'))).toBe(true)
+    const result = readTar(archive, 1024 * 1024)
+    expect(result).toHaveLength(2)
+    expect(result.every((f) => !f.path.includes('..'))).toBe(true)
+    expect(result.every((f) => !f.path.startsWith('/'))).toBe(true)
   })
 
-  test('papka yozuvlari tashlanadi', () => {
-    const arxiv = tarQur([
-      { yol: 'repo/papka/', mazmun: '', tur: '5' },
-      { yol: 'repo/fayl.txt', mazmun: 'x' },
+  test('directory entries are dropped', () => {
+    const archive = buildTar([
+      { path: 'repo/folder/', contents: '', kind: '5' },
+      { path: 'repo/file.txt', contents: 'x' },
     ])
-    expect(tarOqi(arxiv, 1024 * 1024)).toHaveLength(1)
+    expect(readTar(archive, 1024 * 1024)).toHaveLength(1)
   })
 
-  test('symlink yozuvlari tashlanadi — chegaradan chiqish yo\'li bo\'lmasin', () => {
-    const arxiv = tarQur([
-      { yol: 'repo/link', mazmun: '/etc/passwd', tur: '2' },
-      { yol: 'repo/fayl.txt', mazmun: 'x' },
+  test('symlink entries are dropped — they must not become a way out', () => {
+    const archive = buildTar([
+      { path: 'repo/link', contents: '/etc/passwd', kind: '2' },
+      { path: 'repo/file.txt', contents: 'x' },
     ])
-    const natija = tarOqi(arxiv, 1024 * 1024)
-    expect(natija).toHaveLength(1)
-    expect(natija[0]?.yol).toBe('repo/fayl.txt')
+    const result = readTar(archive, 1024 * 1024)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.path).toBe('repo/file.txt')
   })
 
-  test('hajm chegarasi oshsa xato — zip bomb himoyasi', () => {
-    const arxiv = tarQur([{ yol: 'repo/katta.bin', mazmun: 'x'.repeat(5000) }])
-    expect(() => tarOqi(arxiv, 1000)).toThrow(/too large/)
+  test('exceeding the size limit throws — zip bomb defence', () => {
+    const archive = buildTar([{ path: 'repo/big.bin', contents: 'x'.repeat(5000) }])
+    expect(() => readTar(archive, 1000)).toThrow(/too large/)
   })
 
-  test('bo\'sh arxiv bo\'sh ro\'yxat', () => {
-    expect(tarOqi(new Uint8Array(1024), 1024)).toEqual([])
+  test('an empty archive yields an empty list', () => {
+    expect(readTar(new Uint8Array(1024), 1024)).toEqual([])
   })
 })

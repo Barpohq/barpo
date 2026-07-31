@@ -1,26 +1,26 @@
-"""Botning baza sxemasi — versiyalangan migratsiyalar (diapazon: 1–199).
+"""Bot database schema — versioned migrations (range: 1–199).
 
-Yangi migratsiya qo'shish: BOT_MIGRATIONS ro'yxatiga (versiya, izoh, SQL).
-Mavjud migratsiyani hech qachon o'zgartirmang — yangisini qo'shing.
+To add a migration: append (version, note, SQL) to the BOT_MIGRATIONS list.
+Never modify an existing migration — add a new one instead.
 
-Versiya 1–4 tarixiy: o'sha paytda bot yagona agent edi, shuning uchun
-umumiy jadvallar (llm_calls, errors, runs) ham shu yerda yaratiladi.
-Ularni ajratish mumkin emas — mavjud bazalarda allaqachon qo'llangan.
-Yangi umumiy jadvallar `core/db/schema.py` ga qo'shiladi.
+Versions 1–4 are historical: back then the bot was the only agent, which
+is why the shared tables (llm_calls, errors, runs) are created here too.
+They cannot be split out — they have already been applied to existing
+databases. New shared tables go into `core/db/schema.py`.
 
-Barcha agentlarning migratsiyalari `core/db/schema.py` da birlashtiriladi.
+Migrations from all agents are merged together in `core/db/schema.py`.
 """
 
 from __future__ import annotations
 
-# Har bir element: (versiya, izoh, SQL)
+# Each entry: (version, note, SQL)
 BOT_MIGRATIONS: list[tuple[int, str, str]] = [
     (
         1,
-        "Boshlang'ich sxema: items, clusters, cluster_items, posts, llm_calls, errors",
+        "Initial schema: items, clusters, cluster_items, posts, llm_calls, errors",
         """
-        -- ─── Xom yangilik elementlari ───
-        -- Har bir manbadan kelgan element shu yerga tushadi.
+        -- ─── Raw news items ───
+        -- Every item coming from any source lands here.
         CREATE TABLE items (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             source          TEXT    NOT NULL,          -- sources.yaml dagi manba nomi

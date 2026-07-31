@@ -1,207 +1,215 @@
-# @platforma/server — platforma backend poydevori
+# @platforma/server — the platform backend foundation
 
-"Dastur yaratadigan dastur" platformasining server qismi. Baza, migratsiyalar,
-audit tizimi, WebSocket hub va REST endpointlar tayyor. **Chat AI qatlami
-tool'lar bilan ulangan**: agent fayl o'qiy/yoza/tahrirlay oladi va buyruq
-bajaradi (`@platforma/ai`). Qurilish oqimi (chat → loyiha yasash) hali
-ulanmagan.
+The server side of the "a program that builds programs" platform. The database,
+migrations, audit system, WebSocket hub and REST endpoints are all in place.
+**The chat AI layer is wired up with tools**: the agent can read, write and edit
+files and run commands (`@platforma/ai`). The build flow (chat → generated
+project) is not connected yet.
 
 ## Stack
 
-| Qism | Tanlov | Nega |
+| Part | Choice | Why |
 |---|---|---|
-| Runtime | Bun | monorepo bo'ylab yagona toolchain, TS'ni to'g'ridan-to'g'ri o'qiydi |
-| HTTP | Hono | yengil, `app.request()` bilan tarmoqsiz test qilinadi |
-| Baza | bun:sqlite (WAL) | bitta fayl, o'rnatish shart emas — oddiy PC'ga qo'yish printsipi |
-| Real-time | Bun.serve websocket | REST bilan bitta portda, CORS muammosi yo'q |
+| Runtime | Bun | one toolchain across the monorepo, reads TS directly |
+| HTTP | Hono | lightweight, testable without a network via `app.request()` |
+| Database | bun:sqlite (WAL) | a single file, nothing to install — the "runs on an ordinary PC" principle |
+| Real-time | Bun.serve websocket | shares a port with REST, so no CORS problem |
 
-## Ishga tushirish
+## Running it
 
 ```sh
-bun install          # repo ildizida (workspace)
+bun install          # at the repo root (workspace)
 cd platform-server
-bun run dev          # watch rejim
-bun run start        # oddiy ishga tushirish
-bun test             # testlar
+bun run dev          # watch mode
+bun run start        # plain run
+bun test             # tests
 ```
 
-Port: `PORT` env o'zgaruvchisi, default **8787**.
-Baza yo'li: `DB_YOLI` env, default `platform-server/data/platform.db`
-(papka runtime'da yaratiladi, git'ga tushmaydi).
+Port: the `PORT` env variable, default **8787**.
+Database path: the `DB_PATH` env variable, default
+`platform-server/data/platform.db` (the folder is created at runtime and is not
+committed to git).
 
-UI dev serveri `/api` va `/ws` ni shu portga proxy qiladi
-(`platform-ui/vite.config.ts`), shuning uchun frontend kodida absolut manzil
-yozilmaydi.
+The UI dev server proxies `/api` and `/ws` to this port
+(`platform-ui/vite.config.ts`), so no absolute address appears in the frontend
+code.
 
-## Fayl tuzilmasi
+## File layout
 
 ```
 src/
-  index.ts          — kirish nuqtasi: Bun.serve (Hono + WS bitta portda)
-  app.ts            — Hono ilovasi, route modullarini yig'adi
-  db.ts             — SQLite ulanishi, WAL, migratsiya runner
-  repo.ts           — baza bilan ishlash qatlami (SQL faqat shu yerda)
-  audit.ts          — auditYoz / auditOqi — audit yozuvining YAGONA yo'li
-  orchestrator.ts   — chat javob oqimi: @platforma/ai → WS eventlari → DB
-  ish-papkasi.ts    — sessiya bo'yicha agent ish papkasi
-  seed.ts           — boshlang'ich ma'lumot (idempotent)
+  index.ts          — entry point: Bun.serve (Hono + WS on one port)
+  app.ts            — the Hono app, assembles the route modules
+  db.ts             — SQLite connection, WAL, migration runner
+  repo.ts           — the database layer (SQL lives only here)
+  audit.ts          — auditWrite / auditRead — the ONLY way to write an audit record
+  orchestrator.ts   — the chat reply stream: @platforma/ai → WS events → DB
+  work-dir.ts       — the agent work directory, per session
+  seed.ts           — initial data (idempotent)
   migrations/
-    index.ts        — migratsiyalar ro'yxati
-    001-boshlangich.ts
-    002-chat-model.ts — chat_sessions ga provider/model ustunlari
-    003-tool-cards.ts — chat_messages ga tool_cards ustuni
+    index.ts        — the list of migrations
+    001-initial.ts
+    002-chat-model.ts — provider/model columns on chat_sessions
+    003-tool-cards.ts — a tool_cards column on chat_messages
+    013-english-rename.ts — the Uzbek→English rename of the whole schema
   routes/
     health.ts  apps.ts  servers.ts  skills.ts  audit.ts  chat.ts  models.ts
+    mcp.ts  projects.ts
   ws/
-    hub.ts          — ulanish registri, kanal obunasi, broadcast
-    chat-handler.ts — WS chat.send, chat.permission.reply, chat.rejim.set
-test/               — bun test (78 test)
+    hub.ts          — connection registry, channel subscription, broadcast
+    chat-handler.ts — WS chat.send, chat.permission.reply, chat.mode.set
+test/               — bun test
 ```
 
-## Chat AI oqimi
+## The chat AI flow
 
-LLM bilan bog'liq hamma narsa `@platforma/ai` paketida (kalitlar, OAuth,
-Ollama, model kataloglari, klassifikator). Server `modellarniAniqla()` va
-`agentOqimi()` ni chaqiradi — tool'siz rejim uchun `suhbatOqimi()`.
+Everything to do with the LLM lives in the `@platforma/ai` package (keys, OAuth,
+Ollama, model catalogues, the classifier). The server calls `detectModels()` and
+`agentStream()` — or `conversationStream()` for the tool-free mode.
 
 ```
-POST /api/chat/send  →  xabar DB ga yoziladi, sessiya provideri qulflanadi
-                     →  javobOqizi() fonda ishga tushadi (202 qaytadi)
+POST /api/chat/send  →  the message is written to the DB, the session provider is locked
+                     →  streamReply() starts in the background (202 is returned)
                      →  chat.delta · chat.tool · chat.permission
-                        chat.klassifikator · chat.rejim              [WS]
+                        chat.classifier · chat.mode                  [WS]
                      →  chat.done | chat.error
-                     →  to'liq javob + tool kartalari DB ga bir marta yoziladi
+                     →  the full reply + tool cards are written to the DB once
 ```
 
-WS orqali kelgan `chat.send` ham xuddi shu yo'ldan boradi
-(`ws/chat-handler.ts`), farqi — xatolar HTTP status emas, `chat.error` eventi.
+A `chat.send` arriving over WS takes exactly the same path
+(`ws/chat-handler.ts`); the difference is that errors come back as a
+`chat.error` event rather than an HTTP status.
 
-### Tool'lar
+### Tools
 
-Agent `read`, `write`, `edit`, `bash` ishlatadi. Har sessiya o'z ish
-papkasini oladi: `~/.platforma/ishlar/<sessionId>/` (`PLATFORMA_ISHLAR` env
-bilan ko'chiriladi).
+The agent uses `read`, `write`, `edit` and `bash`. Each session gets its own
+work directory: `~/.platforma/ishlar/<sessionId>/` (relocatable with the
+`PLATFORM_WORKS` env variable).
 
-Har tool chaqiruvi audit logga tushadi: `read` → o'qish, `write`/`edit` →
-o'zgartirish, `bash` → xavfli.
+Every tool call is recorded in the audit log: `read` → read, `write`/`edit` →
+write, `bash` → dangerous.
 
-### Ruxsat rejimlari
+### Permission modes
 
-| Rejim | Xatti-harakat |
+| Mode | Behaviour |
 |---|---|
-| `tasdiq` (standart) | xavfli/notanish amal uchun `chat.permission` chiqadi, agent javob kutadi |
-| `auto` | klassifikator hal qiladi — amal so'ralganidan chetga chiqmasa o'tadi |
+| `confirm` (default) | a `chat.permission` is raised for a dangerous or unfamiliar action and the agent waits for an answer |
+| `auto` | the classifier decides — anything that does not stray beyond what was asked passes |
 
-Rejim `POST /api/chat/sessions/:id/rejim` yoki WS `chat.rejim.set` bilan
-almashtiriladi. Klassifikator qarori `chat.klassifikator`, rejim o'zgarishi
-`chat.rejim` eventi bo'lib keladi.
+The mode is switched with `POST /api/chat/sessions/:id/mode` or the WS
+`chat.mode.set` event. The classifier's verdict arrives as `chat.classifier` and
+a mode change as `chat.mode`.
 
-**Auto o'z-o'zidan o'chishi mumkin** — klassifikator nosoz bo'lsa, 3 marta
-ketma-ket yoki 20 marta jami bloklasa. O'shanda `chat.rejim` eventi sabab
-bilan keladi va UI "Qayta yoqish" tugmasini ko'rsatadi. Avtomatik
-tiklanmaydi.
+**Auto can switch itself off** — if the classifier is faulty, or after 3
+consecutive or 20 total blocks. When that happens the `chat.mode` event carries
+the reason and the UI shows a "Turn back on" button. It never restores itself
+automatically.
 
-Ruxsat javobi `chat.permission.reply` (WS) yoki `POST /api/chat/permission`
-(REST) orqali beriladi. 5 daqiqada javob kelmasa rad etiladi.
+A permission answer is given via `chat.permission.reply` (WS) or
+`POST /api/chat/permission` (REST). If no answer arrives within 5 minutes it is
+denied.
 
-Klassifikator mexanizmi, tool natijalari izolyatsiyasi va cheklovlar:
-`platform-ai/README.md`.
+The classifier mechanism, the isolation of tool results and the limits are
+documented in `platform-ai/README.md`.
 
-Modellar ro'yxati foydalanuvchi kompyuterida aniqlanadi: muhit
-o'zgaruvchilari, mahalliy Ollama va `~/.claude` / `~/.codex` obuna
-tokenlari.
+The list of models is detected on the user's own machine: environment variables,
+a local Ollama, and the `~/.claude` / `~/.codex` subscription tokens.
 
-## REST endpointlar
+## REST endpoints
 
-Hammasi `/api` prefiksi ostida, javob JSON.
+All of them sit under the `/api` prefix and respond with JSON.
 
-| Metod | Yo'l | Javob | Izoh |
+| Method | Path | Response | Note |
 |---|---|---|---|
-| GET | `/api/health` | `{ok, version, schema, wsClients, uptimeMs, time}` | tiriklik + sxema versiyasi |
-| GET | `/api/apps` | `{apps: AppManifest[]}` | o'rnatilgan ilovalar manifestlari |
-| GET | `/api/apps/:id` | `{manifest, status, createdAt, updatedAt}` | topilmasa 404 |
+| GET | `/api/health` | `{ok, version, schema, wsClients, uptimeMs, time}` | liveness + schema version |
+| GET | `/api/apps` | `{apps: AppManifest[]}` | the manifests of the installed apps |
+| GET | `/api/apps/:id` | `{manifest, status, createdAt, updatedAt}` | 404 when not found |
 | GET | `/api/servers` | `{servers: Server[]}` | |
-| GET | `/api/skills` | `{skills: Skill[]}` | ruxsatlar bilan |
+| GET | `/api/skills` | `{skills: Skill[]}` | with permissions |
 | GET | `/api/audit` | `{entries: AuditEntry[], total}` | query: `level`, `actor`, `limit` (max 1000), `offset` |
-| GET | `/api/chat/sessions` | `{sessions: ChatSession[]}` | oxirgi faollik bo'yicha saralangan |
-| POST | `/api/chat/sessions` | `{session}` · 201 | tana ixtiyoriy: `{title?}` |
-| GET | `/api/chat/sessions/:id/messages` | `{messages: ChatMessage[]}` | topilmasa 404 |
-| POST | `/api/chat/send` | `{messageId, model}` · 202 | javob WS orqali oqadi; xatolar: 400 / 404 / 409 |
-| POST | `/api/chat/stop` | `{toxtatildi}` | ketayotgan javob oqimini bekor qiladi |
-| POST | `/api/chat/permission` | `{qabulQilindi}` | ruxsat javobi: `ruxsat` / `rad` / `hardoim` |
-| GET | `/api/chat/sessions/:id/rejim` | `{holat}` | sessiyaning ruxsat rejimi |
-| POST | `/api/chat/sessions/:id/rejim` | `{holat}` | rejimni almashtirish: `tasdiq` / `auto` |
-| GET | `/api/models` | `{models, providers, ogohlantirishlar, vaqt}` | PC'da aniqlangan AI modellari (keshlangan) |
-| POST | `/api/models/refresh` | yuqoridagidek | aniqlashni qayta ishga tushiradi |
+| GET | `/api/chat/sessions` | `{sessions: ChatSession[]}` | sorted by last activity |
+| POST | `/api/chat/sessions` | `{session}` · 201 | body optional: `{title?}` |
+| GET | `/api/chat/sessions/:id/messages` | `{messages: ChatMessage[]}` | 404 when not found |
+| POST | `/api/chat/send` | `{messageId, model}` · 202 | the reply streams over WS; errors: 400 / 404 / 409 |
+| POST | `/api/chat/stop` | `{stopped}` | cancels the reply stream in flight |
+| POST | `/api/chat/permission` | `{accepted}` | permission answer: `allow` / `deny` / `always` |
+| GET | `/api/chat/sessions/:id/mode` | `{state}` | the session's permission mode |
+| POST | `/api/chat/sessions/:id/mode` | `{state}` | switch the mode: `confirm` / `auto` |
+| GET | `/api/models` | `{models, providers, warnings, time}` | the AI models detected on this machine (cached) |
+| POST | `/api/models/refresh` | as above | re-runs detection |
 
-`POST /api/chat/send` javobni **kutmaydi**: xabar saqlanadi, oqim fonda
-boshlanadi va 202 qaytadi. Javob `chat.delta` → `chat.done` (yoki
-`chat.error`) eventlari bo'lib WS orqali keladi.
+`POST /api/chat/send` **does not wait** for the reply: the message is stored, the
+stream starts in the background and 202 is returned. The reply arrives over WS as
+`chat.delta` → `chat.done` (or `chat.error`) events.
 
-Sessiyaning **birinchi** xabarida `model: { provider, model }` yuborilishi
-shart — o'shanda provider qulflanadi. Keyin boshqa provider yuborilsa **409**
-qaytadi (bir provider ichida modelni almashtirish mumkin).
+The **first** message of a session must carry `model: { provider, model }` — that
+is when the provider is locked. Sending a different provider afterwards returns
+**409** (switching models within one provider is allowed).
 
-Audit uchun **yozish endpointi ataylab yo'q** — log faqat backend ichidan
-`auditYoz(...)` orqali to'ladi, tashqaridan yozib bo'lmaydi.
+There is **deliberately no write endpoint** for the audit log — it is only filled
+from inside the backend via `auditWrite(...)` and cannot be written to from
+outside.
 
-## WebSocket protokoli
+## The WebSocket protocol
 
-Endpoint: `ws://<host>/ws`. Tiplar `@platforma/shared/protocol` da
-(discriminated union, `type` maydoni bo'yicha).
+Endpoint: `ws://<host>/ws`. The types live in `@platforma/shared/protocol` (a
+discriminated union, keyed on the `type` field).
 
-Ulanish ochilishi bilan server `hello` yuboradi. Keyin mijoz **kanallarga
-obuna bo'lishi shart** — obunasiz hech qanday event kelmaydi:
+As soon as the connection opens the server sends `hello`. After that the client
+**must subscribe to channels** — without a subscription no event is delivered:
 
 ```js
 ws.send(JSON.stringify({ type: 'sub', channels: ['chat', 'build', 'audit'] }))
 ```
 
-**Client → server:** `chat.send`, `chat.choice`, `chat.permission.reply`, `chat.rejim.set`, `sub`
+**Client → server:** `chat.send`, `chat.choice`, `chat.permission.reply`, `chat.mode.set`, `sub`
 
 **Server → client:**
 
-| Event | Kanal | Qachon |
+| Event | Channel | When |
 |---|---|---|
-| `hello` | — (hammaga) | ulanishda |
-| `chat.delta` · `chat.tool` · `chat.permission` · `chat.klassifikator` · `chat.rejim` · `chat.done` · `chat.error` | `chat` | javob oqimi |
-| `build.step` / `build.choice` / `build.done` / `build.failed` | `build` | qurilish jarayoni |
-| `app.installed` / `app.updated` | `apps` | manifest ro'yxatdan o'tdi |
-| `audit.entry` | `audit` | har `auditYoz` chaqiruvida |
-| `terminal.line` | `terminal` | tmux sessiya chiqishi |
+| `hello` | — (everyone) | on connect |
+| `chat.delta` · `chat.tool` · `chat.permission` · `chat.classifier` · `chat.mode` · `chat.done` · `chat.error` | `chat` | during a reply stream |
+| `build.step` / `build.choice` / `build.done` / `build.failed` | `build` | during a build |
+| `app.installed` / `app.updated` | `apps` | a manifest was registered |
+| `audit.entry` | `audit` | on every `auditWrite` call |
+| `terminal.line` | `terminal` | tmux session output |
 
-## Baza sxemasi
+## The database schema
 
-`schema_version` jadvali qo'llangan migratsiyalarni kuzatadi; har migratsiya
-o'z tranzaksiyasida bajariladi — yarim qo'llangan holat bo'lmaydi.
+The `schema_version` table tracks which migrations have been applied; each
+migration runs in its own transaction — there is no half-applied state.
 
-Jadvallar: `servers`, `skills`, `audit_log`, `apps`, `chat_sessions`,
-`chat_messages`, `build_sessions`.
+Tables: `servers`, `skills`, `skill_sources`, `skill_installs`, `mcp_sources`,
+`mcp_servers`, `mcp_installs`, `audit_log`, `apps`, `projects`, `chat_sessions`,
+`chat_messages`, `chat_attachments`, `tool_calls`, `build_sessions`.
 
-`audit_log` — **append-only**: `UPDATE` va `DELETE` trigger bilan bloklangan
-(`RAISE(ABORT)`), ya'ni kafolat SQL darajasida, kod xatosi ham buza olmaydi.
+`audit_log` is **append-only**: `UPDATE` and `DELETE` are blocked by triggers
+(`RAISE(ABORT)`), so the guarantee holds at the SQL level and not even a bug in
+the code can break it.
 
-Manifestlar `apps.manifest` ustunida to'liq JSON sifatida saqlanadi —
-server-driven UI modeli: yangi ilova qo'shilganda frontend qayta build
-qilinmaydi.
+Manifests are stored as complete JSON in the `apps.manifest` column — the
+server-driven UI model: adding a new app does not require rebuilding the
+frontend.
 
-## Kengaytirish (keyingi agentlar uchun)
+## Extending it (for the agents that come next)
 
-**Yangi REST route:**
-1. `src/routes/<nom>.ts` da `export const <nom>Routes = new Hono()`
-2. `src/app.ts` ga bitta import + bitta `api.route('/', <nom>Routes)` qatori
+**A new REST route:**
+1. In `src/routes/<name>.ts` write `export const <name>Routes = new Hono()`
+2. Add one import and one `api.route('/', <name>Routes)` line to `src/app.ts`
 
-**Yangi WS event:**
-1. `platform-shared/src/protocol.ts` da interfeys yozing (`type` — noyob literal)
-2. `ClientEvent` yoki `ServerEvent` union'iga qo'shing
-3. Serverga tegishli bo'lsa `eventKanali()` switch'iga case qo'shing
-   (aks holda TypeScript xato beradi — bu ataylab, unutib qoldirmaslik uchun)
-4. `hub.broadcast(...)` bilan yuboring
+**A new WS event:**
+1. Write the interface in `platform-shared/src/protocol.ts` (`type` — a unique literal)
+2. Add it to the `ClientEvent` or `ServerEvent` union
+3. If it belongs to the server, add a case to the `eventChannel()` switch
+   (otherwise TypeScript errors — that is deliberate, so it cannot be forgotten)
+4. Send it with `hub.broadcast(...)`
 
-**Yangi migratsiya:**
-`src/migrations/00N-nom.ts` yarating va `migrations/index.ts` ro'yxatiga
-qo'shing. Qo'llangan migratsiyani hech qachon tahrirlamang — yangisini yozing.
+**A new migration:**
+Create `src/migrations/00N-name.ts` and add it to the list in
+`migrations/index.ts`. Never edit a migration that has already been applied —
+write a new one.
 
-**Audit qoidasi:** holat o'zgartiradigan yoki maxfiy ma'lumot o'qiydigan har
-amal `auditYoz(...)` chaqirishi shart. Jadvalga to'g'ridan-to'g'ri yozsangiz
-WS eventi yuborilmaydi va UI'dagi lenta jim qoladi.
+**The audit rule:** every action that changes state or reads secret data must
+call `auditWrite(...)`. Writing to the table directly means no WS event is sent
+and the feed in the UI stays silent.

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { AuditLevel } from './data/mock'
-import { LEVEL_LABEL } from './lib/audit-yorliq'
+import { LEVEL_LABEL } from './lib/audit-label'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -54,17 +54,17 @@ export function StatusDot({ status, pulse = false }: { status: keyof typeof stat
   )
 }
 
-// `AuditLevel` qiymatlari BAZADAN keladi va `001-boshlangich.ts` dagi
-// `CHECK` cheklovi bilan qulflangan — ularni o'zgartirish migratsiya
-// talab qiladi. Shuning uchun qiymat o'z holicha qoladi, UI esa
-// quyidagi xarita orqali inglizcha yorliq ko'rsatadi.
+// `AuditLevel` values COME FROM THE DATABASE and are locked down by the
+// `CHECK` constraint in `001-initial.ts` — changing them takes a migration.
+// The value is therefore used as-is, and the UI renders its label through the
+// map below.
 //
-// Xarita `lib/audit-yorliq.ts` da: bu fayl faqat komponent eksport
-// qilsin (Vite fast refresh talabi).
+// The map lives in `lib/audit-label.ts`: this file must only export components
+// (a Vite fast refresh requirement).
 const levelStyle: Record<AuditLevel, { bg: string; fg: string }> = {
-  "o'qish": { bg: 'color-mix(in oklab, var(--color-s3) 18%, transparent)', fg: '#9dc0ef' },
-  "o'zgartirish": { bg: 'color-mix(in oklab, var(--color-gold) 16%, transparent)', fg: '#e5c37f' },
-  xavfli: { bg: 'color-mix(in oklab, var(--color-coral) 18%, transparent)', fg: '#ef978e' },
+  read: { bg: 'color-mix(in oklab, var(--color-s3) 18%, transparent)', fg: '#9dc0ef' },
+  write: { bg: 'color-mix(in oklab, var(--color-gold) 16%, transparent)', fg: '#e5c37f' },
+  dangerous: { bg: 'color-mix(in oklab, var(--color-coral) 18%, transparent)', fg: '#ef978e' },
 }
 
 export function LevelBadge({ level }: { level: AuditLevel }) {

@@ -1,121 +1,121 @@
-# Bosqich 2 — AI Platform
+# Stage 2 — AI Platform
 
-> Botdan o'sib chiqadigan self-hosted, open-source AI orkestratsiya platformasi.
-> OpenClaw/Hermes kabi agentlarning eng yuqori qatlami: barcha AI vositalar, serverlar va agentlar bitta boshqaruv nuqtasida.
+> A self-hosted, open-source AI orchestration platform grown out of the bot.
+> The topmost layer above agents like OpenClaw/Hermes: every AI tool, server, and agent behind a single control point.
 
 ---
 
-## 1. Vizyon
+## 1. Vision
 
-**Bir jumlada:** "AI vositalar uchun operatsion tizim — barcha modellar, agentlar, serverlar va deploy bitta chat va bitta klik masofasida, o'z serveringda, o'z nazoratingda."
+**In one sentence:** "An operating system for AI tools — every model, agent, server, and deploy one chat and one click away, on your own server, under your own control."
 
-Platforma hal qiladigan muammolar (o'z tajribamdan):
+The problems the platform solves (drawn from my own experience):
 
-1. **Tarqoqlik** — Claude, ChatGPT, Gemini, OpenRouter alohida-alohida; bitta interfeys yo'q
-2. **Integratsiyasizlik** — AI vositalar bir-birini bilmaydi; chat'da aytilgan ish Claude Code'da qo'lda qayta boshlanadi
-3. **Deploy og'rig'i** — JS'dan boshqa tillar uchun oddiy deploy yechimi yo'q; har safar qo'lda server sozlash
-4. **Xavfsizlik madaniyati** — odamlar AI'ga server parollarini to'g'ridan-to'g'ri berishyapti; buning to'g'ri yo'li bo'lishi kerak
-5. **Har bir yangi avtomatlashtirish nol'dan** — bot kabi loyihalar uchun tayyor modullar yo'q, hammasi qo'lda birlashtiriladi
+1. **Fragmentation** — Claude, ChatGPT, Gemini, and OpenRouter are all separate; there is no single interface
+2. **No integration** — AI tools do not know about each other; work discussed in a chat has to be started over by hand in Claude Code
+3. **Deploy pain** — outside JS there is no simple deploy story; every time means configuring a server by hand
+4. **Security culture** — people are handing server passwords straight to AI; there needs to be a right way to do this
+5. **Every new automation starts from zero** — there are no ready-made modules for projects like the bot, everything is wired up manually
 
-## 2. Evolyutsiya yo'li: bot → platforma
+## 2. The path from bot to platform
 
-Platforma oldindan loyihalanmaydi — botdan modullar ajratib olinadi:
+The platform is not designed up front — modules are extracted from the bot:
 
-| Bot moduli | Platforma komponenti bo'ladi |
+| Bot module | Becomes this platform component |
 |---|---|
-| `bot/llm/` (OpenRouter klienti) | **LLM Router** — barcha provayderlar, model tanlash, fallback, xarajat hisobi |
-| `bot/collector/` | **Data Sources** — RSS/API/scrape adapterlari, har qanday agent uchun |
-| Scheduler + pipeline | **Workflow Engine** — bosqichli agent oqimlarini ta'riflash va ishga tushirish |
-| Approval flow | **Human-in-the-loop** — har qanday agent uchun tasdiqlash qatlami |
-| Publisher (Telegram) | **Channels** — Telegram/Slack/Email chiqish adapterlari |
-| SQLite holat boshqaruvi | **State Store** — agent holatlari, tarix, audit log |
+| `bot/llm/` (OpenRouter client) | **LLM Router** — all providers, model selection, fallback, cost accounting |
+| `bot/collector/` | **Data Sources** — RSS/API/scrape adapters, for any agent |
+| Scheduler + pipeline | **Workflow Engine** — describing and running staged agent flows |
+| Approval flow | **Human-in-the-loop** — an approval layer for any agent |
+| Publisher (Telegram) | **Channels** — Telegram/Slack/Email output adapters |
+| SQLite state management | **State Store** — agent state, history, audit log |
 
-**Qoida:** modul platformaga faqat *ikkinchi* use case unga muhtoj bo'lganda ko'chiriladi. Bitta ishlatuvchisi bor abstraksiya — bu abstraksiya emas, ortiqcha qatlam.
+**The rule:** a module only moves into the platform when a *second* use case needs it. An abstraction with one user is not an abstraction, it is an extra layer.
 
-## 3. Maqsadli arxitektura
+## 3. Target architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Web UI (chat-first)                     │
-│   Oddiy rejim: faqat chat  │  Pro rejim: terminal, loglar,   │
-│                            │  agent boshqaruvi, konfiglar    │
+│   Simple mode: chat only    │  Pro mode: terminal, logs,     │
+│                             │  agent controls, configs       │
 ├─────────────────────────────────────────────────────────────┤
 │                     Orchestrator Core                        │
 │  Workflow Engine │ Agent Manager │ Human-in-the-loop │ Audit │
 ├──────────────┬──────────────┬───────────────┬───────────────┤
 │  LLM Router  │  Skill Store │  Tool Runtime │ Server Agents  │
-│  (barcha     │  (o'rnatila- │  (Claude Code │ (5 serverim-   │
-│  provayder + │  digan skill │  tmux'da,     │ dagi daemon-   │
-│  OpenRouter) │  paketlari)  │  MCP, bash)   │ lar)           │
+│  (every      │  (installable│  (Claude Code │ (daemons on    │
+│  provider +  │  skill       │  in tmux,     │ my 5 servers)  │
+│  OpenRouter) │  packages)   │  MCP, bash)   │                │
 ├──────────────┴──────────────┴───────────────┴───────────────┤
-│              State Store (holat, tarix, audit log)           │
+│              State Store (state, history, audit log)         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### 3.1 LLM Router
 
-- Barcha provayderlar (Claude, OpenAI, Gemini, OpenRouter) yagona interfeys ostida
-- BYOK — o'z API kalitlarim/obunalarim ishlatiladi
-- Vazifa turiga qarab model tanlash qoidalari (`models.yaml`): arzon ishlar arzon modelga, muhim ishlar kuchli modelga
-- Fallback: provayder ishlamasa avtomatik boshqasiga o'tish
-- Xarajat hisobi: qaysi agent qancha token yeyapti — hammasi ko'rinadi
+- Every provider (Claude, OpenAI, Gemini, OpenRouter) behind a single interface
+- BYOK — my own API keys and subscriptions are used
+- Model selection rules per task type (`models.yaml`): cheap work to cheap models, important work to strong ones
+- Fallback: automatically switch providers when one is down
+- Cost accounting: which agent is burning how many tokens — all of it visible
 
 ### 3.2 Tool Runtime
 
-- **Claude Code integratsiyasi:** chat'da "shu repo'ga X feature qo'sh" deyilsa, orchestrator tmux sessiyasida Claude Code'ni ishga tushiradi, jarayonni kuzatadi, natijani chat'ga qaytaradi. Pro rejimda tmux sessiyasini jonli ko'rish mumkin, oddiy rejimda faqat natija ko'rinadi
-- **MCP klienti** ✅: o'z standartimizni o'ylab topmaymiz — MCP serverlarni ulaymiz (mavjud ekotizimdan foydalanamiz). Bajarildi: katalog to'rt manbadan to'ladi (rasmiy registry, GitHub `server.json`, qo'lda, platforma to'plami), ikkala transport (stdio + streamable-http/sse), va **har tool chaqiruvi ruxsat qatlamidan o'tadi** (`tur: 'mcp'`). Klient o'zimizning — SDK 4 MB va server tomoni bog'liqliklarini olib kelardi; protokolning bizga kerak qismi (`initialize`/`tools/list`/`tools/call`) kichik. Cheklovlar: OAuth'li serverlar va `resources`/`prompts` hozircha yo'q
-- **Sandbox:** har bir tool alohida konteynerda cheklangan huquqlar bilan
+- **Claude Code integration:** when a chat says "add feature X to this repo", the orchestrator launches Claude Code in a tmux session, follows the process, and returns the result to the chat. In pro mode the tmux session can be watched live; in simple mode only the result is shown
+- **MCP client** ✅: we do not invent our own standard — we connect MCP servers (using the ecosystem that already exists). Done: the catalog fills from four sources (the official registry, GitHub `server.json`, manual entry, the bundled platform set), both transports (stdio + streamable-http/sse) work, and **every tool call passes through the permission layer** (`kind: 'mcp'`). The client is our own — the SDK would have pulled in 4 MB plus server-side dependencies, and the part of the protocol we actually need (`initialize`/`tools/list`/`tools/call`) is small. Limitations: OAuth-protected servers and `resources`/`prompts` are not supported yet
+- **Sandbox:** each tool runs in a separate container with restricted privileges
 
 ### 3.3 Server Agents
 
-Server parolini platformaga berish YO'Q. Buning o'rniga:
+Giving the platform a server password is NOT an option. Instead:
 
 ```
-Platforma ◀──── outbound WebSocket ──── Agent daemon (har bir serverda)
+Platform ◀──── outbound WebSocket ──── Agent daemon (on each server)
 ```
 
-- Har serverga kichik agent o'rnatiladi (`curl ... | sh` bilan bitta buyruq)
-- Agent platformaga **o'zi** ulanadi (outbound) — serverda port ochilmaydi, parol uzatilmaydi
-- Agent faqat ruxsat berilgan amallar ro'yxatiga ega
+- A small agent is installed on each server (a single `curl ... | sh` command)
+- The agent connects to the platform **itself** (outbound) — no port is opened on the server, no password is transmitted
+- The agent only has a list of permitted actions
 
-**Ruxsat darajalari:**
+**Permission levels:**
 
-| Daraja | Amallar | Rejim |
+| Level | Actions | Mode |
 |---|---|---|
-| O'qish | loglar, status, metrikalar | Avtomatik |
-| O'zgartirish | deploy, restart, config | Sozlanadigan (avto yoki tasdiq bilan) |
-| Xavfli | rm -rf, DROP DATABASE, DNS, foydalanuvchi boshqaruvi | Har doim inson tasdig'i |
+| Read | logs, status, metrics | Automatic |
+| Write | deploy, restart, config | Configurable (automatic or with confirmation) |
+| Dangerous | rm -rf, DROP DATABASE, DNS, user management | Always requires human confirmation |
 
-- Har bir amal audit log'da: kim (qaysi agent/LLM), nima, qachon, natija
-- Preview: o'zgarishlar avval vaqtinchalik muhitda ko'rsatiladi, tasdiqdan keyin production
+- Every action lands in the audit log: who (which agent/LLM), what, when, with what result
+- Preview: changes are shown in a temporary environment first, and only go to production after confirmation
 
 ### 3.4 Skill Store
 
-- Skill = deklarativ paket: manifest (nima qiladi, qanday ruxsatlar kerak) + prompt'lar + kod
-- Deploy skill'lar birinchi navbatda: "Django deploy", "Rust binary deploy", "Docker compose deploy" — har qanday til uchun bir xil tajriba
-- UI orqali bir klik o'rnatish (App Store modeli), lekin o'rnatishda ruxsatlar ro'yxati ko'rsatiladi (Android permission modeli)
-- Open source bo'lgani uchun: jamiyat o'z skill'larini yozishi mumkin, lekin bu maqsad emas, bonus
-- Xavfsizlik: skill sandbox'da ishlaydi, so'ramagan ruxsatiga ega bo'lmaydi (store'dan kelgan skill ichidagi prompt injection'ga qarshi asosiy himoya)
+- A skill is a declarative package: a manifest (what it does, which permissions it needs) + prompts + code
+- Deploy skills come first: "Django deploy", "Rust binary deploy", "Docker compose deploy" — the same experience for every language
+- One-click install through the UI (App Store model), but the permission list is shown at install time (Android permission model)
+- Because it is open source: the community can write its own skills, but that is a bonus, not the goal
+- Security: a skill runs in a sandbox and never gets a permission it did not ask for (the primary defence against prompt injection inside a skill from the store)
 
-### 3.5 UI falsafasi — progressive disclosure
+### 3.5 UI philosophy — progressive disclosure
 
-- **Default:** faqat chat. "Botim nima qildi bugun?", "shu loyihani serverimga deploy qil" — hammasi oddiy til bilan
-- **Pro rejim (bitta tugma):** tmux sessiyalar, agent loglari, workflow editor, xarajat dashboardi, audit log
-- Hech kim cheklanmaydi, hech kimga majburlanmaydi — ko'rishni istamagan ko'rmaydi
+- **Default:** chat only. "What did my bot do today?", "deploy this project to my server" — all in plain language
+- **Pro mode (one button):** tmux sessions, agent logs, workflow editor, cost dashboard, audit log
+- Nobody is restricted and nobody is forced — if you do not want to see it, you do not see it
 
-## 4. Xavfsizlik tamoyillari (birinchi kundan)
+## 4. Security principles (from day one)
 
-1. Parollar/kalitlar hech qachon LLM kontekstiga tushmaydi — agent daemon modeli
-2. Har bir amal — eng kam huquq tamoyili (least privilege)
-3. Xavfli amallar har doim inson tasdig'i bilan (auto rejimda ham)
-4. To'liq audit log — o'zgarmas (append-only)
-5. Prompt injection'ga hushyorlik: tashqi kontentdan (loglar, web sahifalar, skill'lar) kelgan matn hech qachon to'g'ridan-to'g'ri buyruq sifatida bajarilmaydi
-6. Self-hosted — ma'lumotlar mening serverimdan chiqmaydi
+1. Passwords and keys never enter the LLM context — that is what the agent daemon model is for
+2. Every action follows the principle of least privilege
+3. Dangerous actions always require human confirmation (even in auto mode)
+4. A complete audit log — immutable (append-only)
+5. Vigilance against prompt injection: text from external content (logs, web pages, skills) is never executed directly as a command
+6. Self-hosted — my data never leaves my server
 
-## 5. Nima QILMAYMIZ (scope chegarasi)
+## 5. What we are NOT doing (scope boundary)
 
-- ❌ O'z standartimizni yaratmaymiz — MCP va mavjud standartlarga tayanamiz
-- ❌ SaaS/biznes qurmaymiz — self-hosted open source, o'zim uchun
-- ❌ Barcha auditoriyani ko'zlamaymiz — o'z ehtiyojlarim birinchi, qolgani bonus
-- ❌ Store'ni "marketplace biznes" qilmaymiz — oddiy skill katalogi yetadi
-- ❌ Model provayder bilan raqobat qilmaymiz — biz orkestratsiya qatlamimiz, model emas
+- ❌ We are not creating our own standard — we build on MCP and the standards that exist
+- ❌ We are not building a SaaS business — self-hosted open source, for myself
+- ❌ We are not targeting every audience — my own needs first, everything else is a bonus
+- ❌ We are not turning the store into a "marketplace business" — a simple skill catalog is enough
+- ❌ We are not competing with model providers — we are the orchestration layer, not the model

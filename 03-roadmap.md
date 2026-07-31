@@ -1,193 +1,194 @@
-# Roadmap — Bosqichma-bosqich reja
+# Roadmap — the phase-by-phase plan
 
-> Tamoyil: har bosqich o'zi mustaqil foydali natija beradi. Hech qachon "hammasi tayyor bo'lganda ishlaydi" holatiga tushmaymiz.
+> The principle: every phase delivers a useful result on its own. We never end up in the "it works once everything is finished" trap.
 
 ---
 
-## Faza 0 — Poydevor (1-hafta) ✅
+## Phase 0 — Foundation (week 1) ✅
 
-- [x] Repo yaratish (open source, litsenziya tanlash — MIT yoki Apache 2.0)
-- [x] Docker + docker-compose skeleti
-- [x] SQLite sxema va migratsiya tizimi
-- [x] `bot/llm/` — OpenRouter klienti (retry, fallback, xarajat log bilan)
-- [x] Konfiguratsiya tizimi (`sources.yaml`, `channel.yaml`, `models.yaml`)
+- [x] Create the repo (open source, pick a licence — MIT or Apache 2.0)
+- [x] Docker + docker-compose skeleton
+- [x] SQLite schema and migration system
+- [x] `bot/llm/` — OpenRouter client (with retry, fallback, cost logging)
+- [x] Configuration system (`sources.yaml`, `channel.yaml`, `models.yaml`)
 
-**Natija:** `docker compose up` ishlaydi, LLM'ga test so'rov ketadi.
+**Result:** `docker compose up` works and a test request reaches the LLM.
 
-## Faza 1 — Bot: yig'ish va dedup (1–2 hafta) ✅
+## Phase 1 — Bot: collection and dedup (1–2 weeks) ✅
 
-- [x] RSS collector (rasmiy bloglar)
-- [x] Hacker News + Reddit adapterlari
-- [x] Lokal embedding + klasterlash
-- [x] 7 kunlik oyna bilan dedup
-- [x] CLI: bazadagi klasterlarni ko'rish
+- [x] RSS collector (official blogs)
+- [x] Hacker News + Reddit adapters
+- [x] Local embeddings + clustering
+- [x] Dedup with a 7-day window
+- [x] CLI: view the clusters in the database
 
-**Natija:** baza har kuni klasterlangan yangiliklarga to'ladi. Sifatini ko'z bilan tekshirish mumkin.
+**Result:** the database fills with clustered news every day. Quality can be eyeballed.
 
-## Faza 2 — Bot: analiz va post (1–2 hafta)
+## Phase 2 — Bot: analysis and posts (1–2 weeks)
 
-- [x] Rank: arzon model bilan baholash + spam filtri
-- [x] Enricher: web search + sahifa fetch
-- [x] Writer: kuchli model + kanal uslubi few-shot
-- [ ] Til sinovi: postlar tilida qaysi model eng sifatli yozadi — taqqoslash
-- [x] Publisher + approval flow (shaxsiy chatga ✅/✏️/❌)
+- [x] Rank: scoring with a cheap model + spam filter
+- [x] Enricher: web search + page fetch
+- [x] Writer: strong model + few-shot channel voice
+- [ ] Language trial: which model writes best in the posts' language — a comparison
+- [x] Publisher + approval flow (✅/✏️/❌ in a private chat)
 
-**Rank natijasi (2026-07-26):** 247 klaster baholandi, 151 qabul / 96 rad
-(24 spam), $0.047, 0 xato. Spam filtri PR maqolalar, obuna reklamalari va
-mavzuga aloqasiz kontentni to'g'ri tutdi.
+**Rank results (2026-07-26):** 247 clusters scored, 151 accepted / 96 rejected
+(24 spam), $0.047, 0 errors. The spam filter correctly caught PR pieces,
+subscription ads, and off-topic content.
 
-**Enricher natijasi (2026-07-26):** 25 klasterdan 14 tasi faqat fetch bilan
-boyitildi (o'rtacha 130 → 5000+ belgi). Qolgan 11 tasi Tavily kaliti
-qo'shilganda hal bo'ladi: 7 tasi agregator klasteri (aniq URL yo'q),
-4 tasi OpenAI sahifasi (403 — bot bloklash, search fallback ishlaydi).
+**Enricher results (2026-07-26):** 14 of 25 clusters were enriched by fetch
+alone (average 130 → 5000+ characters). The remaining 11 will be handled once
+the Tavily key is added: 7 are aggregator clusters (no concrete URL), 4 are
+OpenAI pages (403 — bot blocking, the search fallback works).
 
-Tavily kaliti qo'shilgach 26 klaster boyitildi (16 fetch, 10 search),
-matn hajmi 62 → 4805 belgi.
+Once the Tavily key was added, 26 clusters were enriched (16 fetch, 10 search),
+text volume 62 → 4805 characters.
 
-**Writer natijasi (2026-07-26):** 5 post yozildi, hammasi birinchi
-urinishda tekshiruvdan o'tdi. O'rtacha 840 belgi (chegara 1024),
-$0.037/post. Kanal formati va few-shot namunalar `channel.yaml` da.
+**Writer results (2026-07-26):** 5 posts written, all of them passed
+validation on the first attempt. Average 840 characters (limit 1024),
+$0.037/post. The channel format and few-shot samples live in `channel.yaml`.
 
-**Publisher natijasi (2026-07-26):** to'liq zanjir ishladi — Writer
-yozdi, tasdiqqa yubordi, ✅ bosilgach kanalga chiqdi
-(https://t.me/meninguchunyangikanal/2). Takror filtri klaster 259 va 264
-muammosini hal qildi: model identifikatori bo'yicha taqqoslanadi, post #3
-avtomatik chiqarib tashlandi.
+**Publisher results (2026-07-26):** the full chain worked — the Writer wrote a
+post, sent it for approval, and once ✅ was pressed it went to the channel
+(https://t.me/meninguchunyangikanal/2). The duplicate filter resolved the
+cluster 259 vs 264 problem: comparison is by model identifier, and post #3 was
+dropped automatically.
 
-**Qolgan ish — til sinovi:** hozir writer uchun Opus 5 ishlatilmoqda
-($0.037/post). models.yaml dagi language_test_candidates bo'yicha
-taqqoslash o'tkazilmagan — arzonroq model yetarli sifat bersa oylik
-xarajat bir necha barobar tushadi.
+**Remaining work — the language trial:** the writer currently runs on Opus 5
+($0.037/post). The comparison across `language_test_candidates` in models.yaml
+has not been run yet — if a cheaper model gives sufficient quality, the monthly
+cost drops several times over.
 
-**Natija:** har kuni shaxsiy chatga tayyor postlar keladi, men tasdiqlab kanalga chiqaraman.
+**Result:** finished posts arrive in the private chat every day and I approve them into the channel.
 
-## Faza 3 — Bot: avtonomlik (2–4 hafta parallel kuzatuv)
+## Phase 3 — Bot: autonomy (2–4 weeks of parallel observation)
 
-> Diqqat: birinchi va oxirgi band **ma'lumot to'planishini kutadi** —
-> tahrir farqlari va approval statistikasi kanal ishlatilgani sari
-> yig'iladi. Infratuzilma (health, statistika) tayyor va ularni
-> avtomatik o'lchaydi.
+> Note: the first and last items **are waiting on data to accumulate** —
+> edit diffs and approval statistics build up as the channel is used. The
+> infrastructure (health, statistics) is ready and measures them
+> automatically.
 
-- [ ] Tahrir farqi va rad etish naqshlari asosida prompt tuning
+- [ ] Prompt tuning based on edit diffs and rejection patterns
 - [x] Health report + alerting
-- [x] Idempotentlik va crash-recovery testlari
-- [ ] Approval rate ≥ 95% barqaror → **auto rejim yoqiladi**
+- [x] Idempotency and crash-recovery tests
+- [ ] Approval rate steady at ≥ 95% → **switch on auto mode**
 
-**Tuzatilgan taxmin (2026-07-27):** dastlabki reja `reject_reason` ustuniga
-tayangan edi — rad etilgan post uchun odam sabab yozadi deb hisoblangan.
-Amalda bunday bo'lmaydi: rad etish ko'pincha "shunchaki yoqmadi" bo'ladi va
-uni so'z bilan ifodalash qiyin, shuning uchun sabab maydoni bo'sh qoladi.
-Sababga tayangan prompt tuning ishlamaydi — undan voz kechildi.
+**Corrected assumption (2026-07-27):** the original plan leaned on a
+`reject_reason` column — the assumption was that a human writes a reason for a
+rejected post. In practice that does not happen: rejection is usually "I just
+didn't like it", which is hard to put into words, so the reason field stays
+empty. Reason-driven prompt tuning does not work, and it was abandoned.
 
-O'rniga ikkita signal ishlatiladi, ikkalasi ham so'zsiz yig'iladi:
+Two signals are used instead, both collected without any words:
 
-  1. **Tahrir farqi** (`original_body` ↔ `body`) — eng kuchlisi. Odam
-     matnni tuzatganda nima yoqmaganini harakat bilan ko'rsatadi, va bu
-     izohdan aniqroq. Publisher allaqachon saqlaydi.
-  2. **Rad etish naqshlari** — qaysi kategoriya, manba, muhimlik bahosi va
-     post uzunligi rad etilyapti. Sababsiz ham naqsh chiqadi.
+  1. **The edit diff** (`original_body` ↔ `body`) — the strongest one. When a
+     human fixes the text, the action itself shows what they disliked, and
+     that is more precise than a comment. The Publisher already stores it.
+  2. **Rejection patterns** — which category, source, importance score, and
+     post length get rejected. A pattern emerges even without a stated reason.
 
-**Health natijasi (2026-07-26):** kunlik hisobot Telegram'ga (09:00
-Toshkent), muammo bo'lsa darhol alert (6 soat cooldown bilan). Approval
-rate avtomatik hisoblanadi, avtonom rejimga tayyorlik ko'rsatiladi.
-CLI: `bot health`, `bot stats`. Telegram: /health, /stats, /sources.
+**Health results (2026-07-26):** a daily report to Telegram (09:00
+Tashkent), with an immediate alert on problems (with a 6-hour cooldown).
+Approval rate is computed automatically and readiness for autonomous mode is
+displayed. CLI: `bot health`, `bot stats`. Telegram: /health, /stats, /sources.
 
-Manba "buzilgan" holati xatolar tarixidan emas, hozirgi holatdan
-aniqlanadi — tuzatilgan manba kun bo'yi alert bermasligi uchun.
+A source's "broken" status is derived from its current state rather than its
+error history — so a source that has been fixed does not keep alerting all day.
 
-**Crash-recovery natijasi (2026-07-27):** `tests/test_recovery.py` — 29 test,
-har bosqich uchun "jarayon o'rtada o'ldi" ssenariysi. Tamoyil: yo'qotish
-arzon (keyingi sikl qayta uradi), takrorlash qimmat (LLM puli, kanalga
-ikkinchi post) — shuning uchun testlar takrorlanmaslikni tekshiradi.
+**Crash-recovery results (2026-07-27):** `tests/test_recovery.py` — 29 tests,
+one "the process died mid-way" scenario per stage. The principle: losing work
+is cheap (the next cycle redoes it), repeating work is expensive (LLM money, a
+second post to the channel) — so the tests check that nothing is repeated.
 
-Tasdiqlangan xossalar: Collector qayta ishga tushishda dublikat yozmaydi;
-dedup navbati `cluster_items` ga tayangani uchun yarim yozilgan holatda ham
-element ikkilanmaydi; `item_count` COUNT(*) dan qayta hisoblanadi;
-Rank `UPDATE ... WHERE status = 'new'` bilan himoyalangan; Enricher
-`enriched_at` bo'yicha bir marta ishlaydi; Writer `_save_post()` atomik va
-navbat filtri posts jadvaliga tayanadi; Publisher takror filtri uzilishdan
-keyin ikkinchi postni to'xtatadi; migratsiya xatosi to'liq rollback bo'ladi.
+Confirmed properties: the Collector writes no duplicates on restart; because
+the dedup queue is built on `cluster_items`, an item cannot be doubled even in
+a half-written state; `item_count` is recomputed from COUNT(*); Rank is
+guarded by `UPDATE ... WHERE status = 'new'`; the Enricher runs once per
+`enriched_at`; the Writer's `_save_post()` is atomic and the queue filter is
+built on the posts table; the Publisher's duplicate filter stops the second
+post after an interruption; a migration error rolls back completely.
 
-Bitta ataylab qilingan xulq hujjatlashtirildi: Writer'da saqlash xatosi
-butun oqimni to'xtatadi (bitta klasterning xatosidan farqli) — baza
-yozilmayotgan bo'lsa keyingi klasterlarga LLM puli sarflash behuda.
+One deliberate behaviour was documented: in the Writer, a save error halts the
+whole flow (unlike an error on a single cluster) — if the database is not
+accepting writes, spending LLM money on the remaining clusters is pointless.
 
-**Natija:** bot to'liq avtonom. Bu — loyihaning birinchi katta g'alabasi va platformaning isbotlangan yadrosi.
+**Result:** the bot is fully autonomous. This is the project's first big win and the platform's proven core.
 
-## Faza 4 — Ikkinchi use case (platformaning tug'ilishi) ✅
+## Phase 4 — The second use case (the platform is born) ✅
 
-Tanlangan use case: **server monitor agent**. Sabab — bot bilan eng ko'p
-modul bo'lishadi (LLM, baza, Telegram, konfiguratsiya, scheduler), ya'ni
-core ajratish uchun eng kuchli signal beradi. Deploy agent kuchliroq og'riq,
-lekin u Faza 5 ishining katta qismini (daemon, ruxsat darajalari, sandbox)
-oldinga tortardi.
+The chosen use case: a **server monitor agent**. The reason — it shares the
+most modules with the bot (LLM, database, Telegram, configuration, scheduler),
+which gives the strongest signal for what belongs in the core. A deploy agent
+would be a sharper pain point, but it would have pulled a large chunk of
+Phase 5's work (daemon, permission levels, sandbox) forward.
 
-- [x] Core ajratish: `core/` — logging, config, db, llm, telegram
-- [x] Monitor agent: SSH checklar, holat, alert, LLM diagnostika
-- [x] Ikkala agent bitta bazada, migratsiyalar diapazon bilan ajratilgan
+- [x] Core extraction: `core/` — logging, config, db, llm, telegram
+- [x] Monitor agent: SSH checks, status, alerts, LLM diagnostics
+- [x] Both agents on one database, migrations separated by range
 
-**Qarorlar:**
+**Decisions:**
 
-- **Ulanish — SSH** (tizim `ssh`, kutubxona emas). Serverga daemon
-  o'rnatilmaydi, kalit Python jarayoniga o'qilmaydi, yangi bog'liqlik yo'q.
-  Faza 5 da agent daemon'ga almashtirish mumkin.
-- **Faqat o'qish.** Roadmap'ning dastlabki tavsifida "o'zi tuzatishga
-  urinish" bor edi — X2 (prompt injection) riskini hisobga olib rad etildi.
-  LLM hech qanday amal bajarmaydi, faqat izohlaydi.
-- **Paket nomi `core/`, `platform/` emas** — `platform` stdlib moduli,
-  loyiha ildizidagi `platform/` uni shadow qilib, `httpx`/`apscheduler`
-  ichida tushunarsiz xato berardi.
-- **Bitta SQLite fayl** — `llm_calls` bo'linmasligi kerak ("qaysi agent
-  qancha sarflayapti"). Migratsiya diapazonlari: bot 1–199, monitor 200–299.
+- **Connection — SSH** (the system `ssh`, not a library). No daemon is
+  installed on the server, the key is never read into the Python process, and
+  there is no new dependency. It can be swapped for an agent daemon in Phase 5.
+- **Read-only.** The roadmap's original description included "try to fix it
+  itself" — that was rejected on the X2 (prompt injection) risk. The LLM
+  performs no actions, it only explains.
+- **The package is named `core/`, not `platform/`** — `platform` is a stdlib
+  module, and a `platform/` at the project root shadowed it, producing
+  incomprehensible errors inside `httpx`/`apscheduler`.
+- **One SQLite file** — `llm_calls` must not be split ("which agent is
+  spending how much"). Migration ranges: bot 1–199, monitor 200–299.
 
-**Core'ga ko'chmagani (ataylab):** `bot/health/`, `notify._send()`,
-scheduler, CLI. Ular ikki domenning o'xshash-lekin-boshqa kodi — 15 qator
-SQL takrorlanishi noto'g'ri abstraksiyadan arzonroq.
+**Deliberately not moved into core:** `bot/health/`, `notify._send()`, the
+scheduler, the CLI. They are similar-but-different code across two domains —
+15 duplicated lines of SQL are cheaper than the wrong abstraction.
 
-**Natija (2026-07-26):** 2 agent bitta core ustida. 333 → 488 test.
-Real serverda sinaldi: o'lchovlar to'g'ri, alert va tiklanish oqimi
-ishladi, prompt injection hujumiga model bo'ysunmadi va hujumni qayd etdi.
-Monitor diagnostikasi ~$0.0007/chaqiruv.
+**Result (2026-07-26):** 2 agents on one core. 333 → 488 tests.
+Tested against a real server: the measurements were correct, the alert and
+recovery flows worked, and the model did not comply with a prompt injection
+attack — it flagged the attack instead.
+Monitor diagnostics cost ~$0.0007/call.
 
-## Faza 5 — Server agents + xavfsizlik qatlami
+## Phase 5 — Server agents + the security layer
 
-- [ ] Agent daemon (outbound WebSocket, bitta buyruq bilan o'rnatish)
-- [ ] Ruxsat darajalari (o'qish / o'zgartirish / xavfli)
-- [ ] Human-in-the-loop tasdiqlash (approval flow'ning umumlashgan versiyasi)
+- [ ] Agent daemon (outbound WebSocket, single-command install)
+- [ ] Permission levels (read / write / dangerous)
+- [ ] Human-in-the-loop approval (a generalised version of the approval flow)
 - [ ] Append-only audit log
-- [ ] 5 serverimni ulash
+- [ ] Connect my 5 servers
 
-**Natija:** chat orqali serverlarimni xavfsiz boshqaraman.
+**Result:** I manage my servers safely through chat.
 
-## Faza 6 — Web UI + progressive disclosure
+## Phase 6 — Web UI + progressive disclosure
 
-- [ ] Chat-first web interfeys
-- [ ] Pro rejim: loglar, tmux ko'rinishi, xarajat dashboardi, audit log
-- [ ] Skill'lar katalogi (oddiy versiya: ro'yxat + bir klik o'rnatish + ruxsatlar ko'rsatish)
+- [ ] Chat-first web interface
+- [ ] Pro mode: logs, tmux view, cost dashboard, audit log
+- [ ] Skill catalog (simple version: a list + one-click install + permission display)
 
-**Natija:** to'liq platforma tajribasi — o'zim har kuni ishlataman.
+**Result:** the full platform experience — something I use every day myself.
 
-## Faza 7+ — Ochiq rivojlanish
+## Phase 7+ — Open development
 
-- Deploy skill'lar to'plami (Python/Django, Rust, Go, Docker...)
-- MCP: standart to'plamni to'ldirish (`mcp-serverlar/`), OAuth'li serverlar, `resources`/`prompts` (klient qatlami ✅ tayyor)
-- Hujjatlashtirish + README — boshqalar ham self-host qila olishi uchun
-- Jamiyatdan kelgan hissalar (agar kelsa — bonus, kelmasa ham loyiha men uchun ishlayapti)
+- A set of deploy skills (Python/Django, Rust, Go, Docker…)
+- MCP: fill out the builtin set (`mcp-servers/`), OAuth-protected servers, `resources`/`prompts` (the client layer is ✅ done)
+- Documentation + README — so other people can self-host it too
+- Community contributions (a bonus if they come; if not, the project still works for me)
 
 ---
 
-## Muvaffaqiyat mezonlari
+## Success criteria
 
-| Bosqich | Mezon |
+| Stage | Criterion |
 |---|---|
-| Bot | 30 kun uzluksiz, aralashuvimsiz, sifatli postlar |
-| Platforma yadrosi | 2+ agent bitta core'da, kod takrorlanishisiz |
-| Server boshqaruv | Oddiy deploy'ni chat orqali 1 buyruq bilan qilaman, terminal ochmayman |
-| Umumiy | Kundalik ishimda eski tarqoq vositalarga qaytish ehtiyoji yo'qolgan |
+| Bot | 30 days uninterrupted, without my involvement, with quality posts |
+| Platform core | 2+ agents on one core, without duplicated code |
+| Server management | I do a simple deploy through chat with one command, without opening a terminal |
+| Overall | No lingering need to go back to the old scattered tools in my daily work |
 
-## Anti-maqsadlar (tuzoqlardan saqlanish)
+## Anti-goals (traps to avoid)
 
-- Bot tayyor bo'lmasdan platforma kodini yozishni boshlamaslik
-- "Kelajakda kerak bo'ladi" degan funksiya qo'shmaslik — faqat hozirgi real ehtiyoj
-- UI'ni Faza 6'dan oldin boshlamaslik (CLI + Telegram approval yetadi)
-- Mukammallikka intilmaslik — ishlagan versiya > chiroyli reja
+- Not writing platform code before the bot is finished
+- Not adding features on the grounds that "we'll need it later" — only real, present needs
+- Not starting the UI before Phase 6 (the CLI + Telegram approval are enough)
+- Not chasing perfection — a version that works beats a beautiful plan

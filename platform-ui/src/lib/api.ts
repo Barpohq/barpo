@@ -1,92 +1,92 @@
-// Backend REST API bilan ishlash — yupqa `fetch` qatlami.
+// Backend REST API access — a thin `fetch` layer.
 //
-// Manzillar nisbiy (`/api/...`): dev'da vite proxy, prodda bitta jarayon
-// — ikkalasida ham bir xil yo'l ishlaydi.
+// URLs are relative (`/api/...`): vite proxy in dev, a single process in prod
+// — the same path works in both.
 //
-// Server xatolari `{ error, detail? }` shaklida keladi; `ApiXatosi` shu
-// ma'lumotni statusi bilan birga saqlaydi, chaqiruvchi 409 (provider qulfi)
-// kabi holatlarni ajrata olsin.
+// Server errors arrive as `{ error, detail? }`; `ApiError` keeps that data
+// together with the status so the caller can distinguish cases such as 409
+// (provider lock).
 
 import type {
-  AniqlashOgohlantirish,
   AppManifest,
-  ChatBiriktirma,
+  ChatAttachment,
   ChatMessage,
   ChatSession,
-  McpManba,
-  McpQamrov,
+  DetectWarning,
+  McpScope,
   McpServer,
-  McpSozlamaMaydoni,
-  McpTransportTuri,
+  McpSettingField,
+  McpSource,
+  McpTransportKind,
   ModelInfo,
+  ModeState,
+  PermissionAnswer,
+  PermissionMode,
+  PermissionRequest,
   Project,
   ProviderInfo,
-  RejimHolati,
-  RuxsatJavobi,
-  RuxsatRejimi,
-  RuxsatSorovi,
   Server,
-  ServerMetrika,
+  ServerMetrics,
+  SettingField,
   Skill,
-  SkillManba,
-  SkillQamrov,
-  SozlamaMaydoni,
+  SkillScope,
+  SkillSource,
 } from '@platforma/shared'
 
-export class ApiXatosi extends Error {
+export class ApiError extends Error {
   status: number
   detail?: string
 
-  constructor(status: number, xabar: string, detail?: string) {
-    super(xabar)
-    this.name = 'ApiXatosi'
+  constructor(status: number, message: string, detail?: string) {
+    super(message)
+    this.name = 'ApiError'
     this.status = status
     this.detail = detail
   }
 }
 
-async function sorov<T>(yol: string, sozlama?: RequestInit): Promise<T> {
-  let javob: Response
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let response: Response
   try {
-    javob = await fetch(yol, sozlama)
-  } catch (xato) {
-    throw new ApiXatosi(0, "Serverga ulanib bo'lmadi", xato instanceof Error ? xato.message : undefined)
+    response = await fetch(path, options)
+  } catch (error) {
+    throw new ApiError(0, 'Could not reach the server', error instanceof Error ? error.message : undefined)
   }
 
-  const matn = await javob.text()
-  let tana: unknown
+  const text = await response.text()
+  let body: unknown
   try {
-    tana = matn ? JSON.parse(matn) : {}
+    body = text ? JSON.parse(text) : {}
   } catch {
-    throw new ApiXatosi(javob.status, 'Could not read the server response', matn.slice(0, 200))
+    throw new ApiError(response.status, 'Could not read the server response', text.slice(0, 200))
   }
 
-  if (!javob.ok) {
-    const x = tana as { error?: string; detail?: string }
-    throw new ApiXatosi(javob.status, x.error ?? `Xato ${javob.status}`, x.detail)
+  if (!response.ok) {
+    const e = body as { error?: string; detail?: string }
+    throw new ApiError(response.status, e.error ?? `Error ${response.status}`, e.detail)
   }
-  return tana as T
+  return body as T
 }
 
-const jsonSarlavha = { 'content-type': 'application/json' }
+const jsonHeaders = { 'content-type': 'application/json' }
 
 // ---------------------------------------------------------------------------
-// Modellar
+// Models
 // ---------------------------------------------------------------------------
 
-export interface ModellarJavobi {
+export interface ModelsResponse {
   models: ModelInfo[]
   providers: ProviderInfo[]
-  ogohlantirishlar: AniqlashOgohlantirish[]
-  vaqt: string
+  warnings: DetectWarning[]
+  time: string
 }
 
-export function modellarOl(): Promise<ModellarJavobi> {
-  return sorov<ModellarJavobi>('/api/models')
+export function fetchModels(): Promise<ModelsResponse> {
+  return request<ModelsResponse>('/api/models')
 }
 
-export function modellarniYangila(): Promise<ModellarJavobi> {
-  return sorov<ModellarJavobi>('/api/models/refresh', { method: 'POST' })
+export function refreshModels(): Promise<ModelsResponse> {
+  return request<ModelsResponse>('/api/models/refresh', { method: 'POST' })
 }
 
 // ---------------------------------------------------------------------------
@@ -94,544 +94,544 @@ export function modellarniYangila(): Promise<ModellarJavobi> {
 // ---------------------------------------------------------------------------
 
 /**
- * Yangi sessiya. `projectId` berilsa suhbat loyihaga ulanadi va agent
- * tool'lari loyiha papkasida ishlaydi.
+ * New session. If `projectId` is given the conversation is attached to the
+ * project and the agent's tools run inside the project folder.
  */
-export async function sessiyaYarat(title?: string, projectId?: string): Promise<ChatSession> {
-  const javob = await sorov<{ session: ChatSession }>('/api/chat/sessions', {
+export async function createSession(title?: string, projectId?: string): Promise<ChatSession> {
+  const response = await request<{ session: ChatSession }>('/api/chat/sessions', {
     method: 'POST',
-    headers: jsonSarlavha,
+    headers: jsonHeaders,
     body: JSON.stringify({ title, projectId }),
   })
-  return javob.session
+  return response.session
 }
 
 /**
- * Barcha suhbatlar — oxirgi faollik bo'yicha (yangisi birinchi).
+ * All conversations — by last activity (newest first).
  *
- * Har bir yozuvda `xabarlarSoni` bor: UI bo'sh suhbatlarni ajratadi.
+ * Every record carries `messageCount`: the UI uses it to single out empty
+ * conversations.
  */
-export async function sessiyalarOl(): Promise<ChatSession[]> {
-  const javob = await sorov<{ sessions: ChatSession[] }>('/api/chat/sessions')
-  return javob.sessions
+export async function fetchSessions(): Promise<ChatSession[]> {
+  const response = await request<{ sessions: ChatSession[] }>('/api/chat/sessions')
+  return response.sessions
 }
 
-/** Suhbat nomini o'zgartiradi. Faqat sarlavha — model va loyiha qulflangan. */
-export async function sessiyaSarlavhaOzgart(
+/** Renames a conversation. Title only — model and project are locked. */
+export async function renameSession(
   sessionId: string,
   title: string,
 ): Promise<ChatSession> {
-  const javob = await sorov<{ session: ChatSession }>(`/api/chat/sessions/${sessionId}`, {
+  const response = await request<{ session: ChatSession }>(`/api/chat/sessions/${sessionId}`, {
     method: 'PATCH',
-    headers: jsonSarlavha,
+    headers: jsonHeaders,
     body: JSON.stringify({ title }),
   })
-  return javob.session
+  return response.session
 }
 
 /**
- * Suhbatni o'chiradi — xabarlari bilan birga, qaytarib bo'lmaydi.
+ * Deletes a conversation — together with its messages, irreversibly.
  *
- * Oqim ketayotgan bo'lsa server uni avval to'xtatadi.
+ * If a stream is running the server stops it first.
  */
-export function sessiyaOchir(
+export function deleteSession(
   sessionId: string,
-): Promise<{ ochirildi: boolean; oqimToxtatildi: boolean }> {
-  return sorov<{ ochirildi: boolean; oqimToxtatildi: boolean }>(
+): Promise<{ deleted: boolean; streamStopped: boolean }> {
+  return request<{ deleted: boolean; streamStopped: boolean }>(
     `/api/chat/sessions/${sessionId}`,
     { method: 'DELETE' },
   )
 }
 
 /**
- * Bitta sessiya — URL'dan tiklash uchun.
+ * A single session — for restoring from the URL.
  *
- * `null` qaytadi (throw emas) agar sessiya topilmasa: URL eskirgan yoki
- * noto'g'ri bo'lishi oddiy holat, chaqiruvchi shunchaki bo'sh chatga tushadi.
+ * Returns `null` (rather than throwing) when the session is not found: a stale
+ * or wrong URL is a normal case, and the caller simply lands on an empty chat.
  */
-export async function sessiyaOl(sessionId: string): Promise<ChatSession | null> {
+export async function fetchSession(sessionId: string): Promise<ChatSession | null> {
   try {
-    const javob = await sorov<{ session: ChatSession }>(`/api/chat/sessions/${sessionId}`)
-    return javob.session
+    const response = await request<{ session: ChatSession }>(`/api/chat/sessions/${sessionId}`)
+    return response.session
   } catch {
     return null
   }
 }
 
-export async function xabarlarOl(sessionId: string): Promise<ChatMessage[]> {
-  const javob = await sorov<{ messages: ChatMessage[] }>(`/api/chat/sessions/${sessionId}/messages`)
-  return javob.messages
+export async function fetchMessages(sessionId: string): Promise<ChatMessage[]> {
+  const response = await request<{ messages: ChatMessage[] }>(`/api/chat/sessions/${sessionId}/messages`)
+  return response.messages
 }
 
-export interface YuborishJavobi {
+export interface SendResponse {
   messageId: string
   model: { provider: string; model: string }
 }
 
 /**
- * Xabar yuboradi. `biriktirmalar` — `biriktirmaYukla()` qaytargan ID'lar.
+ * Sends a message. `attachments` are the IDs returned by `uploadAttachment()`.
  *
- * Faqat ID yuboriladi: yo'l va turni server bazadan oladi (mijoz ularni
- * bersa ish papkasidan tashqariga ko'rsatishi yoki vision qorovulini
- * aldab o'tishi mumkin bo'lardi).
+ * Only IDs are sent: the server looks up path and kind in the database (if the
+ * client supplied them it could point outside the work directory or slip past
+ * the vision guard).
  */
-export function xabarYubor(
+export function sendMessage(
   sessionId: string,
   text: string,
   model: { provider: string; model: string },
-  biriktirmalar?: string[],
-): Promise<YuborishJavobi> {
-  return sorov<YuborishJavobi>('/api/chat/send', {
+  attachments?: string[],
+): Promise<SendResponse> {
+  return request<SendResponse>('/api/chat/send', {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ sessionId, text, model, biriktirmalar }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ sessionId, text, model, attachments }),
   })
 }
 
 /**
- * Chatga fayl yoki rasm biriktiradi.
+ * Attaches a file or image to the chat.
  *
- * `content-type` ATAYLAB QO'YILMAYDI: FormData uchun brauzer uni
- * `multipart/form-data; boundary=...` bilan o'zi qo'yadi. Qo'lda qo'yilsa
- * boundary yo'qoladi va server tanani o'qiy olmaydi.
+ * `content-type` is DELIBERATELY NOT SET: for FormData the browser sets it
+ * itself as `multipart/form-data; boundary=...`. Setting it by hand loses the
+ * boundary and the server cannot read the body.
  *
- * `sessionId` majburiy — fayl darhol sessiya papkasiga tushadi. Chat sahifasi
- * shu sababli fayl tanlangan payt sessiyani yaratadi.
+ * `sessionId` is required — the file goes straight into the session folder.
+ * That is why the chat page creates the session the moment a file is picked.
  */
-export async function biriktirmaYukla(
+export async function uploadAttachment(
   sessionId: string,
-  fayllar: File[],
-): Promise<ChatBiriktirma[]> {
-  const tana = new FormData()
-  tana.set('sessionId', sessionId)
-  for (const f of fayllar) tana.append('fayl', f)
+  files: File[],
+): Promise<ChatAttachment[]> {
+  const body = new FormData()
+  body.set('sessionId', sessionId)
+  for (const f of files) body.append('file', f)
 
-  const javob = await sorov<{ biriktirmalar: ChatBiriktirma[] }>('/api/chat/biriktirma', {
+  const response = await request<{ attachments: ChatAttachment[] }>('/api/chat/attachment', {
     method: 'POST',
-    body: tana,
+    body,
   })
-  return javob.biriktirmalar
+  return response.attachments
 }
 
 /**
- * Biriktirmani olib tashlaydi (chipdagi `×`).
+ * Removes an attachment (the `×` on the chip).
  *
- * Xabarga allaqachon bog'langan biriktirma uchun server 409 beradi: u
- * suhbat tarixining qismi va agent uni ko'rgan.
+ * For an attachment already linked to a message the server answers 409: it is
+ * part of the conversation history and the agent has seen it.
  */
-export function biriktirmaOchir(id: string): Promise<{ ochirildi: boolean }> {
-  return sorov<{ ochirildi: boolean }>(`/api/chat/biriktirma/${id}`, { method: 'DELETE' })
+export function removeAttachment(id: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/chat/attachment/${id}`, { method: 'DELETE' })
 }
 
-/** Biriktirma mazmuni manzili — `<img src>` va yuklab olish uchun */
-export function biriktirmaManzili(id: string): string {
-  return `/api/chat/biriktirma/${id}`
+/** URL of the attachment content — for `<img src>` and downloads */
+export function attachmentUrl(id: string): string {
+  return `/api/chat/attachment/${id}`
 }
 
-export function ruxsatJavobiYubor(
+export function sendPermissionAnswer(
   sessionId: string,
-  sorovId: string,
-  javob: RuxsatJavobi,
-): Promise<{ qabulQilindi: boolean }> {
-  return sorov<{ qabulQilindi: boolean }>('/api/chat/permission', {
+  requestId: string,
+  answer: PermissionAnswer,
+): Promise<{ accepted: boolean }> {
+  return request<{ accepted: boolean }>('/api/chat/permission', {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ sessionId, sorovId, javob }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ sessionId, requestId, answer }),
   })
 }
 
 /**
- * Sessiyada javob kutayotgan ruxsat so'rovlari.
+ * Permission requests awaiting an answer in the session.
  *
- * `chat.permission` WS eventiga QO'SHIMCHA yo'l: event bir marta yuboriladi
- * va yetib bormasligi mumkin (sahifa oqim o'rtasida ochilgan, WS qayta
- * ulanmoqda, sessiya filtri hali o'rnatilmagan). Shusiz agent javob kutib
- * turadi, foydalanuvchi esa nima kutilayotganini ko'rmaydi.
+ * An ADDITIONAL path next to the `chat.permission` WS event: the event is sent
+ * once and may not arrive (the page was opened mid-stream, the WS is
+ * reconnecting, the session filter is not set yet). Without this the agent
+ * waits for an answer while the user cannot see what is being asked.
  */
-export async function kutayotganRuxsatlarOl(sessionId: string): Promise<RuxsatSorovi[]> {
-  const javob = await sorov<{ sorovlar: RuxsatSorovi[] }>(
-    `/api/chat/sessions/${sessionId}/ruxsatlar`,
+export async function fetchPendingPermissions(sessionId: string): Promise<PermissionRequest[]> {
+  const response = await request<{ requests: PermissionRequest[] }>(
+    `/api/chat/sessions/${sessionId}/permissions`,
   )
-  return javob.sorovlar
+  return response.requests
 }
 
-export async function rejimOl(sessionId: string): Promise<RejimHolati> {
-  const javob = await sorov<{ holat: RejimHolati }>(`/api/chat/sessions/${sessionId}/rejim`)
-  return javob.holat
+export async function fetchMode(sessionId: string): Promise<ModeState> {
+  const response = await request<{ state: ModeState }>(`/api/chat/sessions/${sessionId}/mode`)
+  return response.state
 }
 
-export async function rejimOrnat(
+export async function setMode(
   sessionId: string,
-  rejim: RuxsatRejimi,
-): Promise<RejimHolati> {
-  const javob = await sorov<{ holat: RejimHolati }>(`/api/chat/sessions/${sessionId}/rejim`, {
+  mode: PermissionMode,
+): Promise<ModeState> {
+  const response = await request<{ state: ModeState }>(`/api/chat/sessions/${sessionId}/mode`, {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ rejim }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ mode }),
   })
-  return javob.holat
+  return response.state
 }
 
-/** Hozir agent oqimi ketayotgan bitta sessiya */
-export interface IshlayotganSessiya {
+/** A single session whose agent stream is currently running */
+export interface RunningSession {
   sessionId: string
-  holat: 'ishlayapti' | 'ruxsat-kutmoqda'
-  /** Sessiya sarlavhasi — sessiya o'chirilgan bo'lsa yo'q */
+  status: 'running' | 'awaiting-permission'
+  /** Session title — absent if the session was deleted */
   title?: string
 }
 
 /**
- * Ishlayotgan sessiyalarning boshlang'ich ro'yxati.
+ * The initial list of running sessions.
  *
- * Faqat sahifa ochilganda kerak: undan keyin ro'yxat `chat.status` WS
- * eventlari bilan yangilanadi. Ikkalasi ham kerak, chunki WS ulanishidan
- * oldingi holat o'zgarishlari mijozga yetib bormaydi.
+ * Only needed when the page opens: after that the list is kept up to date by
+ * `chat.status` WS events. Both are needed, because status changes that happen
+ * before the WS connects never reach the client.
  */
-export async function ishlayotganlarniOl(): Promise<IshlayotganSessiya[]> {
-  const javob = await sorov<{ running: IshlayotganSessiya[] }>('/api/chat/running')
-  return javob.running
+export async function fetchRunning(): Promise<RunningSession[]> {
+  const response = await request<{ running: RunningSession[] }>('/api/chat/running')
+  return response.running
 }
 
-export function oqimniToxtat(sessionId: string): Promise<{ toxtatildi: boolean }> {
-  return sorov<{ toxtatildi: boolean }>('/api/chat/stop', {
+export function stopStream(sessionId: string): Promise<{ stopped: boolean }> {
+  return request<{ stopped: boolean }>('/api/chat/stop', {
     method: 'POST',
-    headers: jsonSarlavha,
+    headers: jsonHeaders,
     body: JSON.stringify({ sessionId }),
   })
 }
 
 // ---------------------------------------------------------------------------
-// Ilovalar (dinamik dashboardlar)
+// Apps (dynamic dashboards)
 // ---------------------------------------------------------------------------
 
 /**
- * Agent `appPublish` bilan chiqargan dashboardlar.
+ * Dashboards published by the agent via `appPublish`.
  *
- * Sidebar shu ro'yxatdan quriladi — mock ma'lumotdan emas. Manifest
- * server tomonida allaqachon tekshirilgan (`manifestniTekshir`), shuning
- * uchun bu yerda qayta tekshiruv kerak emas.
+ * The sidebar is built from this list — not from mock data. The manifest has
+ * already been validated on the server (`validateManifest`), so no re-check is
+ * needed here.
  */
-export async function ilovalarOl(): Promise<AppManifest[]> {
-  const javob = await sorov<{ apps: AppManifest[] }>('/api/apps')
-  return javob.apps
+export async function fetchApps(): Promise<AppManifest[]> {
+  const response = await request<{ apps: AppManifest[] }>('/api/apps')
+  return response.apps
 }
 
 // ---------------------------------------------------------------------------
-// Ilova boshqaruvi — sozlamalar va amallar
+// App controls — settings and actions
 // ---------------------------------------------------------------------------
 //
-// HAQIQAT MANBAI — SERVER. Qiymatlar serverdagi ilovaning o'z
-// konfiguratsiyasiga yoziladi (`types.ts` dagi boshqaruv qatlami izohiga q.),
-// shuning uchun sir qiymatlar HECH QACHON bu yerga kelmaydi — faqat
-// `ornatilgan` bayrog'i.
+// THE SERVER IS THE SOURCE OF TRUTH. Values are written into the app's own
+// configuration on the server (see the controls-layer note in `types.ts`), so
+// secret values NEVER reach this side — only the `isSet` flag.
 
-export interface SozlamaHolati {
-  maydonlar: SozlamaMaydoni[]
-  /** Sirsiz joriy qiymatlar (serverdan o'qilgan) */
-  qiymatlar: Record<string, string>
-  /** Sir maydonlar uchun: kalit → serverda o'rnatilganmi */
-  ornatilgan: Record<string, boolean>
-  /** O'qish yiqilsa — sabab. Forma baribir ko'rsatiladi. */
-  ogohlantirish?: string
+export interface SettingsState {
+  fields: SettingField[]
+  /** Current values without secrets (read from the server) */
+  values: Record<string, string>
+  /** For secret fields: key → whether it is set on the server */
+  isSet: Record<string, boolean>
+  /** If reading failed — the reason. The form is shown regardless. */
+  warning?: string
 }
 
-export function ilovaSozlamalariniOl(appId: string): Promise<SozlamaHolati> {
-  return sorov<SozlamaHolati>(`/api/apps/${encodeURIComponent(appId)}/sozlama`)
+export function fetchAppSettings(appId: string): Promise<SettingsState> {
+  return request<SettingsState>(`/api/apps/${encodeURIComponent(appId)}/settings`)
 }
 
-export interface SozlamaYozishJavobi {
+export interface SettingsSaveResponse {
   ok: boolean
-  xabar?: string
-  xato?: string
-  /** Validatsiya xatolari (400) */
-  xatolar?: string[]
+  message?: string
+  error?: string
+  /** Validation errors (400) */
+  errors?: string[]
 }
 
 /**
- * Qiymatlarni serverga yozadi.
+ * Writes the values to the server.
  *
- * BO'SH SIR YUBORILMASIN: bo'sh satr "o'zgartirmadim" degani va server uni
- * tashlab ketadi, lekin uni umuman yubormaslik aniqroq.
+ * DO NOT SEND EMPTY SECRETS: an empty string means "I did not change it" and
+ * the server drops it, but not sending it at all is clearer.
  */
-export function ilovaSozlamalariniSaqla(
+export function saveAppSettings(
   appId: string,
-  qiymatlar: Record<string, string>,
-): Promise<SozlamaYozishJavobi> {
-  return sorov<SozlamaYozishJavobi>(`/api/apps/${encodeURIComponent(appId)}/sozlama`, {
+  values: Record<string, string>,
+): Promise<SettingsSaveResponse> {
+  return request<SettingsSaveResponse>(`/api/apps/${encodeURIComponent(appId)}/settings`, {
     method: 'PUT',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ qiymatlar }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ values }),
   })
 }
 
-export interface AmalJavobi {
+export interface ActionResponse {
   ok: boolean
-  xabar?: string
-  xato?: string
-  /** Amal allaqachon bajarilib turgan edi — natija o'shanikidan */
-  bandEdi?: boolean
-  /** `yangila` da ko'rsatilgan statelarning yangi qiymatlari */
-  statelar?: Record<string, { ok: boolean; qiymat?: unknown; xato?: string; vaqt: string }>
+  message?: string
+  error?: string
+  /** The action was already running — the result comes from that run */
+  wasBusy?: boolean
+  /** New values of the states listed in `refresh` */
+  states?: Record<string, { ok: boolean; value?: unknown; error?: string; time: string }>
 }
 
-export function ilovaAmaliniBajar(appId: string, nom: string): Promise<AmalJavobi> {
-  return sorov<AmalJavobi>(
-    `/api/apps/${encodeURIComponent(appId)}/amal/${encodeURIComponent(nom)}`,
+export function runAppAction(appId: string, name: string): Promise<ActionResponse> {
+  return request<ActionResponse>(
+    `/api/apps/${encodeURIComponent(appId)}/action/${encodeURIComponent(name)}`,
     { method: 'POST' },
   )
 }
 
 // ---------------------------------------------------------------------------
-// Loyihalar
+// Projects
 // ---------------------------------------------------------------------------
 
-export async function loyihalarOl(): Promise<Project[]> {
-  const javob = await sorov<{ projects: Project[] }>('/api/projects')
-  return javob.projects
+export async function fetchProjects(): Promise<Project[]> {
+  const response = await request<{ projects: Project[] }>('/api/projects')
+  return response.projects
 }
 
 /**
- * Yangi loyiha. Faqat nom yuboriladi — papkani server o'zi yaratadi
- * (`~/.platforma/loyihalar/<slug>/`), mijoz yo'l bera olmaydi.
+ * New project. Only the name is sent — the server creates the folder itself
+ * (`~/.platforma/loyihalar/<slug>/`); the client cannot supply a path.
  */
-export async function loyihaYarat(name: string): Promise<Project> {
-  const javob = await sorov<{ project: Project }>('/api/projects', {
+export async function createProject(name: string): Promise<Project> {
+  const response = await request<{ project: Project }>('/api/projects', {
     method: 'POST',
-    headers: jsonSarlavha,
+    headers: jsonHeaders,
     body: JSON.stringify({ name }),
   })
-  return javob.project
+  return response.project
 }
 
 // ---------------------------------------------------------------------------
-// Skilllar
+// Skills
 // ---------------------------------------------------------------------------
 
-export interface SkillKatalogi {
+export interface SkillCatalog {
   skills: Skill[]
-  manbalar: SkillManba[]
+  sources: SkillSource[]
 }
 
-export function skilllarniOl(): Promise<SkillKatalogi> {
-  return sorov<SkillKatalogi>('/api/skills')
+export function fetchSkills(): Promise<SkillCatalog> {
+  return request<SkillCatalog>('/api/skills')
 }
 
-export interface ManbaNatija {
-  manba: SkillManba
-  qoshildi: number
-  yangilandi: number
-  ochirildi: number
-  ogohlantirishlar: string[]
+export interface SourceResult {
+  source: SkillSource
+  added: number
+  updated: number
+  deleted: number
+  warnings: string[]
 }
 
-/** GitHub repo ulash — skilllar katalogga tushadi, DISKKA YUKLANMAYDI */
-export function manbaQosh(url: string): Promise<ManbaNatija> {
-  return sorov<ManbaNatija>('/api/skills/manba', {
+/** Connects a GitHub repo — skills land in the catalog, NOTHING IS DOWNLOADED */
+export function addSkillSource(url: string): Promise<SourceResult> {
+  return request<SourceResult>('/api/skills/source', {
     method: 'POST',
-    headers: jsonSarlavha,
+    headers: jsonHeaders,
     body: JSON.stringify({ url }),
   })
 }
 
-export function manbaSinxronla(
+export function syncSkillSource(
   id: string,
-): Promise<Omit<ManbaNatija, 'manba'>> {
-  return sorov<Omit<ManbaNatija, 'manba'>>(`/api/skills/manba/${id}/sinxron`, {
+): Promise<Omit<SourceResult, 'source'>> {
+  return request<Omit<SourceResult, 'source'>>(`/api/skills/source/${id}/sync`, {
     method: 'POST',
   })
 }
 
-export function manbaOchir(id: string): Promise<{ ok: boolean }> {
-  return sorov<{ ok: boolean }>(`/api/skills/manba/${id}`, { method: 'DELETE' })
+export function deleteSkillSource(id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/skills/source/${id}`, { method: 'DELETE' })
 }
 
 /**
- * Skillni o'rnatadi. `qamrov: 'loyiha'` bo'lsa `projectIds` majburiy —
- * bir chaqiruvda bir necha loyihaga o'rnatish mumkin.
+ * Installs a skill. With `scope: 'project'` the `projectIds` are required —
+ * a single call can install into several projects.
  */
-export async function skillOrnat(
+export async function installSkill(
   id: string,
-  qamrov: SkillQamrov,
+  scope: SkillScope,
   projectIds?: string[],
 ): Promise<Skill> {
-  const javob = await sorov<{ skill: Skill }>(`/api/skills/${id}/ornat`, {
+  const response = await request<{ skill: Skill }>(`/api/skills/${id}/install`, {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ qamrov, projectIds }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ scope, projectIds }),
   })
-  return javob.skill
+  return response.skill
 }
 
-export async function skillOrnatishniBekor(
+export async function uninstallSkill(
   id: string,
-  qamrov: SkillQamrov,
+  scope: SkillScope,
   projectIds?: string[],
 ): Promise<Skill | null> {
-  const javob = await sorov<{ skill: Skill | null }>(`/api/skills/${id}/ornat`, {
+  const response = await request<{ skill: Skill | null }>(`/api/skills/${id}/install`, {
     method: 'DELETE',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ qamrov, projectIds }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ scope, projectIds }),
   })
-  return javob.skill
+  return response.skill
 }
 
 // ---------------------------------------------------------------------------
-// MCP serverlar
+// MCP servers
 // ---------------------------------------------------------------------------
 //
-// Skilllar bo'limi bilan bir xil shakl. IKKI FARQ:
-//   - registry qidiruvi ALOHIDA bosqich (natija saqlanmaydi);
-//   - `sozlamaQiymatlari` yuboriladi, lekin MAXFIY qiymatlar javobda
-//     HECH QACHON qaytmaydi (server ularni umuman o'qimaydi).
+// Same shape as the skills section. TWO DIFFERENCES:
+//   - the registry search is a SEPARATE step (its results are not stored);
+//   - `settingValues` are sent, but SECRET values are NEVER returned in the
+//     response (the server does not even read them back).
 
-export interface McpKatalogi {
-  serverlar: McpServer[]
-  manbalar: McpManba[]
+export interface McpCatalog {
+  servers: McpServer[]
+  sources: McpSource[]
 }
 
-export function mcpServerlarniOl(): Promise<McpKatalogi> {
-  return sorov<McpKatalogi>('/api/mcp')
+export function fetchMcpServers(): Promise<McpCatalog> {
+  return request<McpCatalog>('/api/mcp')
 }
 
-/** Registry qidiruv natijasi — hali katalogga tushmagan yozuv */
-export interface McpRegistryNatija {
-  nom: string
-  tavsif: string
-  transport: McpTransportTuri
-  versiya: string | null
-  sozlamalar: McpSozlamaMaydoni[]
+/** A registry search hit — an entry not yet added to the catalog */
+export interface McpRegistryResult {
+  name: string
+  description: string
+  transport: McpTransportKind
+  version: string | null
+  settings: McpSettingField[]
 }
 
-/** Rasmiy registry'da qidiradi. HECH NARSA SAQLAMAYDI. */
-export async function mcpRegistryQidir(soz: string): Promise<McpRegistryNatija[]> {
-  const javob = await sorov<{ natijalar: McpRegistryNatija[] }>(
-    `/api/mcp/registry/qidir?q=${encodeURIComponent(soz)}`,
+/** Searches the official registry. STORES NOTHING. */
+export async function mcpRegistrySearch(term: string): Promise<McpRegistryResult[]> {
+  const response = await request<{ results: McpRegistryResult[] }>(
+    `/api/mcp/registry/search?q=${encodeURIComponent(term)}`,
   )
-  return javob.natijalar
+  return response.results
 }
 
-export interface McpManbaNatija {
-  manba: McpManba
-  qoshildi: number
-  yangilandi: number
-  ochirildi: number
-  ogohlantirishlar?: string[]
+export interface McpSourceResult {
+  source: McpSource
+  added: number
+  updated: number
+  deleted: number
+  warnings?: string[]
 }
 
-/** Registry'dan tanlangan serverni katalogga qo'shadi */
-export function mcpRegistryQosh(nom: string): Promise<McpManbaNatija> {
-  return sorov<McpManbaNatija>('/api/mcp/manba/registry', {
+/** Adds the server picked from the registry to the catalog */
+export function addMcpFromRegistry(name: string): Promise<McpSourceResult> {
+  return request<McpSourceResult>('/api/mcp/source/registry', {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ nom }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ name }),
   })
 }
 
-/** GitHub repo'dan `server.json` fayllarini skanerlaydi */
-export function mcpGithubUlash(url: string): Promise<McpManbaNatija> {
-  return sorov<McpManbaNatija>('/api/mcp/manba/github', {
+/** Scans a GitHub repo for `server.json` files */
+export function addMcpFromGithub(url: string): Promise<McpSourceResult> {
+  return request<McpSourceResult>('/api/mcp/source/github', {
     method: 'POST',
-    headers: jsonSarlavha,
+    headers: jsonHeaders,
     body: JSON.stringify({ url }),
   })
 }
 
-export interface McpQoldaKirish {
-  nom: string
-  tavsif?: string
-  transport: McpTransportTuri
-  /** stdio uchun */
-  buyruq?: string
-  argumentlar?: string[]
-  /** http uchun */
+export interface McpManualInput {
+  name: string
+  description?: string
+  transport: McpTransportKind
+  /** for stdio */
+  command?: string
+  args?: string[]
+  /** for http */
   url?: string
-  sozlamalar?: McpSozlamaMaydoni[]
+  settings?: McpSettingField[]
 }
 
-/** Qo'lda server qo'shish — buyruq yoki URL foydalanuvchidan */
-export function mcpQoldaQosh(kirish: McpQoldaKirish): Promise<McpManbaNatija> {
-  return sorov<McpManbaNatija>('/api/mcp/manba/qolda', {
+/** Adding a server by hand — command or URL comes from the user */
+export function addMcpManually(input: McpManualInput): Promise<McpSourceResult> {
+  return request<McpSourceResult>('/api/mcp/source/manual', {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify(kirish),
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
   })
 }
 
-export function mcpManbaSinxronla(id: string): Promise<Omit<McpManbaNatija, 'manba'>> {
-  return sorov<Omit<McpManbaNatija, 'manba'>>(`/api/mcp/manba/${id}/sinxron`, {
+export function syncMcpSource(id: string): Promise<Omit<McpSourceResult, 'source'>> {
+  return request<Omit<McpSourceResult, 'source'>>(`/api/mcp/source/${id}/sync`, {
     method: 'POST',
   })
 }
 
-export function mcpManbaOchir(id: string): Promise<{ ok: boolean }> {
-  return sorov<{ ok: boolean }>(`/api/mcp/manba/${id}`, { method: 'DELETE' })
+export function deleteMcpSource(id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/mcp/source/${id}`, { method: 'DELETE' })
 }
 
 /**
- * Serverni o'rnatadi.
+ * Installs the server.
  *
- * `sozlamaQiymatlari` — maydon nomi → qiymat. Maxfiy maydonlar alohida
- * faylga tushadi (bazaga emas). BO'SH qiymat "o'zgartirmadim" degani:
- * saqlangan token o'rnida qoladi.
+ * `settingValues` — field name → value. Secret fields go into a separate file
+ * (not into the database). An EMPTY value means "I did not change it": the
+ * stored token stays in place.
  */
-export async function mcpOrnat(
+export async function installMcpServer(
   id: string,
-  qamrov: McpQamrov,
-  sozlamaQiymatlari: Record<string, string>,
+  scope: McpScope,
+  settingValues: Record<string, string>,
   projectIds?: string[],
 ): Promise<McpServer> {
-  const javob = await sorov<{ server: McpServer }>(`/api/mcp/${id}/ornat`, {
+  const response = await request<{ server: McpServer }>(`/api/mcp/${id}/install`, {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ qamrov, projectIds, sozlamaQiymatlari }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ scope, projectIds, settingValues }),
   })
-  return javob.server
+  return response.server
 }
 
-export async function mcpOrnatishniBekor(
+export async function uninstallMcpServer(
   id: string,
-  qamrov: McpQamrov,
+  scope: McpScope,
   projectIds?: string[],
 ): Promise<McpServer | null> {
-  const javob = await sorov<{ server: McpServer | null }>(`/api/mcp/${id}/ornat`, {
+  const response = await request<{ server: McpServer | null }>(`/api/mcp/${id}/install`, {
     method: 'DELETE',
-    headers: jsonSarlavha,
-    body: JSON.stringify({ qamrov, projectIds }),
+    headers: jsonHeaders,
+    body: JSON.stringify({ scope, projectIds }),
   })
-  return javob.server
+  return response.server
 }
 
 // ---------------------------------------------------------------------------
-// Serverlar
+// Servers
 // ---------------------------------------------------------------------------
 
-export function serverlarOl(): Promise<{ servers: Server[] }> {
-  return sorov<{ servers: Server[] }>('/api/servers')
+export function fetchServers(): Promise<{ servers: Server[] }> {
+  return request<{ servers: Server[] }>('/api/servers')
 }
 
 /**
- * Server qo'shadi: backend platforma kalitini serverga joylaydi va
- * `ssh <name>` ishlaydigan holatga keltiradi. `parol` ixtiyoriy — mavjud
- * kalitlaringiz serverga kira olsa kerak emas; berilsa ham SAQLANMAYDI.
+ * Adds a server: the backend installs the platform key on it and gets
+ * `ssh <name>` working. `password` is optional — it is not needed if your
+ * existing keys can already log in; if given it is NOT STORED.
  */
-export async function serverQosh(malumot: {
+export async function addServer(info: {
   name: string
   host: string
   port?: number | string
   username?: string
-  parol?: string
-}): Promise<{ server: Server; ulanishXatosi?: string }> {
-  return sorov<{ server: Server; ulanishXatosi?: string }>('/api/servers', {
+  password?: string
+}): Promise<{ server: Server; connectionError?: string }> {
+  return request<{ server: Server; connectionError?: string }>('/api/servers', {
     method: 'POST',
-    headers: jsonSarlavha,
-    body: JSON.stringify(malumot),
+    headers: jsonHeaders,
+    body: JSON.stringify(info),
   })
 }
 
-export function serverOchir(id: string): Promise<{ ok: boolean; eslatma?: string }> {
-  return sorov<{ ok: boolean; eslatma?: string }>(`/api/servers/${id}`, { method: 'DELETE' })
+export function deleteServer(id: string): Promise<{ ok: boolean; note?: string }> {
+  return request<{ ok: boolean; note?: string }>(`/api/servers/${id}`, { method: 'DELETE' })
 }
 
-export function serverMetrikaOl(id: string): Promise<{ metrika: ServerMetrika }> {
-  return sorov<{ metrika: ServerMetrika }>(`/api/servers/${id}/metrika`)
+export function fetchServerMetrics(id: string): Promise<{ metrics: ServerMetrics }> {
+  return request<{ metrics: ServerMetrics }>(`/api/servers/${id}/metrics`)
 }

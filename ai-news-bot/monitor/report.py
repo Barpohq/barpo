@@ -1,11 +1,16 @@
-"""Alert va hisobot matnlari — Telegram HTML.
+"""Alert and report text — Telegram HTML.
 
-Format konvensiyalari `bot/health/report.py` dan: emoji + <b>sarlavha</b>,
-bo'limlar, 🔴/⚠️/✅ belgilar, faqat Telegram qo'llab-quvvatlaydigan teglar.
+The formatting conventions come from `bot/health/report.py`: emoji +
+<b>heading</b>, sections, 🔴/⚠️/✅ markers, and only the tags Telegram
+supports.
 
-Muhim tamoyil (04-xavflar, X2): o'lchov fakti har doim diagnostikadan
-OLDIN va undan mustaqil ko'rsatiladi. LLM matni faktni hech qachon
-bekor qilmaydi — u faqat qo'shimcha izoh.
+Key principle (04-risks, X2): the measured fact is always shown BEFORE the
+diagnosis and independently of it. The LLM's text never overrides the fact —
+it is only supplementary commentary.
+
+The user-visible strings here are deliberately Uzbek: this module's output
+goes straight into the Telegram admin chat, so it is product content rather
+than developer-facing text.
 """
 
 from __future__ import annotations
@@ -19,16 +24,16 @@ STATUS_EMOJI = {"ok": "✅", "warn": "⚠️", "fail": "🔴", "error": "🔴"}
 
 
 def _esc(text: str) -> str:
-    """Telegram HTML uchun xavfsiz matn.
+    """Make text safe for Telegram HTML.
 
-    Serverdan kelgan matn (xizmat nomlari, xato xabarlari) bevosita
-    xabarga tushadi — teg sifatida talqin qilinmasligi kerak.
+    Text coming from a server (service names, error messages) lands
+    directly in the message and must not be interpreted as markup.
     """
     return escape(text, quote=False)
 
 
 def format_alert(result: CheckResult, *, diagnosis: str = "") -> str:
-    """Bitta muammo haqida alert."""
+    """Alert about a single problem."""
     emoji = STATUS_EMOJI.get(result.status, "🔴")
     lines = [
         f"{emoji} <b>{_esc(result.server)}</b> — {_esc(result.name)}",
@@ -46,10 +51,10 @@ def format_alert(result: CheckResult, *, diagnosis: str = "") -> str:
 
 
 def format_recovery(state: CurrentState) -> str:
-    """Muammo tugagani haqida xabar.
+    """Message announcing that a problem has cleared.
 
-    Busiz foydalanuvchi alert olgandan keyin holat qanday
-    tugaganini bilmaydi.
+    Without it the user, having received an alert, never learns how the
+    situation ended.
     """
     return (
         f"✅ <b>{_esc(state.server)}</b> — {_esc(state.check_name)} tiklandi\n\n"
@@ -58,7 +63,7 @@ def format_recovery(state: CurrentState) -> str:
 
 
 def format_status(states: list[CurrentState]) -> str:
-    """Barcha serverlarning joriy holati — `/servers` va hisobot uchun."""
+    """Current state of every server — for `/servers` and the report."""
     if not states:
         return "ℹ️ Hali tekshiruv o'tkazilmagan."
 
@@ -76,8 +81,8 @@ def format_status(states: list[CurrentState]) -> str:
         server_problems = [s for s in server_states if s.is_problem]
         mark = "🔴" if server_problems else "✅"
         lines.append(f"{mark} <b>{_esc(server)}</b>")
-        # Muammolar va ogohlantirishlar ko'rsatiladi, normal holat esa
-        # faqat sanaladi — 5 server × 10 check ro'yxati o'qilmaydi
+        # Problems and warnings are listed; healthy checks are only
+        # counted — nobody reads a list of 5 servers × 10 checks
         shown = [s for s in server_states if s.status != "ok"]
         for state in shown:
             emoji = STATUS_EMOJI.get(state.status, "•")
@@ -96,7 +101,11 @@ def format_status(states: list[CurrentState]) -> str:
 
 
 def format_summary(states: list[CurrentState]) -> str:
-    """Bir qatorlik xulosa — log va `runs.note` uchun."""
+    """One-line summary — internal, for logs and `runs.note`.
+
+    Unlike the rest of this module this is not Telegram-facing, so it is
+    in English like the other operator-facing output.
+    """
     problems = sum(1 for s in states if s.is_problem)
     servers = len({s.server for s in states})
-    return f"{servers} server, {len(states)} tekshiruv, {problems} muammo"
+    return f"{servers} servers, {len(states)} checks, {problems} problems"

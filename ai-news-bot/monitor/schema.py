@@ -1,54 +1,54 @@
-"""Monitor agentining baza sxemasi — versiya diapazoni 200–299.
+"""Monitor agent database schema — version range 200–299.
 
-Jadvallar `core/db/schema.py::all_migrations()` orqali botning
-migratsiyalari bilan birga qo'llanadi (`bot db migrate`).
+The tables are applied alongside the bot's own migrations through
+`core/db/schema.py::all_migrations()` (`bot db migrate`).
 """
 
 from __future__ import annotations
 
-# Har bir element: (versiya, izoh, SQL)
+# Each entry: (version, description, SQL)
 MONITOR_MIGRATIONS: list[tuple[int, str, str]] = [
     (
         200,
-        "Monitor: server tekshiruvlari va alert tarixi",
+        "Monitor: server checks and alert history",
         """
-        -- ─── Har bir tekshiruvning natijasi ───
-        -- Tarix saqlanadi: "hozir buzilgan" holati oxirgi yozuvni
-        -- o'qib aniqlanadi, xatolar tarixidan emas (bot/health dagi
-        -- bilan bir xil mantiq — tuzatilgan muammo qizil turmasin).
+        -- ─── Result of every check ───
+        -- History is kept, but "currently broken" is derived from the
+        -- latest row rather than from the error history (same logic as
+        -- bot/health — a fixed problem must not stay red).
         CREATE TABLE server_checks (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             checked_at  TEXT    NOT NULL,          -- ISO 8601 UTC
-            server      TEXT    NOT NULL,          -- servers.yaml dagi nom
+            server      TEXT    NOT NULL,          -- name from servers.yaml
             -- load | memory | disk:/var | uptime | service:nginx | ssh
             check_name  TEXT    NOT NULL,
-            -- ok: normal | warn: chegaraga yaqin | fail: chegaradan oshdi
-            -- error: tekshirib bo'lmadi (SSH yiqildi, chiqish tushunarsiz)
+            -- ok: normal | warn: near the threshold | fail: over the threshold
+            -- error: could not be checked (SSH failed, output unparseable)
             status      TEXT    NOT NULL,
-            message     TEXT    NOT NULL,          -- odam o'qiydigan izoh
-            value       REAL,                      -- son ko'rsatkich (foiz, load)
-            threshold   REAL,                      -- qaysi chegara bilan solishtirildi
+            message     TEXT    NOT NULL,          -- human-readable description
+            value       REAL,                      -- numeric metric (percent, load)
+            threshold   REAL,                      -- which threshold it was compared against
             duration_ms INTEGER
         );
 
         CREATE INDEX idx_server_checks_at  ON server_checks (checked_at);
-        -- Oxirgi holatni tez topish uchun: (server, check) bo'yicha eng katta id
+        -- Fast lookup of the latest state: highest id per (server, check)
         CREATE INDEX idx_server_checks_key ON server_checks (server, check_name, id);
 
-        -- ─── Yuborilgan alertlar ───
-        -- Cooldown kaliti (server, check_name): bitta serverning diski
-        -- to'lgani boshqa serverning alertini bosmasligi kerak. Botdagi
-        -- global cooldown (runs jadvali) bu yerda yaroqsiz.
+        -- ─── Alerts that were sent ───
+        -- Cooldown key is (server, check_name): one server's full disk must
+        -- not suppress another server's alert. The bot's global cooldown
+        -- (runs table) would be wrong here.
         CREATE TABLE server_alerts (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at   TEXT NOT NULL,
             server       TEXT NOT NULL,
             check_name   TEXT NOT NULL,
             status       TEXT NOT NULL,            -- fail | error
-            summary      TEXT NOT NULL,            -- alertning asosiy qatori
-            diagnosis    TEXT,                     -- LLM izohi (bo'lsa)
-            -- Muammo tugagach to'ldiriladi: tiklanish xabari yuboriladi
-            -- va keyingi buzilish yangi alert hisoblanadi.
+            summary      TEXT NOT NULL,            -- the alert's headline row
+            diagnosis    TEXT,                     -- LLM explanation (if any)
+            -- Filled in once the problem clears: a recovery message is sent
+            -- and any later breakage counts as a new alert.
             resolved_at  TEXT
         );
 

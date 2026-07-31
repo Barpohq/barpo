@@ -1,122 +1,125 @@
-// GitHub repo'dan MCP server yozuvlarini skanerlash.
+// Scanning MCP server entries out of a GitHub repository.
 //
-// `skill-ombor.ts` dagi `manbaniSkanerla` bilan bir xil naqsh, lekin
-// TARBALL YO'Q: MCP serverda diskka tushadigan fayl bo'lmaydi. Bizga faqat
-// METADATA kerak (`server.json`), jarayon esa keyinchalik `npx`/`uvx` bilan
-// o'z paketini o'zi yuklab oladi. Ya'ni bu yerda ombor qatlami umuman yo'q.
+// The same pattern as `scanSource` in `skill-store.ts`, but with NO TARBALL:
+// an MCP server has no files that land on disk. All we need is the METADATA
+// (`server.json`) — the process later downloads its own package with
+// `npx`/`uvx`. In other words there is no store layer here at all.
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ `server.json` — RASMIY PUBLISH FORMATI, registry sxemasi bilan       │
-// │ AYNI. Shuning uchun `registryYozuvniAylantir()` qayta ishlatiladi:   │
-// │ ikki manba, bitta konvertor.                                         │
+// │ `server.json` IS THE OFFICIAL PUBLISH FORMAT and is IDENTICAL to the │
+// │ registry schema. That is why `convertRegistryEntry()` is reused:     │
+// │ two sources, one converter.                                          │
 // │                                                                      │
-// │ DARAXT BO'YLAB qidiramiz, faqat ildizni emas. Tekshirilgan:          │
-// │ `github/github-mcp-server` va `cloudflare/mcp-server-cloudflare` da  │
-// │ fayl ildizda, lekin monorepolarda (`modelcontextprotocol/servers`)   │
-// │ ildizda YO'Q — u ichki papkalarda bo'lishi mumkin.                   │
+// │ We search THE WHOLE TREE, not just the root. Verified: in            │
+// │ `github/github-mcp-server` and `cloudflare/mcp-server-cloudflare`    │
+// │ the file sits at the root, but in monorepos                          │
+// │ (`modelcontextprotocol/servers`) it is NOT at the root — it may live │
+// │ in a nested directory.                                               │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import type { McpKatalogYozuvi } from '@platforma/shared'
-import { blobniOqi, fayllarniTop, repoMalumoti, type GithubManzil } from './github.ts'
-import { registryYozuvniAylantir, type RegistryServerYozuvi } from './mcp-registry.ts'
+import type { McpCatalogEntry } from '@platforma/shared'
+import { findFiles, type GithubRef, readBlob, repoInfo } from './github.ts'
+import { convertRegistryEntry, type RegistryServerEntry } from './mcp-registry.ts'
 
-/** Papka ichida yoki ildizda `server.json` (katta-kichik harf farqsiz) */
-const SERVER_JSON_NAQSHI = /(^|\/)server\.json$/i
+/** A `server.json` inside a directory or at the root (case-insensitive) */
+const SERVER_JSON_PATTERN = /(^|\/)server\.json$/i
 
 /**
- * Bir repo'da o'qiladigan eng ko'p fayl.
+ * The largest number of files read from a single repository.
  *
- * `skill-ombor.ts` dagi `MAKS_SKANER_FAYL` bilan bir xil sabab: har fayl
- * uchun bitta blob so'rovi ketadi va rate limit 60/soat (autentifikatsiyasiz).
- * MCP uchun chegara PASTROQ — `server.json` odatda bitta-ikkita bo'ladi,
- * o'ndan ko'p bo'lsa bu MCP repo emas, boshqa narsa (masalan `server.json`
- * nomli konfiguratsiya fayllari to'plami).
+ * The same reason as `MAX_SCAN_FILES` in `skill-store.ts`: every file costs
+ * one blob request and the rate limit is 60/hour (unauthenticated). The MCP
+ * limit is LOWER — there is usually only one or two `server.json` files, and
+ * more than ten means this is not an MCP repository but something else (a
+ * collection of configuration files that happen to be named `server.json`,
+ * say).
  */
-export const MAKS_MCP_SKANER_FAYL = 10
+export const MAX_MCP_SCAN_FILES = 10
 
-export interface McpSkanerNatija {
+export interface McpScanResult {
   ref: string
   sha: string
-  serverlar: Omit<McpKatalogYozuvi, 'id' | 'manbaId' | 'createdAt'>[]
-  ogohlantirishlar: string[]
+  servers: Omit<McpCatalogEntry, 'id' | 'sourceId' | 'createdAt'>[]
+  warnings: string[]
 }
 
 /**
- * Repo'dagi `server.json` fayllarini o'qib katalog yozuvlariga aylantiradi.
+ * Reads the `server.json` files in a repository and turns them into catalog
+ * entries.
  *
- * XATO TASHLAYDI faqat repo'ga umuman kirib bo'lmasa (404, rate limit).
- * Bitta fayl buzuq bo'lsa qolganini yo'qotmaymiz — ogohlantirish qo'shiladi
- * (`skill-ombor.ts` dagi bilan bir xil qoida).
+ * THROWS only when the repository cannot be reached at all (404, rate limit).
+ * A single broken file does not cost us the rest — a warning is added instead
+ * (the same rule as in `skill-store.ts`).
  */
-export async function mcpManbaniSkanerla(m: GithubManzil): Promise<McpSkanerNatija> {
-  const ogohlantirishlar: string[] = []
-  const { ref, sha } = await repoMalumoti(m)
-  const { fayllar, kesilgan } = await fayllarniTop(m, ref, SERVER_JSON_NAQSHI)
+export async function scanMcpSource(r: GithubRef): Promise<McpScanResult> {
+  const warnings: string[] = []
+  const { ref, sha } = await repoInfo(r)
+  const { files, truncated } = await findFiles(r, ref, SERVER_JSON_PATTERN)
 
-  if (kesilgan) {
-    ogohlantirishlar.push('Repository too large — the file list is incomplete')
+  if (truncated) {
+    warnings.push('Repository too large — the file list is incomplete')
   }
 
-  let royxat = fayllar
-  if (royxat.length > MAKS_MCP_SKANER_FAYL) {
-    ogohlantirishlar.push(
-      `Found ${royxat.length} server.json files, read the first ${MAKS_MCP_SKANER_FAYL}`,
+  let list = files
+  if (list.length > MAX_MCP_SCAN_FILES) {
+    warnings.push(
+      `Found ${list.length} server.json files, read the first ${MAX_MCP_SCAN_FILES}`,
     )
-    royxat = royxat.slice(0, MAKS_MCP_SKANER_FAYL)
+    list = list.slice(0, MAX_MCP_SCAN_FILES)
   }
 
-  const serverlar: McpSkanerNatija['serverlar'] = []
-  const korilganNomlar = new Set<string>()
+  const servers: McpScanResult['servers'] = []
+  const seenNames = new Set<string>()
 
-  for (const fayl of royxat) {
-    let xom: string
+  for (const file of list) {
+    let raw: string
     try {
-      xom = await blobniOqi(m, fayl.sha)
+      raw = await readBlob(r, file.sha)
     } catch {
-      // Bitta fayl o'qilmasa qolganini yo'qotmaymiz
-      ogohlantirishlar.push(`${fayl.yol}: could not be read`)
+      // One unreadable file does not cost us the rest
+      warnings.push(`${file.path}: could not be read`)
       continue
     }
 
-    let malumot: RegistryServerYozuvi
+    let data: RegistryServerEntry
     try {
-      malumot = JSON.parse(xom) as RegistryServerYozuvi
+      data = JSON.parse(raw) as RegistryServerEntry
     } catch {
-      ogohlantirishlar.push(`${fayl.yol}: not JSON — skipped`)
+      warnings.push(`${file.path}: not JSON — skipped`)
       continue
     }
 
-    // `server.json` nomli fayl har xil narsa bo'lishi mumkin (masalan
-    // eski MCP konfiguratsiyasi yoki umuman boshqa loyihaning fayli).
-    // MCP publish formati `name` va (`packages` yoki `remotes`) talab qiladi —
-    // ular bo'lmasa bu bizning faylimiz emas.
-    if (!malumot.name) {
-      ogohlantirishlar.push(`${fayl.yol}: no "name" — not an MCP server descriptor`)
+    // A file named `server.json` can be all sorts of things (an old MCP
+    // configuration, or a file belonging to an entirely different project).
+    // The MCP publish format requires `name` and either `packages` or
+    // `remotes` — without them this is not our file.
+    if (!data.name) {
+      warnings.push(`${file.path}: no "name" — not an MCP server descriptor`)
       continue
     }
 
-    const yozuv = registryYozuvniAylantir(malumot)
-    if (!yozuv) {
-      ogohlantirishlar.push(
-        `${fayl.yol}: no launch method could be determined (missing packages/remotes or unknown type)`,
+    const entry = convertRegistryEntry(data)
+    if (!entry) {
+      warnings.push(
+        `${file.path}: no launch method could be determined (missing packages/remotes or unknown type)`,
       )
       continue
     }
 
-    // Bir repo'da bir nom ikki marta bo'lsa (masalan monorepo ichida
-    // takrorlangan) birinchisi qoladi — baza UNIQUE indeksi baribir
-    // ikkinchisini rad etardi, lekin bu yerda ogohlantirish beramiz.
-    if (korilganNomlar.has(yozuv.nom)) {
-      ogohlantirishlar.push(`${fayl.yol}: duplicate name "${yozuv.nom}" — skipped`)
+    // When the same name appears twice in one repository (duplicated inside a
+    // monorepo, say) the first one stays — the UNIQUE index in the database
+    // would reject the second anyway, but here we can say so out loud.
+    if (seenNames.has(entry.name)) {
+      warnings.push(`${file.path}: duplicate name "${entry.name}" — skipped`)
       continue
     }
-    korilganNomlar.add(yozuv.nom)
-    serverlar.push(yozuv)
+    seenNames.add(entry.name)
+    servers.push(entry)
   }
 
-  if (serverlar.length === 0 && ogohlantirishlar.length === 0) {
-    ogohlantirishlar.push('No `server.json` found in the repository')
+  if (servers.length === 0 && warnings.length === 0) {
+    warnings.push('No `server.json` found in the repository')
   }
 
-  return { ref, sha, serverlar, ogohlantirishlar }
+  return { ref, sha, servers, warnings }
 }

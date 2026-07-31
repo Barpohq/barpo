@@ -1,80 +1,80 @@
-// Assistant javoblarini markdown sifatida ko'rsatish.
+// Rendering assistant replies as markdown.
 //
-// react-markdown DOM'ga xom HTML qo'ymaydi (rehype-raw ulanmagan), shuning
-// uchun LLM javobidagi `<script>` kabi teglar oddiy matn bo'lib qoladi — XSS
-// yo'q. GFM plagini jadval, strikethrough va checkbox ro'yxatlarini qo'shadi.
+// react-markdown never puts raw HTML into the DOM (rehype-raw is not wired
+// up), so tags like `<script>` in an LLM reply stay plain text — no XSS. The
+// GFM plugin adds tables, strikethrough and checkbox lists.
 //
-// Har bir teg uslubi shu yerda beriladi: Tailwind'ning `prose` plagini
-// loyihada yo'q, va bo'lgan taqdirda ham ranglar `index.css` tokenlariga
-// qo'lda bog'lanishi kerak edi.
+// The style of every tag is given here: the project has no Tailwind `prose`
+// plugin, and even with one the colours would have to be wired to the
+// `index.css` tokens by hand.
 
 import { Children, cloneElement, isValidElement, memo, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-/** Kod bloki — til yorlig'i va nusxalash tugmasi bilan */
-function KodBloki({ til, kod }: { til: string | null; kod: string }) {
-  const [nusxalandi, setNusxalandi] = useState(false)
+/** Code block — with a language label and a copy button */
+function CodeBlock({ language, code }: { language: string | null; code: string }) {
+  const [copied, setCopied] = useState(false)
 
-  async function nusxala() {
+  async function copy() {
     try {
-      await navigator.clipboard.writeText(kod)
-      setNusxalandi(true)
-      setTimeout(() => setNusxalandi(false), 1600)
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
     } catch {
-      // Clipboard ruxsati yo'q (masalan HTTP orqali ochilgan) — jim o'tamiz,
-      // foydalanuvchi matnni qo'lda belgilab olaveradi
+      // No clipboard permission (e.g. opened over plain HTTP) — fail quietly,
+      // the user can still select the text by hand
     }
   }
 
   return (
     <div className="my-3 overflow-hidden rounded-lg border border-line bg-bg">
       <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
-        <span className="font-mono text-[11px] text-faint">{til ?? 'text'}</span>
+        <span className="font-mono text-[11px] text-faint">{language ?? 'text'}</span>
         <button
-          onClick={() => void nusxala()}
+          onClick={() => void copy()}
           className="font-mono text-[11px] text-faint transition hover:text-lazur"
         >
-          {nusxalandi ? '✓ copied' : 'copy'}
+          {copied ? '✓ copied' : 'copy'}
         </button>
       </div>
       <pre className="thin-scroll overflow-x-auto px-3 py-2.5">
-        <code className="font-mono text-[12.5px] leading-relaxed">{kod}</code>
+        <code className="font-mono text-[12.5px] leading-relaxed">{code}</code>
       </pre>
     </div>
   )
 }
 
-// `code` hem inline (`shunday`), hem blok (```shunday```) uchun chaqiriladi.
-// react-markdown 10'da `inline` propi olib tashlangan, shuning uchun `pre`
-// bolasi ekanini o'zimiz belgilaymiz: quyidagi `pre` komponenti bolalarini
-// `blok` bayrog'i bilan klonlaydi.
-const komponentlar: Components = {
-  code({ className, children, ...qolgan }) {
-    const kod = String(children).replace(/\n$/, '')
-    const blokmi = (qolgan as { 'data-blok'?: boolean })['data-blok'] === true
+// `code` is called both for inline (`like this`) and for block (```like
+// this```) code. react-markdown 10 removed the `inline` prop, so we mark being
+// a child of `pre` ourselves: the `pre` component below clones its children
+// with a `block` flag.
+const components: Components = {
+  code({ className, children, ...rest }) {
+    const code = String(children).replace(/\n$/, '')
+    const isBlock = (rest as { 'data-block'?: boolean })['data-block'] === true
 
-    if (!blokmi) {
-      const { 'data-blok': _ajratilgan, ...toza } = qolgan as Record<string, unknown>
+    if (!isBlock) {
+      const { 'data-block': _dropped, ...clean } = rest as Record<string, unknown>
       return (
         <code
           className="rounded bg-panel2 px-1.5 py-0.5 font-mono text-[0.875em] text-lazur"
-          {...toza}
+          {...clean}
         >
           {children}
         </code>
       )
     }
-    const til = /language-(\w+)/.exec(className ?? '')?.[1] ?? null
-    return <KodBloki til={til} kod={kod} />
+    const language = /language-(\w+)/.exec(className ?? '')?.[1] ?? null
+    return <CodeBlock language={language} code={code} />
   },
 
-  // `pre` o'rami KodBloki ichida allaqachon bor — bu yerda faqat bolasiga
-  // "sen blokdasan" deb belgi qo'yamiz
+  // The `pre` wrapper already lives inside CodeBlock — here we only flag the
+  // child as "you are in a block"
   pre: ({ children }) => (
     <>
-      {Children.map(children, (bola) =>
-        isValidElement(bola) ? cloneElement(bola, { 'data-blok': true } as never) : bola,
+      {Children.map(children, (child) =>
+        isValidElement(child) ? cloneElement(child, { 'data-block': true } as never) : child,
       )}
     </>
   ),
@@ -98,9 +98,9 @@ const komponentlar: Components = {
   em: ({ children }) => <em className="italic">{children}</em>,
   del: ({ children }) => <del className="text-faint line-through">{children}</del>,
 
-  // Marker turi ro'yxat tegida beriladi, `li`da emas — aks holda `ol` bandlari
-  // ham nuqta oladi. `task-list-item` GFM checkbox bandi: markeri o'rniga
-  // `input` keladi, shuning uchun markersiz.
+  // The marker type is set on the list tag, not on `li` — otherwise `ol`
+  // items would get bullets too. `task-list-item` is a GFM checkbox item: an
+  // `input` arrives instead of its marker, hence no marker.
   ul: ({ children }) => (
     <ul className="my-2.5 ml-5 list-disc space-y-1 marker:text-faint">{children}</ul>
   ),
@@ -132,7 +132,8 @@ const komponentlar: Components = {
 
   hr: () => <hr className="my-4 border-line" />,
 
-  // Keng jadval sahifani gorizontal siljitmasin — o'z konteynerida aylansin
+  // A wide table must not scroll the page sideways — it scrolls in its own
+  // container
   table: ({ children }) => (
     <div className="thin-scroll my-3 overflow-x-auto rounded-lg border border-line">
       <table className="w-full border-collapse text-[13.5px]">{children}</table>
@@ -153,14 +154,14 @@ const komponentlar: Components = {
 }
 
 /**
- * Oqim davomida har delta'da qayta parse qilinadi — `memo` bir xil matn uchun
- * qayta ishlashning oldini oladi (masalan boshqa xabar yangilanganda).
+ * During streaming this re-parses on every delta — `memo` prevents redoing the
+ * work for identical text (for example when another message updates).
  */
-export default memo(function Markdown({ matn }: { matn: string }) {
+export default memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="text-[15px] break-words">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={komponentlar}>
-        {matn}
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {text}
       </ReactMarkdown>
     </div>
   )

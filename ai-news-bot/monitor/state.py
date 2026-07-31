@@ -1,12 +1,11 @@
-"""Tekshiruv natijalarini saqlash va joriy holatni o'qish.
+"""Persisting check results and reading the current state.
 
-Tarix `server_checks` da to'planadi, "hozir qanday" esa har
-(server, check) juftligi uchun oxirgi yozuvdan olinadi.
+History accumulates in `server_checks`, while "how things are right now"
+comes from the latest row for each (server, check) pair.
 
-Diqqat: alert faqat ketma-ket ikkinchi muvaffaqiyatsizlikdan keyin
-yuboriladi. Tarmoqning bir soniyalik uzilishi 5 serverni ham "o'lgan"
-deb ko'rsatishi mumkin — bunday alertlar tez ishonchni yo'qotadi
-(04-xavflar, X4).
+Note: an alert is only sent after the second consecutive failure. A
+one-second network blip can make all 5 servers look "dead" — alerts like
+that burn trust fast (04-risks, X4).
 """
 
 from __future__ import annotations
@@ -19,15 +18,15 @@ from monitor.checks import CheckResult
 
 log = get_logger(__name__)
 
-# Alert uchun kerakli ketma-ket muvaffaqiyatsizlik soni
+# Consecutive failures required before we alert
 FAILURES_BEFORE_ALERT = 2
 
 
 def record(results: list[CheckResult], *, duration_ms: int = 0) -> None:
-    """Natijalarni bazaga yozish.
+    """Write the results to the database.
 
-    Har natija alohida INSERT — katta tranzaksiya ochilmaydi, chunki
-    bot bilan bitta bazani bo'lishamiz va uzoq qulf keraksiz.
+    One INSERT per result — we deliberately avoid a large transaction,
+    because we share the database with the bot and a long lock buys nothing.
     """
     now = utc_now()
     for result in results:
@@ -47,17 +46,18 @@ def record(results: list[CheckResult], *, duration_ms: int = 0) -> None:
                     duration_ms,
                 ),
             )
-        except Exception:  # noqa: BLE001 — yozuv xatosi siklni to'xtatmasin
-            log.exception("Tekshiruv natijasini yozib bo'lmadi: %s/%s", result.server, result.name)
+        except Exception:  # noqa: BLE001 — a write error must not stop the cycle
+            log.exception("Could not record check result: %s/%s", result.server, result.name)
 
 
 @dataclass(frozen=True, slots=True)
 class CurrentState:
-    """(server, check) juftligining hozirgi holati."""
+    """The current state of one (server, check) pair."""
 
     server: str
     check_name: str
     status: str
+    # Uzbek: carried through into Telegram alert and status messages
     message: str
     checked_at: str
     value: float | None = None
@@ -69,10 +69,10 @@ class CurrentState:
 
 
 def current_states(server: str | None = None) -> list[CurrentState]:
-    """Har (server, check) uchun eng oxirgi yozuv.
+    """The latest row for each (server, check).
 
-    Oxirgi yozuv id bo'yicha topiladi — `checked_at` soniya aniqligida
-    va bitta siklda bir xil bo'ladi.
+    The latest row is found by id — `checked_at` only has second precision
+    and is identical across a single cycle.
     """
     sql = """
         SELECT c.server, c.check_name, c.status, c.message, c.checked_at, c.value, c.threshold
@@ -104,14 +104,14 @@ def current_states(server: str | None = None) -> list[CurrentState]:
 
 
 def current_problems(server: str | None = None) -> list[CurrentState]:
-    """Hozir muammoli holatlar (fail yoki error)."""
+    """States that are currently problematic (fail or error)."""
     return [s for s in current_states(server) if s.is_problem]
 
 
 def consecutive_failures(server: str, check_name: str, *, limit: int = 5) -> int:
-    """Oxirgi nechta tekshiruv ketma-ket muvaffaqiyatsiz bo'lgan.
+    """How many of the most recent checks failed in a row.
 
-    Birinchi `ok`/`warn` uchraganda sanoq to'xtaydi.
+    Counting stops at the first `ok`/`warn`.
     """
     rows = query(
         "SELECT status FROM server_checks WHERE server = ? AND check_name = ? "
@@ -128,16 +128,16 @@ def consecutive_failures(server: str, check_name: str, *, limit: int = 5) -> int
 
 
 def should_alert(server: str, check_name: str) -> bool:
-    """Alert yuborish vaqti keldimi.
+    """Whether it's time to send an alert.
 
-    Bitta muvaffaqiyatsizlik yetarli emas: tarmoq uzilishi yoki
-    o'tkinchi yuk cho'qqisi shovqin beradi.
+    One failure isn't enough: a network blip or a transient load spike
+    would just produce noise.
     """
     return consecutive_failures(server, check_name) >= FAILURES_BEFORE_ALERT
 
 
 def last_check_time(server: str) -> str | None:
-    """Server oxirgi marta qachon tekshirilgan."""
+    """When the server was last checked."""
     row = query_one(
         "SELECT MAX(checked_at) AS last FROM server_checks WHERE server = ?", (server,)
     )
@@ -145,10 +145,10 @@ def last_check_time(server: str) -> str | None:
 
 
 def prune(keep_days: int = 30) -> int:
-    """Eski yozuvlarni o'chirish. O'chirilgan qatorlar soni qaytadi.
+    """Delete old rows. Returns the number of rows removed.
 
-    Har 10 daqiqada ~10 yozuv × 5 server = kuniga ~7000 qator.
-    Cheklovsiz baza yildan yilga o'sib boradi.
+    Roughly 10 rows × 5 servers every 10 minutes ≈ 7000 rows a day.
+    Left unbounded the database would grow year over year.
     """
     cursor = execute(
         "DELETE FROM server_checks WHERE checked_at < datetime('now', ?)",

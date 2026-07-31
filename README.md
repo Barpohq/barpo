@@ -1,48 +1,48 @@
-# AI Platform — Loyiha hujjatlari
+# AI Platform — Project documentation
 
-> Self-hosted, open-source AI orkestratsiya platformasi.
-> Bosqich 1: Telegram AI yangiliklar boti. Bosqich 2: Bot asosida umumiy platformaga evolyutsiya.
+> A self-hosted, open-source AI orchestration platform.
+> Stage 1: a Telegram AI news bot. Stage 2: evolving that bot into a general-purpose platform.
 
 ---
 
-## Loyiha haqida qisqacha
+## The project in brief
 
-**Muammo:** Bugungi kunda AI bilan jiddiy ishlash uchun bir nechta alohida vositalardan foydalanishga majbursiz — Claude, ChatGPT, Gemini, OpenRouter, Claude Code, turli deploy xizmatlari. Ularning har biri o'z ekotizimiga bog'laydi, o'zaro integratsiya yo'q, va murakkab ishlar (server boshqaruvi, deploy) hali ham qo'lda yoki terminal orqali bajariladi.
+**The problem:** Doing serious work with AI today means juggling several separate tools — Claude, ChatGPT, Gemini, OpenRouter, Claude Code, various deploy services. Each one locks you into its own ecosystem, none of them talk to each other, and the harder jobs (server management, deploys) are still done by hand or through a terminal.
 
-**Yechim:** Barcha AI provayderlar, agentlar, serverlar va vositalarni bitta self-hosted platformada birlashtirish. AI chat orqali yuqori darajadagi buyruq beriladi, platforma orqa fonda kerakli vositalarni (masalan Claude Code'ni tmux sessiyasida) ishga tushirib, ishni bajaradi.
+**The solution:** Bring every AI provider, agent, server, and tool together on a single self-hosted platform. You give a high-level instruction through AI chat, and the platform launches whatever tools are needed in the background (Claude Code in a tmux session, for example) and gets the job done.
 
-**Falsafa:**
-- Avval o'zim uchun quraman — abstraksiyalar real ehtiyojdan tug'iladi, oldindan o'ylab topilmaydi
-- Open source va self-hosted — hech qanday vendor lock-in, ma'lumotlar o'z serverimda
-- Pastdan yuqoriga — avval ishlaydigan konkret yechim (bot), keyin undan platforma o'sib chiqadi
-- Progressive disclosure — oddiy foydalanuvchi murakkablikni ko'rmaydi, professional hamma narsaga kirisha oladi
-- Xavfsizlik dizaynning bir qismi — AI'ga parol berilmaydi, har bir amal ruxsat darajasiga ega, hamma narsa audit log'da
+**Philosophy:**
+- Build it for myself first — abstractions are born out of real needs, not invented up front
+- Open source and self-hosted — no vendor lock-in, my data stays on my server
+- Bottom-up — first a concrete working solution (the bot), then let the platform grow out of it
+- Progressive disclosure — a casual user never sees the complexity, a power user can reach everything
+- Security is part of the design — the AI is never handed a password, every action has a permission level, everything lands in the audit log
 
-## Hujjatlar tarkibi
+## Documentation map
 
-| Fayl | Mazmuni |
+| File | Contents |
 |---|---|
-| [01-telegram-bot.md](01-telegram-bot.md) | Birinchi bosqich: AI yangiliklar botining to'liq spetsifikatsiyasi va arxitekturasi |
-| [02-ai-platform.md](02-ai-platform.md) | Ikkinchi bosqich: botdan platformaga evolyutsiya, modullar, arxitektura |
-| [03-roadmap.md](03-roadmap.md) | Bosqichma-bosqich reja va muvaffaqiyat mezonlari |
-| [04-xavflar.md](04-xavflar.md) | Tanqidiy tahlil: xavflar, zaif tomonlar va mudofaa strategiyalari |
+| [01-telegram-bot.md](01-telegram-bot.md) | Stage one: the full specification and architecture of the AI news bot |
+| [02-ai-platform.md](02-ai-platform.md) | Stage two: bot-to-platform evolution, modules, architecture |
+| [03-roadmap.md](03-roadmap.md) | Phase-by-phase plan and success criteria |
+| [04-risks.md](04-risks.md) | Critical analysis: risks, weak points, and mitigation strategies |
 
-## Kontekst: mening holatim
+## Context: where I stand
 
-- 5 ta server mavjud, platformaga ulanadi
-- Claude, ChatGPT, Gemini obunalari + OpenRouter orqali yangi modellarni sinash odati
-- Asosiy ish muhiti — web
-- Birinchi real ehtiyoj: Telegram kanalim uchun to'liq avtonom AI yangiliklar boti
+- 5 servers available, to be connected to the platform
+- Claude, ChatGPT, and Gemini subscriptions, plus a habit of trying new models through OpenRouter
+- The web is my primary working environment
+- First real need: a fully autonomous AI news bot for my Telegram channel
 
-## Ilhom manbalari va o'xshash loyihalar
+## Inspirations and similar projects
 
-- **OpenClaw / Hermes** — agent qatlamining yuqori darajasi; bir kishi o'zi uchun qurgan open-source loyihalarning tarqalish modeli
-- **MCP (Model Context Protocol)** — integratsiya standarti; o'z standartimizni o'ylab topmasdan mavjudiga tayanamiz
-- **Coolify / Dokploy** — self-hosted server boshqaruv modeli, agent-daemon arxitekturasi
-- **OpenRouter** — model-agnostik LLM kirish qatlami
+- **OpenClaw / Hermes** — the top layer of the agent stack; a model for how open-source projects built by one person for themselves spread
+- **MCP (Model Context Protocol)** — the integration standard; rather than inventing our own, we build on what exists
+- **Coolify / Dokploy** — the self-hosted server management model, agent-daemon architecture
+- **OpenRouter** — a model-agnostic LLM access layer
 
-## Asosiy tamoyil
+## Guiding principle
 
-> Platformaning to'g'ri abstraksiyalari faqat real ishlatishdan tug'iladi.
-> Bot — birinchi "skill". Ikkinchi use case paydo bo'lganda umumiy naqshlar o'zi ko'rinadi.
-> Platforma yuqoridan pastga loyihalanmaydi — pastdan yuqoriga o'sadi.
+> A platform's right abstractions only emerge from real use.
+> The bot is the first "skill". When a second use case appears, the shared patterns will show themselves.
+> The platform is not designed top-down — it grows bottom-up.

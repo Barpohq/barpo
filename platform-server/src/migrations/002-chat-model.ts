@@ -1,4 +1,4 @@
-import type { Migratsiya } from './index.ts'
+import type { Migration } from './index.ts'
 
 // Chat sessiyasiga tanlangan provider va model qo'shiladi.
 //
@@ -10,9 +10,9 @@ import type { Migratsiya } from './index.ts'
 // Ikkalasi ham NULL bo'lishi mumkin: sessiya yaratildi, lekin hali birorta
 // xabar yuborilmadi.
 
-export const migratsiya: Migratsiya = {
-  raqam: 2,
-  nom: 'chat-sessiya-model',
+export const migration: Migration = {
+  number: 2,
+  name: 'chat-sessiya-model',
   sql: `
     ALTER TABLE chat_sessions ADD COLUMN provider TEXT;
     ALTER TABLE chat_sessions ADD COLUMN model    TEXT;

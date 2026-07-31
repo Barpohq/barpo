@@ -1,12 +1,12 @@
-"""Monitor CLI kirish nuqtasi.
+"""Monitor CLI entry point.
 
-Buyruqlar:
-    monitor servers          — serverlar ro'yxati va SSH ulanishini sinash
-    monitor check            — bir marta tekshirish, natijani saqlash
-    monitor status           — oxirgi ma'lum holat (yangi tekshiruvsiz)
-    monitor alerts           — alert tarixi
-    monitor diagnose         — muammoni LLM bilan izohlash (qo'lda sinash)
-    monitor run              — scheduler bilan doimiy rejim
+Commands:
+    monitor servers          — list servers and test the SSH connection
+    monitor check            — run the checks once and store the results
+    monitor status           — last known state (without a fresh check)
+    monitor alerts           — alert history
+    monitor diagnose         — explain a problem with the LLM (manual testing)
+    monitor run              — continuous mode under the scheduler
 """
 
 from __future__ import annotations
@@ -17,93 +17,93 @@ import sys
 from core.config import ConfigError, log_level
 from core.logging_setup import get_logger, setup_logging
 
-# Faqat parser yordam matni uchun — apscheduler tortilmaydi
+# Only for the parser's help text — this avoids pulling in apscheduler
 from monitor.config import DEFAULT_INTERVAL_MINUTES
 
 log = get_logger("monitor.cli")
 
-# Terminal uchun holat belgilari
+# Status markers for the terminal
 STATUS_MARK = {"ok": "✓", "warn": "⚠", "fail": "✗", "error": "✗"}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="monitor",
-        description="Server monitor agenti — SSH orqali kuzatish",
+        description="Server monitor agent — monitoring over SSH",
     )
     parser.add_argument(
         "--log-level",
         default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Log darajasi (default: .env dagi LOG_LEVEL)",
+        help="Log level (default: LOG_LEVEL from .env)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     # ── servers ──
-    sub.add_parser("servers", help="Serverlar ro'yxati va ulanish sinovi")
+    sub.add_parser("servers", help="List servers and test connectivity")
 
     # ── check ──
-    check_parser = sub.add_parser("check", help="Serverlarni bir marta tekshirish")
-    check_parser.add_argument("--server", help="Faqat shu server (nom bo'yicha)")
+    check_parser = sub.add_parser("check", help="Check the servers once")
+    check_parser.add_argument("--server", help="This server only (by name)")
     check_parser.add_argument(
-        "--no-save", action="store_true", help="Natijani bazaga yozmaslik"
+        "--no-save", action="store_true", help="Don't write results to the database"
     )
     check_parser.add_argument(
-        "--notify", action="store_true", help="Muammo bo'lsa Telegram'ga alert yuborish"
+        "--notify", action="store_true", help="Send a Telegram alert if there's a problem"
     )
     check_parser.add_argument(
         "--diagnose",
         action="store_true",
-        help="Alertga LLM diagnostikasini qo'shish (--notify bilan)",
+        help="Add an LLM diagnosis to the alert (with --notify)",
     )
 
     # ── status ──
-    status_parser = sub.add_parser("status", help="Oxirgi ma'lum holat (tekshirmasdan)")
-    status_parser.add_argument("--server", help="Faqat shu server")
+    status_parser = sub.add_parser("status", help="Last known state (without checking)")
+    status_parser.add_argument("--server", help="This server only")
     status_parser.add_argument(
-        "--problems", action="store_true", help="Faqat muammolarni ko'rsatish"
+        "--problems", action="store_true", help="Show problems only"
     )
 
     # ── alerts ──
-    alerts_parser = sub.add_parser("alerts", help="Alert tarixi")
-    alerts_parser.add_argument("--limit", type=int, default=20, help="Nechta (default: 20)")
+    alerts_parser = sub.add_parser("alerts", help="Alert history")
+    alerts_parser.add_argument("--limit", type=int, default=20, help="How many (default: 20)")
     alerts_parser.add_argument(
-        "--open", action="store_true", help="Faqat yopilmagan alertlar"
+        "--open", action="store_true", help="Unresolved alerts only"
     )
 
     # ── diagnose ──
     diag_parser = sub.add_parser(
-        "diagnose", help="Muammoni LLM bilan izohlash (alert yuborilmaydi)"
+        "diagnose", help="Explain a problem with the LLM (no alert is sent)"
     )
-    diag_parser.add_argument("--server", required=True, help="Server nomi")
+    diag_parser.add_argument("--server", required=True, help="Server name")
     diag_parser.add_argument(
-        "--check", help="Check nomi (masalan disk:/). Bo'sh bo'lsa birinchi muammo"
+        "--check", help="Check name (e.g. disk:/). If omitted, the first problem"
     )
 
     # ── run ──
-    run_parser = sub.add_parser("run", help="Doimiy rejim (scheduler)")
+    run_parser = sub.add_parser("run", help="Continuous mode (scheduler)")
     run_parser.add_argument(
         "--interval-minutes",
         type=int,
         default=DEFAULT_INTERVAL_MINUTES,
-        help=f"Tekshiruv oralig'i (default: {DEFAULT_INTERVAL_MINUTES})",
+        help=f"Check interval (default: {DEFAULT_INTERVAL_MINUTES})",
     )
-    run_parser.add_argument("--once", action="store_true", help="Bir sikl bajarib chiqish")
+    run_parser.add_argument("--once", action="store_true", help="Run a single cycle and exit")
     run_parser.add_argument(
-        "--no-diagnose", action="store_true", help="LLM diagnostikasiz (arzonroq)"
+        "--no-diagnose", action="store_true", help="Skip the LLM diagnosis (cheaper)"
     )
 
     return parser
 
 
 def cmd_servers() -> int:
-    """Konfiguratsiyani ko'rsatish va har serverga ulanishni sinash."""
+    """Show the configuration and test the connection to each server."""
     from monitor.config import load_servers
     from monitor.ssh import check_connection
 
     servers = load_servers()
     if not servers:
-        print("servers.yaml da server yo'q")
+        print("No servers in servers.yaml")
         return 1
 
     failures = 0
@@ -113,7 +113,7 @@ def cmd_servers() -> int:
             target += f":{server.port}"
 
         if not server.enabled:
-            print(f"○ {server.name:<14} {target:<28} o'chirilgan")
+            print(f"○ {server.name:<14} {target:<28} disabled")
             continue
 
         result = check_connection(server)
@@ -125,13 +125,13 @@ def cmd_servers() -> int:
             print(f"✗ {server.name:<14} {target:<28} {result.error_message}")
 
     if failures:
-        print(f"\n{failures} ta serverga ulanib bo'lmadi.")
-        print("Tekshiring: SSH kaliti, known_hosts, servers.yaml dagi host/user.")
+        print(f"\nCould not connect to {failures} server(s).")
+        print("Check: the SSH key, known_hosts, and host/user in servers.yaml.")
     return 1 if failures else 0
 
 
 def cmd_check(server_name: str | None, no_save: bool, notify: bool, diagnose: bool) -> int:
-    """Tekshiruvni bajarish, natijani saqlash va ko'rsatish."""
+    """Run the checks, store the results and display them."""
     from core import db
     from monitor.checks import check_server
     from monitor.config import enabled_servers, find_server
@@ -139,13 +139,13 @@ def cmd_check(server_name: str | None, no_save: bool, notify: bool, diagnose: bo
 
     servers = [find_server(server_name)] if server_name else enabled_servers()
     if not servers:
-        print("Kuzatiladigan server yo'q (hammasi enabled: false?)")
+        print("No servers to monitor (all enabled: false?)")
         return 1
 
     alerts = resolved = 0
     if no_save:
         if notify:
-            print("--notify va --no-save birga ishlamaydi (alert holatga tayanadi)")
+            print("--notify and --no-save don't work together (alerting relies on stored state)")
             return 2
         results = []
         for server in servers:
@@ -167,17 +167,17 @@ def cmd_check(server_name: str | None, no_save: bool, notify: bool, diagnose: bo
         print(f"  {mark} {result.name:<20} {result.message}")
 
     print()
-    print(f"{problems} ta muammo topildi." if problems else "Hammasi joyida.")
+    print(f"{problems} problem(s) found." if problems else "All good.")
     if alerts:
-        print(f"{alerts} ta alert yuborildi.")
+        print(f"{alerts} alert(s) sent.")
     if resolved:
-        print(f"{resolved} ta muammo tiklandi.")
-    # Semantik exit code: cron va skriptlar uchun
+        print(f"{resolved} problem(s) recovered.")
+    # Meaningful exit code: for cron and scripts
     return 1 if problems else 0
 
 
 def cmd_status(server_name: str | None, problems_only: bool) -> int:
-    """Bazadagi oxirgi holatni ko'rsatish — yangi tekshiruvsiz."""
+    """Show the last stored state — without running a fresh check."""
     from core import db
     from monitor.state import current_states
 
@@ -187,7 +187,7 @@ def cmd_status(server_name: str | None, problems_only: bool) -> int:
         states = [s for s in states if s.is_problem]
 
     if not states:
-        print("Ma'lumot yo'q — `monitor check` ni ishga tushiring")
+        print("No data — run `monitor check`")
         return 0
 
     current = ""
@@ -202,12 +202,12 @@ def cmd_status(server_name: str | None, problems_only: bool) -> int:
             problems += 1
 
     print()
-    print(f"{problems} ta muammo." if problems else "Hammasi joyida.")
+    print(f"{problems} problem(s)." if problems else "All good.")
     return 1 if problems else 0
 
 
 def cmd_alerts(limit: int, open_only: bool) -> int:
-    """Alert tarixini ko'rsatish."""
+    """Show the alert history."""
     from core import db
     from monitor.notify import open_alerts, recent_alerts
 
@@ -215,12 +215,13 @@ def cmd_alerts(limit: int, open_only: bool) -> int:
     alerts = open_alerts() if open_only else recent_alerts(limit)
 
     if not alerts:
-        print("Ochiq alert yo'q." if open_only else "Alert tarixi bo'sh.")
+        print("No open alerts." if open_only else "Alert history is empty.")
         return 0
 
     for alert in alerts:
-        state = "ochiq" if not alert.get("resolved_at") else "yopilgan"
-        mark = "🔴" if state == "ochiq" else "✓"
+        is_open = not alert.get("resolved_at")
+        state = "open" if is_open else "resolved"
+        mark = "🔴" if is_open else "✓"
         print(
             f"{mark} #{alert['id']:<4} {alert['created_at']}  "
             f"{alert['server']}/{alert['check_name']:<16} {state}"
@@ -234,7 +235,7 @@ def cmd_alerts(limit: int, open_only: bool) -> int:
 
 
 def cmd_diagnose(server_name: str, check_name: str | None) -> int:
-    """Diagnostikani qo'lda ishga tushirish — prompt va javobni ko'rish."""
+    """Run the diagnosis by hand — to inspect the prompt and the answer."""
     from monitor.checks import check_server
     from monitor.config import find_server
     from monitor.diagnose import diagnose_problem
@@ -246,21 +247,21 @@ def cmd_diagnose(server_name: str, check_name: str | None) -> int:
         selected = next((r for r in results if r.name == check_name), None)
         if selected is None:
             names = ", ".join(r.name for r in results)
-            print(f"'{check_name}' topilmadi. Mavjud: {names}")
+            print(f"'{check_name}' not found. Available: {names}")
             return 2
     else:
         selected = next((r for r in results if r.is_problem), None)
         if selected is None:
-            print(f"{server.name}: muammo yo'q — diagnostika kerak emas.")
-            print("Aniq checkni ko'rish uchun: --check <nom>")
+            print(f"{server.name}: no problems — no diagnosis needed.")
+            print("To inspect a specific check: --check <name>")
             return 0
 
-    print(f"Muammo:  {selected.server}/{selected.name} — {selected.message}")
-    print("Diagnostika so'ralmoqda...\n")
+    print(f"Problem:  {selected.server}/{selected.name} — {selected.message}")
+    print("Requesting diagnosis...\n")
 
     diagnosis = diagnose_problem(selected, server)
     if not diagnosis:
-        print("Diagnostika olinmadi (LLM xatosi yoki limit — loglarni ko'ring).")
+        print("No diagnosis obtained (LLM error or cost limit — check the logs).")
         return 1
 
     print(diagnosis)
@@ -268,7 +269,7 @@ def cmd_diagnose(server_name: str, check_name: str | None) -> int:
 
 
 def cmd_run(interval_minutes: int, once: bool, no_diagnose: bool) -> int:
-    """Doimiy rejim yoki bitta to'liq sikl."""
+    """Continuous mode, or a single full cycle."""
     from core import db
     from monitor.scheduler import run_cycle, run_forever
 
@@ -288,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         level = args.log_level or log_level()
     except ConfigError as exc:
-        print(f"Konfiguratsiya xatosi: {exc}", file=sys.stderr)
+        print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
     setup_logging(level)
 
@@ -307,16 +308,16 @@ def main(argv: list[str] | None = None) -> int:
             case "run":
                 return cmd_run(args.interval_minutes, args.once, args.no_diagnose)
             case _:
-                parser.error(f"Noma'lum buyruq: {args.command}")
+                parser.error(f"Unknown command: {args.command}")
                 return 2
     except ConfigError as exc:
-        print(f"Konfiguratsiya xatosi: {exc}", file=sys.stderr)
+        print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         return 130
-    except Exception as exc:  # noqa: BLE001 — CLI foydalanuvchiga xato ko'rsatadi
-        log.exception("Kutilmagan xato")
-        print(f"Xato: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 — the CLI shows the error to the user
+        log.exception("Unexpected error")
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 

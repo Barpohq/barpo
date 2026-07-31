@@ -1,19 +1,18 @@
 ---
 name: dashboard-jsx
 description: Use when a dashboard needs a custom layout that the built-in widgets cannot express, and you are about to pass `view` (JSX source) to appPublish. Explains the required component shape, the platform components and Tailwind classes available to it, and how live `states` data reaches the code. Read this BEFORE writing any view code.
-license: ichki
+license: internal
 ---
 
-# Maxsus dashboard ko'rinishi (JSX)
+# A custom dashboard view (JSX)
 
-`appPublish` ning `view` maydoniga o'z JSX kodingizni berishingiz mumkin.
-Bu vidjetlar ifodalay olmaydigan tartib kerak bo'lganda ishlatiladi.
+You can pass your own JSX to `appPublish`'s `view` field. Use it when you need a
+layout the widgets cannot express.
 
-**Avval vidjetlar bilan qilib ko'ring** (`dashboard-yaratish` skilliga
-qarang) — ular ishonchliroq va tezroq. Kod yozish faqat haqiqatan zarur
-bo'lganda.
+**Try the widgets first** (see the `dashboard-create` skill) — they are more
+reliable and faster. Write code only when it is genuinely necessary.
 
-## Majburiy shakl
+## The required shape
 
 ```jsx
 export default function View({ data, ui }) {
@@ -21,29 +20,29 @@ export default function View({ data, ui }) {
 }
 ```
 
-`export default` **shart**. Komponent ikki props oladi:
+`export default` is **mandatory**. The component takes two props:
 
-- `data` — `appPublish` da bergan ma'lumot + jonli `states` qiymatlari
-- `ui` — platforma komponentlari (pastda)
+- `data` — the data you gave to `appPublish` plus the live `states` values
+- `ui` — the platform components (below)
 
-## Nima mavjud
+## What is available
 
-### Platforma komponentlari — `ui`
+### Platform components — `ui`
 
-Bularni ishlating, shunda dashboard qolgan UI bilan **bir xil** ko'rinadi:
+Use these and the dashboard will look **identical** to the rest of the UI:
 
 ```jsx
 <ui.Card className="p-5">...</ui.Card>
-<ui.StatTile label="CPU" value="3.2%" hint="4 yadro" accent="#45c8b5" />
+<ui.StatTile label="CPU" value="3.2%" hint="4 cores" accent="#45c8b5" />
 <ui.StatusDot status="running" pulse />
 ```
 
-`StatusDot` holatlari: `running`, `idle`, `paused`, `healthy`, `warning`,
+`StatusDot` statuses: `running`, `idle`, `paused`, `healthy`, `warning`,
 `offline`.
 
-### Tailwind klasslari
+### Tailwind classes
 
-Platformaning butun uslub tizimi ochiq:
+The platform's entire style system is open to you:
 
 ```jsx
 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -54,124 +53,123 @@ Platformaning butun uslub tizimi ochiq:
 </div>
 ```
 
-Rang klasslari: `text-ink`, `text-muted`, `text-faint`, `text-lazur`,
+Colour classes: `text-ink`, `text-muted`, `text-faint`, `text-lazur`,
 `text-gold`, `text-coral`, `text-mint`, `bg-panel`, `bg-panel2`, `bg-bg`,
 `border-line`.
 
-### React hooklari
+### React hooks
 
-Import qilmasdan ishlatasiz — ular tayyor:
+You use them without importing — they are already in scope:
 
 `useState`, `useEffect`, `useMemo`, `useCallback`, `useRef`,
 `useReducer`, `useLayoutEffect`, `useId`
 
 ```jsx
 export default function View({ data }) {
-  const [tanlangan, setTanlangan] = useState(null)
-  const jami = useMemo(() => data.postlar.length, [data.postlar])
-  return <div>{jami} ta post</div>
+  const [selected, setSelected] = useState(null)
+  const total = useMemo(() => data.posts.length, [data.posts])
+  return <div>{total} posts</div>
 }
 ```
 
-## Nima MUMKIN EMAS
+## What is NOT allowed
 
-| Taqiqlangan | Nima uchun | O'rniga |
+| Forbidden | Why | Instead |
 |---|---|---|
-| `import` / `require` | Kod bundle qilinmaydi | React, hooklar, `ui` allaqachon berilgan |
-| `fetch`, `WebSocket` | Ixtiyoriy tarmoq chiqishi yo'q | o'qish uchun `states`, yozish uchun `ui.amal` / `ui.saqla` |
-| `localStorage`, cookie | Ko'rinish holatsiz bo'lsin | `useState` |
+| `import` / `require` | The code is not bundled | React, the hooks, and `ui` are already provided |
+| `fetch`, `WebSocket` | No arbitrary network access | `states` to read, `ui.action` / `ui.save` to write |
+| `localStorage`, cookies | The view should be stateless | `useState` |
 
-## Yozish — `ui.amal` va `ui.saqla`
+## Writing — `ui.action` and `ui.save`
 
-Ilovada `sozlamalar` yoki `amallar` bo'lsa, ko'rinish ularni chaqira oladi:
+If the app has `settings` or `actions`, the view can call them:
 
 ```jsx
 export default function View({ data, ui }) {
-  const [ketmoqda, setKetmoqda] = useState(false)
+  const [busy, setBusy] = useState(false)
 
   async function restart() {
-    setKetmoqda(true)
-    const javob = await ui.amal('restart')     // amallar[].nom
-    setKetmoqda(false)
+    setBusy(true)
+    const response = await ui.action('restart')     // actions[].name
+    setBusy(false)
   }
 
   return (
     <ui.Card className="p-5">
-      <button onClick={restart} disabled={ketmoqda}>
-        {ketmoqda ? 'Bajarilmoqda…' : 'Restart'}
+      <button onClick={restart} disabled={busy}>
+        {busy ? 'Running…' : 'Restart'}
       </button>
     </ui.Card>
   )
 }
 ```
 
-`ui.saqla({ token: '...' })` — sozlama qiymatlarini yozadi.
-`ui.sozlama` — joriy sirsiz qiymatlar (sirlar bu yerda **yo'q**).
+`ui.save({ token: '...' })` writes setting values.
+`ui.settings` holds the current non-secret values (secrets are **not** here).
 
-Bu ikki funksiya **faqat shu ilovaning** marshrutlariga boradi — boshqa
-ilovaga murojaat qilib bo'lmaydi. Shuning uchun `fetch` taqiqi buzilmaydi.
+These two functions only ever reach **this app's** routes — you cannot address
+another app. That is why they do not violate the `fetch` ban.
 
-**Avval sxemani ko'rib chiqing.** `sozlamalar.maydonlar` bilan forma
-platforma tomonidan render qilinadi va validatsiya, sir maskalash,
-"bo'sh sir = o'zgartirmadim" qoidasi unda tayyor. `ui.saqla` ni faqat
-sxema sig'maydigan holatda ishlating — tafsilotlar `dashboard-boshqaruv`
-skillida.
+**Consider the schema first.** With `settings.fields` the form is rendered by
+the platform, and validation, secret masking, and the "empty secret = unchanged"
+rule are already handled there. Use `ui.save` only when the schema does not
+fit — the details are in the `dashboard-controls` skill.
 
-## Jonli ma'lumot — `states`
+## Live data — `states`
 
-Vaqt o'tishi bilan o'zgaradigan qiymat uchun `fetch` yozmang. `states`
-qo'shing (`dashboard-yaratish` skilliga qarang) — ular serverda
-bajariladi va `data` ga **avtomatik tushadi**:
+Do not write a `fetch` for a value that changes over time. Add `states` instead
+(see the `dashboard-create` skill) — they run on the server and land in `data`
+**automatically**:
 
 ```
 appPublish({
   states: [
-    { nom: "cpu", interval: 5, kod: "module.exports = async () => ({ foiz: 3.2 })" }
+    { name: "cpu", interval: 5, code: "module.exports = async () => ({ percent: 3.2 })" }
   ],
   view: "..."
 })
 ```
 
-Kod ichida `data.cpu.foiz` mavjud bo'ladi va **har 5 soniyada yangi qiymat
-bilan qayta render bo'ladi**. Siz uchun bu shunchaki props o'zgarishi:
+Inside your code `data.cpu.percent` will exist and **re-render every 5 seconds
+with the new value**. From your side it is just a props change:
 
 ```jsx
 export default function View({ data }) {
-  return <div>CPU: {data.cpu?.foiz}%</div>
+  return <div>CPU: {data.cpu?.percent}%</div>
 }
 ```
 
-`data.cpu` boshida `undefined` bo'lishi mumkin (birinchi so'rov hali
-kelmagan) — `?.` bilan himoyalang.
+`data.cpu` may be `undefined` at first (the first request has not landed yet) —
+guard it with `?.`.
 
-Nega shunday: `states` keshlanadi va interval bo'yicha aniq bir marta
-bajariladi. `fetch` bilan yozsangiz, har ochiq tab so'rovni takrorlardi
-va yangilanish oralig'ini platforma boshqara olmasdi.
+Why it works this way: `states` are cached and run exactly once per interval.
+Written with `fetch`, every open tab would repeat the request and the platform
+would have no control over the refresh interval.
 
-## To'liq misol
+## A complete example
 
 ```jsx
 export default function View({ data, ui }) {
-  const [filtr, setFiltr] = useState('hammasi')
-  const postlar = (data.postlar ?? []).filter(
-    (p) => filtr === 'hammasi' || p.holat === filtr
+  const [filter, setFilter] = useState('all')
+  const posts = (data.posts ?? []).filter(
+    (p) => filter === 'all' || p.status === filter
   )
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ui.StatTile label="CPU" value={`${data.cpu?.foiz ?? '—'}%`} />
-        <ui.StatTile label="RAM" value={data.ram?.foiz ?? '—'} hint={data.ram?.bosh} />
+        <ui.StatTile label="CPU" value={`${data.cpu?.percent ?? '—'}%`} />
+        <ui.StatTile label="RAM" value={data.ram?.percent ?? '—'} hint={data.ram?.free} />
       </div>
 
       <ui.Card className="overflow-hidden">
         <div className="flex gap-2 border-b border-line px-5 py-3">
-          {['hammasi', 'nashr', 'kutmoqda'].map((f) => (
+          {['all', 'published', 'pending'].map((f) => (
             <button
               key={f}
-              onClick={() => setFiltr(f)}
+              onClick={() => setFilter(f)}
               className={`rounded-md px-2.5 py-1 text-xs transition ${
-                filtr === f ? 'bg-lazur text-bg' : 'text-muted hover:text-ink'
+                filter === f ? 'bg-lazur text-bg' : 'text-muted hover:text-ink'
               }`}
             >
               {f}
@@ -181,11 +179,11 @@ export default function View({ data, ui }) {
 
         <table className="w-full text-left text-sm">
           <tbody>
-            {postlar.map((p, i) => (
+            {posts.map((p, i) => (
               <tr key={i} className="border-t border-line/60">
-                <td className="px-5 py-2.5 font-mono text-xs text-faint">{p.vaqt}</td>
-                <td className="px-5 py-2.5 text-[13px]">{p.sarlavha}</td>
-                <td className="px-5 py-2.5 text-[13px] text-muted">{p.holat}</td>
+                <td className="px-5 py-2.5 font-mono text-xs text-faint">{p.time}</td>
+                <td className="px-5 py-2.5 text-[13px]">{p.title}</td>
+                <td className="px-5 py-2.5 text-[13px] text-muted">{p.status}</td>
               </tr>
             ))}
           </tbody>
@@ -196,23 +194,23 @@ export default function View({ data, ui }) {
 }
 ```
 
-## Xato bo'lsa nima bo'ladi
+## What happens when it fails
 
-Kodingiz kompilyatsiya qilinmasa yoki render paytida yiqilsa:
+If your code does not compile, or throws during render:
 
-- **Platforma ishlashda davom etadi** — hech narsa buzilmaydi
-- Vidjetlar berilgan bo'lsa, ular baribir ko'rsatiladi
-- O'rniga qisqa xato bloki chiqadi
+- **The platform keeps working** — nothing breaks
+- If you also supplied widgets, they are still displayed
+- A short error block appears in the view's place
 
-Shuning uchun `view` bilan birga `widgets` ham berish yaxshi odat.
+That is why supplying `widgets` alongside `view` is a good habit.
 
-## Tez-tez uchraydigan xatolar
+## Common mistakes
 
-| Xato | To'g'ri yo'l |
+| Mistake | The right way |
 |---|---|
-| `import React from 'react'` | Import kerak emas — hammasi berilgan |
-| `fetch('/api/...')` — o'qish uchun | `states` qo'shing |
-| `fetch('/api/...')` — yozish uchun | `ui.amal(nom)` / `ui.saqla({...})` |
+| `import React from 'react'` | No imports needed — everything is provided |
+| `fetch('/api/...')` — to read | add `states` |
+| `fetch('/api/...')` — to write | `ui.action(name)` / `ui.save({...})` |
 | `export function View()` | `export default function View()` |
-| `data.cpu.foiz` (himoyasiz) | `data.cpu?.foiz` — birinchi renderda bo'sh |
-| `<Card>` | `<ui.Card>` — komponentlar `ui` ichida |
+| `data.cpu.percent` (unguarded) | `data.cpu?.percent` — empty on first render |
+| `<Card>` | `<ui.Card>` — components live inside `ui` |

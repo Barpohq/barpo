@@ -112,18 +112,18 @@ export const llmCalls: LlmCall[] = [
 ]
 
 export const auditLog: AuditEntry[] = [
-  { time: '12:06', actor: 'ai-news-bot', action: 'Post published', target: 't.me/channel/6', level: "o'zgartirish", result: 'tasdiqlandi' },
-  { time: '12:04', actor: 'firdavs', action: 'Post approved (✅)', target: 'post #4', level: "o'zgartirish", result: 'OK' },
-  { time: '11:50', actor: 'server-monitor', action: 'Disk usage read', target: 'helsinki-1', level: "o'qish", result: 'OK' },
-  { time: '11:50', actor: 'server-monitor', action: 'Alert sent', target: 'admin chat', level: "o'qish", result: 'OK' },
-  { time: '11:32', actor: 'claude-code', action: 'tmux session opened', target: 'frankfurt-1', level: "o'zgartirish", result: 'tasdiqlandi' },
-  { time: '11:31', actor: 'firdavs', action: 'Deploy request (via chat)', target: 'frankfurt-1', level: "o'zgartirish", result: 'OK' },
-  { time: '10:14', actor: 'ai-news-bot', action: 'Tavily search call', target: 'enricher', level: "o'qish", result: 'OK' },
-  { time: '09:00', actor: 'ai-news-bot', action: 'Health report sent', target: 'admin chat', level: "o'qish", result: 'OK' },
-  { time: '08:47', actor: 'skill:postgres-backup', action: 'DROP TABLE attempt blocked', target: 'db-01', level: 'xavfli', result: 'rad etildi' },
-  { time: '06:00', actor: 'ai-news-bot', action: 'Pipeline started', target: 'helsinki-1', level: "o'qish", result: 'OK' },
-  { time: '05:55', actor: 'server-monitor', action: 'Restart proposal', target: 'nyc-1 · nginx', level: "o'zgartirish", result: 'kutmoqda' },
-  { time: '00:12', actor: 'berlin-1 daemon', action: 'Daily backup', target: 'sqlite → berlin-1', level: "o'zgartirish", result: 'tasdiqlandi' },
+  { time: '12:06', actor: 'ai-news-bot', action: 'Post published', target: 't.me/channel/6', level: 'write', result: 'approved' },
+  { time: '12:04', actor: 'firdavs', action: 'Post approved (✅)', target: 'post #4', level: 'write', result: 'OK' },
+  { time: '11:50', actor: 'server-monitor', action: 'Disk usage read', target: 'helsinki-1', level: 'read', result: 'OK' },
+  { time: '11:50', actor: 'server-monitor', action: 'Alert sent', target: 'admin chat', level: 'read', result: 'OK' },
+  { time: '11:32', actor: 'claude-code', action: 'tmux session opened', target: 'frankfurt-1', level: 'write', result: 'approved' },
+  { time: '11:31', actor: 'firdavs', action: 'Deploy request (via chat)', target: 'frankfurt-1', level: 'write', result: 'OK' },
+  { time: '10:14', actor: 'ai-news-bot', action: 'Tavily search call', target: 'enricher', level: 'read', result: 'OK' },
+  { time: '09:00', actor: 'ai-news-bot', action: 'Health report sent', target: 'admin chat', level: 'read', result: 'OK' },
+  { time: '08:47', actor: 'skill:postgres-backup', action: 'DROP TABLE attempt blocked', target: 'db-01', level: 'dangerous', result: 'denied' },
+  { time: '06:00', actor: 'ai-news-bot', action: 'Pipeline started', target: 'helsinki-1', level: 'read', result: 'OK' },
+  { time: '05:55', actor: 'server-monitor', action: 'Restart proposal', target: 'nyc-1 · nginx', level: 'write', result: 'pending' },
+  { time: '00:12', actor: 'berlin-1 daemon', action: 'Daily backup', target: 'sqlite → berlin-1', level: 'write', result: 'approved' },
 ]
 
 
@@ -256,7 +256,7 @@ export const installedApps: AppManifest[] = [
 ]
 
 // The new app that gets built when the user says "build me one" in chat
-const xarajatBotManifest: AppManifest = {
+const expenseBotManifest: AppManifest = {
   id: 'expense-bot',
   icon: '💸',
   name: 'expense-bot',
@@ -369,7 +369,7 @@ const crmManifest: AppManifest = {
     {
       type: 'deploy',
       url: 'https://crm.my-domain.com',
-      kind: 'domen',
+      kind: 'domain',
       server: 'frankfurt-1',
       ssl: "Let's Encrypt · auto-renewed",
       extra: 'backend :8000 (internal only) · frontend nginx static',
@@ -430,7 +430,7 @@ export const buildPlans: BuildPlan[] = [
           widget: {
             type: 'deploy',
             url: 'https://portfolio.com',
-            kind: 'domen',
+            kind: 'domain',
             server: 'frankfurt-1',
             ssl: "Let's Encrypt · auto-renewed",
             extra: 'caddy static · gzip + cache configured',
@@ -494,7 +494,7 @@ export const buildPlans: BuildPlan[] = [
       { text: '● manifest registered: 5 widgets · adding to the sidebar', kind: 'tool' },
       { text: '✓ expense-bot is up — all of it in the audit log', kind: 'done' },
     ],
-    manifest: xarajatBotManifest,
+    manifest: expenseBotManifest,
   },
 ]
 

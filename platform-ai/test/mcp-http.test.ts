@@ -5,8 +5,8 @@
 // farq faqat javob formatida, shuning uchun ikkalasi ham sinalishi kerak.
 
 import { afterEach, describe, expect, test } from 'bun:test'
-import { McpKlient } from '../src/mcp-klient.ts'
-import { httpTransportYarat, sseXabarlariniAjrat } from '../src/mcp-transport.ts'
+import { McpClient } from '../src/mcp-client.ts'
+import { createHttpTransport, parseSseMessages } from '../src/mcp-transport.ts'
 
 let server: ReturnType<typeof Bun.serve> | undefined
 
@@ -115,8 +115,8 @@ function javobQur(xabar: { id?: number; method?: string; params?: unknown }): un
   return { jsonrpc: '2.0', id, error: { code: -32601, message: `noma'lum metod: ${method}` } }
 }
 
-function klientYarat(url: string, sarlavhalar: Record<string, string> = {}): McpKlient {
-  return new McpKlient({
+function klientYarat(url: string, sarlavhalar: Record<string, string> = {}): McpClient {
+  return new McpClient({
     transport: 'http',
     url,
     sarlavhalar,
@@ -254,26 +254,26 @@ describe('xato holatlari', () => {
   }, 15_000)
 
   test('url\'siz http ulanmaydi', async () => {
-    const klient = new McpKlient({ transport: 'http' })
+    const klient = new McpClient({ transport: 'http' })
     await expect(klient.ulan()).rejects.toThrow(/url/)
   })
 
   test('yopilgan transportga yozib bo\'lmaydi', async () => {
-    const transport = httpTransportYarat('http://localhost:1/mcp')
+    const transport = createHttpTransport('http://localhost:1/mcp')
     await transport.yop()
     await expect(transport.yubor({ jsonrpc: '2.0', method: 'x' })).rejects.toThrow(/closed/)
   })
 })
 
-describe('sseXabarlariniAjrat', () => {
+describe('parseSseMessages', () => {
   test('bitta data qatorini o\'qiydi', () => {
-    const xabarlar = sseXabarlariniAjrat('event: message\ndata: {"jsonrpc":"2.0","id":1}\n\n')
+    const xabarlar = parseSseMessages('event: message\ndata: {"jsonrpc":"2.0","id":1}\n\n')
     expect(xabarlar).toEqual([{ jsonrpc: '2.0', id: 1 }])
   })
 
   test('bir nechta hodisani o\'qiydi', () => {
     const matn = 'data: {"jsonrpc":"2.0","id":1}\n\ndata: {"jsonrpc":"2.0","id":2}\n\n'
-    expect(sseXabarlariniAjrat(matn)).toEqual([
+    expect(parseSseMessages(matn)).toEqual([
       { jsonrpc: '2.0', id: 1 },
       { jsonrpc: '2.0', id: 2 },
     ])
@@ -281,20 +281,20 @@ describe('sseXabarlariniAjrat', () => {
 
   test('data bo\'lmagan qatorlarni tashlaydi', () => {
     const matn = 'event: ping\nid: 42\nretry: 1000\ndata: {"jsonrpc":"2.0","id":1}\n\n'
-    expect(sseXabarlariniAjrat(matn)).toEqual([{ jsonrpc: '2.0', id: 1 }])
+    expect(parseSseMessages(matn)).toEqual([{ jsonrpc: '2.0', id: 1 }])
   })
 
   test('JSON bo\'lmagan data ni tashlaydi, qolganini o\'qiydi', () => {
     const matn = 'data: axlat\n\ndata: {"jsonrpc":"2.0","id":2}\n\n'
-    expect(sseXabarlariniAjrat(matn)).toEqual([{ jsonrpc: '2.0', id: 2 }])
+    expect(parseSseMessages(matn)).toEqual([{ jsonrpc: '2.0', id: 2 }])
   })
 
   test('[DONE] belgisini tashlaydi', () => {
-    expect(sseXabarlariniAjrat('data: [DONE]\n\n')).toEqual([])
+    expect(parseSseMessages('data: [DONE]\n\n')).toEqual([])
   })
 
   test('bo\'sh matn bo\'sh ro\'yxat', () => {
-    expect(sseXabarlariniAjrat('')).toEqual([])
-    expect(sseXabarlariniAjrat('\n\n\n')).toEqual([])
+    expect(parseSseMessages('')).toEqual([])
+    expect(parseSseMessages('\n\n\n')).toEqual([])
   })
 })

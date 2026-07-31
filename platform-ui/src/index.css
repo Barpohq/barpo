@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* Tungi boshqaruv markazi — siyoh-ko'k fon, Samarqand lazur aksent */
+  /* Night control centre — ink-blue background, Samarkand lazur accent */
   --color-bg: #0f1520;
   --color-panel: #18202f;
   --color-panel2: #1f2a3d;
@@ -16,7 +16,7 @@
   --color-coral: #e2685c;
   --color-mint: #61b876;
 
-  /* Grafik seriyalari — dataviz validatoridan o'tgan (dark, #18202F) */
+  /* Chart series — validated by the dataviz checker (dark, #18202F) */
   --color-s1: #1fa090;
   --color-s2: #b08428;
   --color-s3: #4e82d0;
@@ -50,15 +50,15 @@ body {
   border-radius: 4px;
 }
 
-/* Fokus halqasini o'rab turgan konteyner chizadigan joylar (masalan chat
-   kiritish formasi `focus-within` orqali) — ichki maydonda ikkinchi halqa
-   ustma-ust tushmasin. Qatlamsiz qoida Tailwind utility'sidan ustun turgani
-   uchun bekor qilish ham shu yerda bo'lishi kerak. */
-.fokus-tashqarida:focus-visible {
+/* For places where the surrounding container draws the focus ring (e.g. the
+   chat input form via `focus-within`) — so a second ring does not stack on the
+   inner field. Since an unlayered rule outranks a Tailwind utility, the
+   override has to live here too. */
+.focus-outside:focus-visible {
   outline: none;
 }
 
-/* Yupqa scrollbar — loglar va jadval panellari uchun */
+/* Thin scrollbar — for logs and table panels */
 .thin-scroll::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -110,16 +110,16 @@ body {
 }
 
 /* --------------------------------------------------------------------------
-   Toast animatsiyalari
+   Toast animations
    --------------------------------------------------------------------------
-   `rise-in` dan alohida: toast pastdan uzoqroq masofa bosib chiqadi va
-   ketishda ham animatsiya kerak. `scale` qo'shilgan — toast "paydo bo'ladi",
-   shunchaki siljimaydi.
+   Separate from `rise-in`: a toast travels a longer distance up from below and
+   needs an animation on the way out as well. `scale` is added — the toast
+   "appears" rather than merely sliding.
 
-   Chiqish uchun ortga qaytadigan cubic-bezier (0.34, 1.4, 0.64, 1): oxirida
-   biroz oshib ketib joyiga qo'nadi. Ketish esa tez va ravon — kutib
-   turishga arzimaydi. */
-@keyframes toast-kirish {
+   The entrance uses an overshooting cubic-bezier (0.34, 1.4, 0.64, 1): it goes
+   slightly past and settles back. The exit is quick and plain — it is not
+   worth waiting for. */
+@keyframes toast-enter {
   from {
     opacity: 0;
     transform: translateY(24px) scale(0.94);
@@ -130,7 +130,7 @@ body {
   }
 }
 
-@keyframes toast-chiqish {
+@keyframes toast-exit {
   from {
     opacity: 1;
     transform: translateY(0) scale(1);
@@ -141,14 +141,14 @@ body {
   }
 }
 
-.toast-kirish {
-  animation: toast-kirish 0.42s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+.toast-enter {
+  animation: toast-enter 0.42s cubic-bezier(0.34, 1.4, 0.64, 1) both;
 }
 
-/* `forwards`: animatsiya tugagach oxirgi kadrda qotib qoladi — DOM'dan
-   olib tashlanguncha ko'rinib qolmasin */
-.toast-chiqish {
-  animation: toast-chiqish 0.25s cubic-bezier(0.4, 0, 1, 1) forwards;
+/* `forwards`: once the animation ends it freezes on the last frame — so it
+   does not flash back into view before being removed from the DOM */
+.toast-exit {
+  animation: toast-exit 0.25s cubic-bezier(0.4, 0, 1, 1) forwards;
   pointer-events: none;
 }
 
@@ -156,12 +156,12 @@ body {
   .pulse-dot,
   .cursor-blink,
   .rise-in,
-  .toast-kirish {
+  .toast-enter {
     animation: none;
   }
-  /* Chiqish animatsiyasi butunlay o'chirilmaydi — u yakunlanganda toast
-     DOM'dan olinadi. O'rniga darhol tugaydigan qilamiz. */
-  .toast-chiqish {
+  /* The exit animation is not disabled outright — the toast is removed from
+     the DOM when it completes. Instead we make it finish instantly. */
+  .toast-exit {
     animation-duration: 0.01ms;
   }
   * {

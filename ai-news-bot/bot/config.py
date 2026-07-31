@@ -1,8 +1,8 @@
-"""Botning konfiguratsiyasi — manbalar va kanal profili.
+"""Bot configuration — sources and channel profile.
 
-Umumiy qism (`.env`, `models.yaml`, baza yo'li) `core/config.py` da.
-Bu yerda faqat yangiliklar botiga tegishlisi: `sources.yaml` va
-`channel.yaml`.
+The shared pieces (`.env`, `models.yaml`, database path) live in
+`core/config.py`. Only what is specific to the news bot is here:
+`sources.yaml` and `channel.yaml`.
 """
 
 from __future__ import annotations
@@ -21,17 +21,17 @@ from core.config import (
     read_yaml,
 )
 
-# Eski import yo'llari saqlanadi: `from bot.config import ConfigError`
-# hali ko'p joyda ishlatiladi va bot uchun ma'noli.
+# The old import paths are kept: `from bot.config import ConfigError` is
+# still used in many places and makes sense for the bot.
 __all__ = ["Config", "ConfigError", "Source", "load_config"]
 
 
-# ─────────────────────────── Manbalar ───────────────────────────
+# ─────────────────────────── Sources ───────────────────────────
 
 
 @dataclass(frozen=True, slots=True)
 class Source:
-    """Bitta yangilik manbasi (`sources.yaml` dagi element)."""
+    """A single news source (an entry in `sources.yaml`)."""
 
     name: str
     type: str
@@ -39,7 +39,7 @@ class Source:
     weight: float = 1.0
     max_items: int = 40
     timeout: int = 20
-    # Turga xos qolgan maydonlar: url, query, subreddit, categories, ...
+    # Remaining type-specific fields: url, query, subreddit, categories, ...
     options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -50,10 +50,10 @@ def _parse_sources(raw: dict[str, Any]) -> list[Source]:
 
     for entry in raw.get("sources") or []:
         if not isinstance(entry, dict):
-            raise ConfigError(f"sources.yaml: manba obyekt bo'lishi kerak, keldi: {entry!r}")
+            raise ConfigError(f"sources.yaml: a source must be an object, got: {entry!r}")
         for required_key in ("name", "type"):
             if required_key not in entry:
-                raise ConfigError(f"sources.yaml: manbada '{required_key}' maydoni yo'q: {entry!r}")
+                raise ConfigError(f"sources.yaml: source is missing the '{required_key}' field: {entry!r}")
 
         sources.append(
             Source(
@@ -70,12 +70,12 @@ def _parse_sources(raw: dict[str, Any]) -> list[Source]:
     names = [s.name for s in sources]
     duplicates = {n for n in names if names.count(n) > 1}
     if duplicates:
-        raise ConfigError(f"sources.yaml: manba nomlari takrorlangan: {sorted(duplicates)}")
+        raise ConfigError(f"sources.yaml: duplicate source names: {sorted(duplicates)}")
 
     return sources
 
 
-# ─────────────────────────── Umumiy config ───────────────────────────
+# ─────────────────────────── Shared config ───────────────────────────
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +88,7 @@ class Config:
     def enabled_sources(self) -> list[Source]:
         return [s for s in self.sources if s.enabled]
 
-    # Baza va log sozlamalari umumiy — core.config dan keladi
+    # Database and logging settings are shared — they come from core.config
     @property
     def db_path(self) -> Path:
         return db_path()
@@ -100,7 +100,7 @@ class Config:
 
 @lru_cache(maxsize=1)
 def load_config() -> Config:
-    """Konfiguratsiyani yuklash (jarayon davomida bir marta o'qiladi)."""
+    """Load the configuration (read once per process)."""
     return Config(
         sources=_parse_sources(read_yaml("sources.yaml")),
         channel=read_yaml("channel.yaml"),

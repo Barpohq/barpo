@@ -1,5 +1,5 @@
-// ssh.ts — tarmoqsiz testlar: buyruq bajaruvchi soxta, fayl yo'llari
-// vaqtinchalik papkada (PLATFORMA_SSH / PLATFORMA_USER_SSH_CONFIG).
+// ssh.ts — network-free tests: the command runner is faked and the file paths
+// point into a temporary folder (PLATFORM_SSH / PLATFORM_USER_SSH_CONFIG).
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -7,155 +7,156 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from '@platforma/shared'
 import {
-  bajaruvchiOrnat,
-  boshqarilganConfigYoli,
-  boshqarilganConfigYoz,
-  includeTaminla,
-  kalitJoyla,
-  metrikaTahlil,
-  type BuyruqNatija,
+  setCommandRunner,
+  managedConfigPath,
+  writeManagedConfig,
+  ensureInclude,
+  installKey,
+  parseMetrics,
+  type CommandResult,
 } from '../src/ssh.ts'
 
-let papka: string
+let dir: string
 
-/** Soxta bajaruvchi chaqiruvlari — har test tekshiradi */
-let chaqiruvlar: { argv: string[]; env?: Record<string, string>; stdin?: string }[]
+/** The calls made to the fake runner — every test inspects them */
+let calls: { argv: string[]; env?: Record<string, string>; stdin?: string }[]
 
-function soxtaBajaruvchi(javob: (argv: string[]) => BuyruqNatija) {
-  bajaruvchiOrnat(async (argv, imkoniyat) => {
-    chaqiruvlar.push({ argv, env: imkoniyat?.env, stdin: imkoniyat?.stdin })
-    return javob(argv)
+function fakeRunner(reply: (argv: string[]) => CommandResult) {
+  setCommandRunner(async (argv, options) => {
+    calls.push({ argv, env: options?.env, stdin: options?.stdin })
+    return reply(argv)
   })
 }
 
-const OK: BuyruqNatija = { kod: 0, stdout: '', stderr: '' }
-const RAD: BuyruqNatija = { kod: 255, stdout: '', stderr: 'Permission denied (publickey).' }
+const OK: CommandResult = { code: 0, stdout: '', stderr: '' }
+const DENIED: CommandResult = { code: 255, stdout: '', stderr: 'Permission denied (publickey).' }
 
 beforeEach(() => {
-  papka = mkdtempSync(join(tmpdir(), 'platforma-ssh-'))
-  process.env.PLATFORMA_SSH = join(papka, 'ssh')
-  process.env.PLATFORMA_USER_SSH_CONFIG = join(papka, 'user-config')
-  chaqiruvlar = []
-  // Ochiq kalit oldindan yoziladi — ssh-keygen chaqirilmasin
-  mkdirSync(join(papka, 'ssh'), { recursive: true })
-  writeFileSync(join(papka, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 AAAATEST platforma\n')
+  dir = mkdtempSync(join(tmpdir(), 'platforma-ssh-'))
+  process.env.PLATFORM_SSH = join(dir, 'ssh')
+  process.env.PLATFORM_USER_SSH_CONFIG = join(dir, 'user-config')
+  calls = []
+  // The public key is written up front so that ssh-keygen is not invoked
+  mkdirSync(join(dir, 'ssh'), { recursive: true })
+  writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 AAAATEST platforma\n')
 })
 
 afterEach(() => {
-  bajaruvchiOrnat(null)
-  delete process.env.PLATFORMA_SSH
-  delete process.env.PLATFORMA_USER_SSH_CONFIG
-  rmSync(papka, { recursive: true, force: true })
+  setCommandRunner(null)
+  delete process.env.PLATFORM_SSH
+  delete process.env.PLATFORM_USER_SSH_CONFIG
+  rmSync(dir, { recursive: true, force: true })
 })
 
-function server(qisman: Partial<Server> = {}): Server {
+function server(partial: Partial<Server> = {}): Server {
   return {
     id: 'x',
-    name: 'sinov-1',
+    name: 'test-1',
     host: '203.0.113.10',
     port: 22,
     username: 'root',
     createdAt: '2026-07-29T00:00:00.000Z',
-    ...qisman,
+    ...partial,
   }
 }
 
-describe('boshqarilganConfigYoz', () => {
-  test('har server uchun Host bloki yozadi', () => {
-    boshqarilganConfigYoz([server(), server({ id: 'y', name: 'ikkinchi', host: 'ex.uz', port: 2222, username: 'deploy' })])
+describe('writeManagedConfig', () => {
+  test('it writes a Host block for every server', () => {
+    writeManagedConfig([server(), server({ id: 'y', name: 'second', host: 'ex.uz', port: 2222, username: 'deploy' })])
 
-    const matn = readFileSync(boshqarilganConfigYoli(), 'utf-8')
-    expect(matn).toContain('Host sinov-1')
-    expect(matn).toContain('HostName 203.0.113.10')
-    expect(matn).toContain('Host ikkinchi')
-    expect(matn).toContain('Port 2222')
-    expect(matn).toContain('User deploy')
-    expect(matn).toContain('IdentitiesOnly yes')
-    expect(matn).toContain('StrictHostKeyChecking accept-new')
+    const text = readFileSync(managedConfigPath(), 'utf-8')
+    expect(text).toContain('Host test-1')
+    expect(text).toContain('HostName 203.0.113.10')
+    expect(text).toContain('Host second')
+    expect(text).toContain('Port 2222')
+    expect(text).toContain('User deploy')
+    expect(text).toContain('IdentitiesOnly yes')
+    expect(text).toContain('StrictHostKeyChecking accept-new')
   })
 
-  test("bo'sh ro'yxatda ham fayl yoziladi (o'chirilgan server chiqib ketadi)", () => {
-    boshqarilganConfigYoz([server()])
-    boshqarilganConfigYoz([])
-    const matn = readFileSync(boshqarilganConfigYoli(), 'utf-8')
-    expect(matn).not.toContain('Host sinov-1')
-  })
-})
-
-describe('includeTaminla', () => {
-  test("yo'q faylga Include yozadi", () => {
-    includeTaminla()
-    const matn = readFileSync(join(papka, 'user-config'), 'utf-8')
-    expect(matn).toContain(`Include ${boshqarilganConfigYoli()}`)
-  })
-
-  test('mavjud tarkib saqlanadi va Include BOSHIDA turadi', () => {
-    writeFileSync(join(papka, 'user-config'), 'Host eski\n  HostName eski.uz\n')
-    includeTaminla()
-    const matn = readFileSync(join(papka, 'user-config'), 'utf-8')
-    expect(matn).toContain('Host eski')
-    // Include birinchi Host'dan OLDIN — aks holda o'sha blokga tegishli bo'lib qoladi
-    expect(matn.indexOf('Include')).toBeLessThan(matn.indexOf('Host eski'))
-  })
-
-  test('ikkinchi chaqiruv takror qator yozmaydi (idempotent)', () => {
-    includeTaminla()
-    includeTaminla()
-    const matn = readFileSync(join(papka, 'user-config'), 'utf-8')
-    const soni = matn.split('\n').filter((q) => q.startsWith('Include ')).length
-    expect(soni).toBe(1)
+  test('an empty list still writes the file, so a deleted server drops out', () => {
+    writeManagedConfig([server()])
+    writeManagedConfig([])
+    const text = readFileSync(managedConfigPath(), 'utf-8')
+    expect(text).not.toContain('Host test-1')
   })
 })
 
-describe('kalitJoyla', () => {
-  test('mavjud kalit kirsa — bitta ssh chaqiruvi, sshpass yo\'q', async () => {
-    soxtaBajaruvchi(() => OK)
-    await kalitJoyla({ host: 'ex.uz', port: 22, username: 'root' })
+describe('ensureInclude', () => {
+  test('it writes the Include into a file that does not exist yet', () => {
+    ensureInclude()
+    const text = readFileSync(join(dir, 'user-config'), 'utf-8')
+    expect(text).toContain(`Include ${managedConfigPath()}`)
+  })
 
-    expect(chaqiruvlar).toHaveLength(1)
-    const argv = chaqiruvlar[0]!.argv
+  test('existing content is kept and the Include goes FIRST', () => {
+    writeFileSync(join(dir, 'user-config'), 'Host old\n  HostName old.uz\n')
+    ensureInclude()
+    const text = readFileSync(join(dir, 'user-config'), 'utf-8')
+    expect(text).toContain('Host old')
+    // The Include must sit BEFORE the first Host, otherwise it would be read
+    // as part of that block
+    expect(text.indexOf('Include')).toBeLessThan(text.indexOf('Host old'))
+  })
+
+  test('a second call does not duplicate the line (idempotent)', () => {
+    ensureInclude()
+    ensureInclude()
+    const text = readFileSync(join(dir, 'user-config'), 'utf-8')
+    const count = text.split('\n').filter((line) => line.startsWith('Include ')).length
+    expect(count).toBe(1)
+  })
+})
+
+describe('installKey', () => {
+  test('when the existing key gets in there is one ssh call and no sshpass', async () => {
+    fakeRunner(() => OK)
+    await installKey({ host: 'ex.uz', port: 22, username: 'root' })
+
+    expect(calls).toHaveLength(1)
+    const argv = calls[0]!.argv
     expect(argv[0]).toBe('ssh')
     expect(argv).toContain('BatchMode=yes')
     expect(argv).toContain('root@ex.uz')
-    // Skript idempotent qo'shishni o'z ichiga oladi
+    // The script appends the key idempotently
     expect(argv.at(-1)).toContain('authorized_keys')
     expect(argv.at(-1)).toContain('ssh-ed25519 AAAATEST platforma')
   })
 
-  test("kalit kirmasa va parol yo'q — tushunarli xato", async () => {
-    soxtaBajaruvchi(() => RAD)
-    await expect(kalitJoyla({ host: 'ex.uz', port: 22, username: 'root' })).rejects.toThrow(
+  test('when the key is refused and no password is given the error explains why', async () => {
+    fakeRunner(() => DENIED)
+    await expect(installKey({ host: 'ex.uz', port: 22, username: 'root' })).rejects.toThrow(
       /Enter a password/,
     )
   })
 
-  test('parol bilan — sshpass SSHPASS env orqali chaqiriladi', async () => {
-    soxtaBajaruvchi((argv) => (argv[0] === 'sshpass' ? OK : RAD))
-    await kalitJoyla({ host: 'ex.uz', port: 2222, username: 'root' }, 'sirli')
+  test('with a password sshpass is invoked and the password travels via SSHPASS', async () => {
+    fakeRunner((argv) => (argv[0] === 'sshpass' ? OK : DENIED))
+    await installKey({ host: 'ex.uz', port: 2222, username: 'root' }, 'secret')
 
-    expect(chaqiruvlar).toHaveLength(2)
-    const ikkinchi = chaqiruvlar[1]!
-    expect(ikkinchi.argv[0]).toBe('sshpass')
-    expect(ikkinchi.argv).toContain('-e')
-    expect(ikkinchi.env?.SSHPASS).toBe('sirli')
-    // Parol argv ichida KO'RINMASLIGI kerak
-    expect(ikkinchi.argv.join(' ')).not.toContain('sirli')
-    expect(ikkinchi.argv).toContain('2222')
+    expect(calls).toHaveLength(2)
+    const second = calls[1]!
+    expect(second.argv[0]).toBe('sshpass')
+    expect(second.argv).toContain('-e')
+    expect(second.env?.SSHPASS).toBe('secret')
+    // The password must NEVER appear in argv
+    expect(second.argv.join(' ')).not.toContain('secret')
+    expect(second.argv).toContain('2222')
   })
 
-  test("parol noto'g'ri bo'lsa aniq xabar", async () => {
-    soxtaBajaruvchi((argv) =>
-      argv[0] === 'sshpass' ? { kod: 5, stdout: '', stderr: 'Permission denied' } : RAD,
+  test('a wrong password produces a precise message', async () => {
+    fakeRunner((argv) =>
+      argv[0] === 'sshpass' ? { code: 5, stdout: '', stderr: 'Permission denied' } : DENIED,
     )
     await expect(
-      kalitJoyla({ host: 'ex.uz', port: 22, username: 'root' }, 'xato-parol'),
+      installKey({ host: 'ex.uz', port: 22, username: 'root' }, 'wrong-password'),
     ).rejects.toThrow(/Wrong password/)
   })
 })
 
-describe('metrikaTahlil', () => {
-  test("to'liq chiqishni foizlarga aylantiradi", () => {
-    const m = metrikaTahlil(
+describe('parseMetrics', () => {
+  test('it turns the full output into percentages', () => {
+    const m = parseMetrics(
       [
         'UPTIME=up 3 days, 4 hours, 12 minutes',
         'LOAD=1.5',
@@ -164,42 +165,42 @@ describe('metrikaTahlil', () => {
         'DISK=100000 84000',
       ].join('\n'),
     )
-    expect(m.holat).toBe('ulangan')
-    expect(m.uptime).toBe('3 kun 4 soat 12 daqiqa')
+    expect(m.status).toBe('connected')
+    expect(m.uptime).toBe('3 days 4 hours 12 minutes')
     expect(m.cpu).toBe(38) // 1.5 / 4 = 37.5% → 38
     expect(m.ram).toBe(25)
     expect(m.disk).toBe(84)
   })
 
-  test('yetishmagan qatorlar maydonni bo\'sh qoldiradi, holat baribir ulangan', () => {
-    const m = metrikaTahlil('UPTIME=up 5 minutes\n')
-    expect(m.holat).toBe('ulangan')
-    expect(m.uptime).toBe('5 daqiqa')
+  test('missing lines leave their field empty but the status is still connected', () => {
+    const m = parseMetrics('UPTIME=up 5 minutes\n')
+    expect(m.status).toBe('connected')
+    expect(m.uptime).toBe('5 minutes')
     expect(m.cpu).toBeUndefined()
     expect(m.ram).toBeUndefined()
     expect(m.disk).toBeUndefined()
   })
 
-  test('load yadro sonidan oshsa 100% da qirqiladi', () => {
-    const m = metrikaTahlil('LOAD=9.0\nNPROC=2\n')
+  test('a load above the core count is clamped to 100%', () => {
+    const m = parseMetrics('LOAD=9.0\nNPROC=2\n')
     expect(m.cpu).toBe(100)
   })
 })
 
-describe('kalitTaminla (bilvosita)', () => {
-  test("pub fayl yo'q bo'lsa ssh-keygen chaqiriladi", async () => {
-    rmSync(join(papka, 'ssh', 'id_ed25519.pub'))
-    soxtaBajaruvchi((argv) => {
+describe('ensureKey (indirectly)', () => {
+  test('ssh-keygen is invoked when the public key file is missing', async () => {
+    rmSync(join(dir, 'ssh', 'id_ed25519.pub'))
+    fakeRunner((argv) => {
       if (argv[0] === 'ssh-keygen') {
-        // Haqiqiy keygen faylni o'zi yozadi — soxtasi ham shunday qiladi
-        writeFileSync(join(papka, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 YANGI platforma\n')
+        // The real keygen writes the file itself — so does the fake one
+        writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 NEW platforma\n')
         return OK
       }
       return OK
     })
 
-    await kalitJoyla({ host: 'ex.uz', port: 22, username: 'root' })
-    expect(chaqiruvlar[0]!.argv[0]).toBe('ssh-keygen')
-    expect(existsSync(join(papka, 'ssh', 'id_ed25519.pub'))).toBe(true)
+    await installKey({ host: 'ex.uz', port: 22, username: 'root' })
+    expect(calls[0]!.argv[0]).toBe('ssh-keygen')
+    expect(existsSync(join(dir, 'ssh', 'id_ed25519.pub'))).toBe(true)
   })
 })

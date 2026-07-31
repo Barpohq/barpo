@@ -1,11 +1,15 @@
-"""Server tekshiruvlari — buyruqlar va natija tahlili.
+"""Server checks — the commands and the parsing of their output.
 
-Buyruqlar shu yerda qat'iy belgilangan (konfiguratsiyadan kelmaydi) va
-barchasi faqat o'qish. Bitta SSH ulanishida hammasi bajariladi:
-5 server × 1 ulanish, har check uchun alohida emas.
+The commands are hardcoded here (they never come from configuration) and
+all of them are read-only. Everything runs over a single SSH connection:
+5 servers × 1 connection, not one connection per check.
 
-Parserlar sof funksiyalar — real `df`/`free`/`/proc` chiqishi bilan
-sinaladi, SSH mock'siz.
+The parsers are pure functions — they are tested against real `df`/`free`/
+`/proc` output, with no SSH mocking.
+
+Note: `CheckResult.message` is Uzbek on purpose. Those strings become the
+body of the Telegram alert (`monitor/report.py::format_alert`), so they are
+user-facing product text rather than developer-facing logging.
 """
 
 from __future__ import annotations
@@ -19,15 +23,15 @@ from monitor.ssh import SshResult, run
 
 log = get_logger(__name__)
 
-# Buyruqlar chiqishini ajratuvchi belgilar — kod konstantasi
+# Separator between command output sections — a code constant
 SEP = "___MONITOR_SEP___"
 
-# df da ko'rinadigan, lekin kuzatishga arzimaydigan fayl tizimlari.
-# Real serverda 15 qator df'dan 11 tasi shular (tmpfs va Docker overlay) —
-# filtrsiz alertlar shovqinga aylanardi.
+# Filesystems that show up in df but aren't worth monitoring. On a real
+# server 11 of df's 15 rows are these (tmpfs and Docker overlay) — without
+# the filter the alerts would just be noise.
 VIRTUAL_FS = frozenset({"tmpfs", "devtmpfs", "overlay", "squashfs", "efivarfs", "none"})
 
-# Natija darajalari
+# Result levels
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
@@ -36,15 +40,16 @@ ERROR = "error"
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
-    """Bitta tekshiruv natijasi."""
+    """The result of a single check."""
 
     server: str
     name: str
     status: str
+    # Uzbek: rendered into the Telegram alert body
     message: str
     value: float | None = None
     threshold: float | None = None
-    # Xom chiqish — diagnostika uchun saqlanadi
+    # Raw output — retained for diagnosis
     output: str = ""
 
     @property
@@ -53,11 +58,11 @@ class CheckResult:
 
 
 def build_remote_command(server: Server) -> str:
-    """Barcha o'lchovlarni bitta buyruqda yig'ish.
+    """Collect every metric in a single command.
 
-    Har bo'lim ajratgich bilan belgilanadi. `2>/dev/null` — buyruq
-    yo'q bo'lsa (masalan systemctl konteynerda) bo'lim bo'sh qoladi,
-    qolganlari ishlayveradi.
+    Each section is marked with a separator. The `2>/dev/null` means that
+    if a command is missing (systemctl inside a container, say) its section
+    is simply empty and the rest still work.
     """
     parts = [
         f"echo {SEP}loadavg; cat /proc/loadavg 2>/dev/null",
@@ -67,14 +72,14 @@ def build_remote_command(server: Server) -> str:
         f"echo {SEP}uptime; cat /proc/uptime 2>/dev/null",
     ]
     if server.services:
-        # Xizmat nomlari config.py da regex bilan tekshirilgan
+        # Service names were validated against a regex in config.py
         units = " ".join(server.services)
         parts.append(f"echo {SEP}services; systemctl is-active {units} 2>/dev/null")
     return "; ".join(parts)
 
 
 def split_sections(stdout: str) -> dict[str, str]:
-    """Ajratgichlar bo'yicha bo'limlarga ajratish."""
+    """Split the output into sections on the separators."""
     sections: dict[str, str] = {}
     current = ""
     lines: list[str] = []
@@ -93,11 +98,11 @@ def split_sections(stdout: str) -> dict[str, str]:
     return sections
 
 
-# ─────────────────────────── Parserlar ───────────────────────────
+# ─────────────────────────── Parsers ─────────────────────────────
 
 
 def parse_load(loadavg: str, nproc: str) -> tuple[float, int] | None:
-    """`/proc/loadavg` va `nproc` → (load1, yadrolar soni)."""
+    """`/proc/loadavg` and `nproc` → (load1, core count)."""
     fields = loadavg.split()
     if not fields:
         return None
@@ -113,11 +118,11 @@ def parse_load(loadavg: str, nproc: str) -> tuple[float, int] | None:
 
 
 def parse_memory(free_output: str) -> float | None:
-    """`free -b` → band RAM foizi.
+    """`free -b` → percentage of RAM in use.
 
-    Diqqat: `used` ustuni emas, `total - available` ishlatiladi.
-    Linux'da buff/cache "band" ko'rinadi, lekin kerak bo'lganda darhol
-    bo'shatiladi — real serverda farq 57% va 4% orasida bo'lishi mumkin.
+    Note: this uses `total - available`, not the `used` column. On Linux
+    buff/cache looks "used" but is reclaimed the moment it's needed — on a
+    real server the difference can be as wide as 57% versus 4%.
     """
     for line in free_output.splitlines():
         if not line.lower().startswith("mem:"):
@@ -146,13 +151,13 @@ class DiskUsage:
 
 
 def parse_disk(df_output: str) -> list[DiskUsage]:
-    """`df -P -B1` → mount bo'yicha band foiz.
+    """`df -P -B1` → percentage used per mount.
 
-    Virtual fayl tizimlari (tmpfs, Docker overlay) tashlab yuboriladi —
-    ular disk to'lishini ko'rsatmaydi.
+    Virtual filesystems (tmpfs, Docker overlay) are skipped — they don't
+    tell you anything about a disk filling up.
     """
     result: list[DiskUsage] = []
-    for line in df_output.splitlines()[1:]:  # birinchi qator — sarlavha
+    for line in df_output.splitlines()[1:]:  # first line is the header
         fields = line.split()
         if len(fields) < 6:
             continue
@@ -176,7 +181,7 @@ def parse_disk(df_output: str) -> list[DiskUsage]:
 
 
 def parse_uptime(uptime_output: str) -> float | None:
-    """`/proc/uptime` → soniyalarda ishlash vaqti."""
+    """`/proc/uptime` → uptime in seconds."""
     fields = uptime_output.split()
     if not fields:
         return None
@@ -187,19 +192,19 @@ def parse_uptime(uptime_output: str) -> float | None:
 
 
 def parse_services(output: str, names: tuple[str, ...]) -> dict[str, str]:
-    """`systemctl is-active a b c` → {nom: holat}.
+    """`systemctl is-active a b c` → {name: state}.
 
-    Chiqish tartibi so'ralgan tartibga mos keladi (systemd shunday).
+    The output order matches the order asked for (systemd guarantees this).
     """
     states = [line.strip() for line in output.splitlines() if line.strip()]
     return {name: states[i] if i < len(states) else "unknown" for i, name in enumerate(names)}
 
 
-# ─────────────────────────── Baholash ───────────────────────────
+# ─────────────────────────── Grading ─────────────────────────────
 
 
 def _grade(value: float, thresholds: Thresholds) -> str:
-    """Qiymatni chegaralar bilan solishtirish."""
+    """Compare a value against the thresholds."""
     if thresholds.fail is not None and value >= thresholds.fail:
         return FAIL
     if thresholds.warn is not None and value >= thresholds.warn:
@@ -216,7 +221,11 @@ def _human_bytes(value: float) -> str:
 
 
 def evaluate(server: Server, sections: dict[str, str]) -> list[CheckResult]:
-    """Bo'limlardan tekshiruv natijalarini hosil qilish."""
+    """Turn the parsed sections into check results.
+
+    Every `message` below stays Uzbek: it is rendered straight into the
+    Telegram alert.
+    """
     results: list[CheckResult] = []
 
     # ── load ──
@@ -301,7 +310,7 @@ def evaluate(server: Server, sections: dict[str, str]) -> list[CheckResult]:
             )
         )
 
-    # ── xizmatlar ──
+    # ── services ──
     if server.services:
         states = parse_services(sections.get("services", ""), server.services)
         for name, state in states.items():
@@ -319,10 +328,10 @@ def evaluate(server: Server, sections: dict[str, str]) -> list[CheckResult]:
 
 
 def check_server(server: Server) -> list[CheckResult]:
-    """Serverni to'liq tekshirish — bitta SSH ulanishi.
+    """Run the full check for one server over a single SSH connection.
 
-    SSH ishlamasa bitta `ssh` natijasi qaytadi (ERROR), qolgan
-    checklar hosil qilinmaydi: ular haqida hech narsa ma'lum emas.
+    If SSH fails we return just one `ssh` result (ERROR) and produce no
+    other checks: we genuinely know nothing about them.
     """
     result: SshResult = run(server, build_remote_command(server))
 
@@ -353,25 +362,25 @@ def check_server(server: Server) -> list[CheckResult]:
 
 
 def fetch_logs(server: Server, unit: str, lines: int = 40) -> str:
-    """Diagnostika uchun xizmat loglari.
+    """Service logs for diagnosis.
 
-    Faqat alert bo'lganda chaqiriladi. Natija LLM'ga "ma'lumot"
-    sifatida uzatiladi — hech qachon buyruq sifatida emas.
+    Only called when there is an alert. The result is handed to the LLM as
+    "data" — never as instructions.
     """
     if unit not in server.journal_units and unit not in server.services:
-        # Konfiguratsiyada e'lon qilinmagan birlik so'ralmaydi
+        # We never ask for a unit that wasn't declared in the configuration
         return ""
     result = run(server, f"journalctl -u {unit} -n {lines} --no-pager 2>&1 | tail -n {lines}")
     return result.stdout if result.ok else ""
 
 
-# Sarlavhada ishlatiladigan, checkni turkumga ajratuvchi regex
+# Regexes that classify a check by its name, as used in headings
 _DISK_RE = re.compile(r"^disk:(?P<mount>/.*)$")
 _SERVICE_RE = re.compile(r"^service:(?P<unit>.+)$")
 
 
 def check_kind(name: str) -> str:
-    """Check nomidan turini aniqlash (`disk:/var` → `disk`)."""
+    """Derive the kind of check from its name (`disk:/var` → `disk`)."""
     if _DISK_RE.match(name):
         return "disk"
     if _SERVICE_RE.match(name):

@@ -1,164 +1,168 @@
-// WebSocket klienti — server eventlarini tinglash uchun yagona ulanish.
+// WebSocket client — a single connection for listening to server events.
 //
-// Butun ilova bitta soket ishlatadi (sahifalar almashganda uzilmaydi).
-// Ulanish uzilsa avtomatik qayta ulanadi va obunalar tiklanadi — server
-// obunani eslab qolmaydi, har yangi ulanishda `sub` qayta yuboriladi.
+// The whole app uses one socket (it is not dropped when pages change). If the
+// connection drops it reconnects automatically and restores subscriptions —
+// the server does not remember them, so `sub` is re-sent on every new
+// connection.
 //
-// Yangi event turi qo'shilganda bu yerda hech narsa o'zgarmaydi: `kuzat()`
-// protokoldagi `ServerEvent` union'ini beradi, chaqiruvchi `type` bo'yicha
-// ajratadi.
+// Adding a new event type changes nothing here: `watch()` hands over the
+// `ServerEvent` union from the protocol and the caller discriminates on
+// `type`.
 
 import type { ClientEvent, ServerEvent } from '@platforma/shared'
 
-type Tinglovchi = (event: ServerEvent) => void
+type Listener = (event: ServerEvent) => void
 
-/** Qayta ulanish kechikishlari (ms) — oxirgisi takrorlanadi */
-const KECHIKISHLAR = [500, 1000, 2000, 5000, 10000]
+/** Reconnect delays (ms) — the last one repeats */
+const DELAYS = [500, 1000, 2000, 5000, 10000]
 
-class WsKlient {
-  private soket: WebSocket | null = null
-  private tinglovchilar = new Set<Tinglovchi>()
-  private kanallar = new Set<string>()
+class WsClient {
+  private socket: WebSocket | null = null
+  private listeners = new Set<Listener>()
+  private channels = new Set<string>()
   /**
-   * Hozir kuzatilayotgan chat sessiyasi.
+   * The chat session currently being watched.
    *
-   * Serverga `sub` bilan yuboriladi — shunda u chat eventlarini shu sessiya
-   * bo'yicha filtrlaydi va boshqa oynadagi suhbat bu yerga oqib kelmaydi.
-   * Qayta ulanishda tiklanishi uchun shu yerda saqlanadi (server obunani
-   * eslab qolmaydi).
+   * Sent to the server with `sub` — it then filters chat events by this
+   * session so a conversation in another window does not leak in here. Kept
+   * here so it can be restored on reconnect (the server does not remember
+   * subscriptions).
    */
   private sessionId: string | undefined
-  private urinish = 0
-  private taymer: ReturnType<typeof setTimeout> | null = null
-  private yopilgan = false
+  private attempt = 0
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private closed = false
 
-  ulan(): void {
-    if (this.soket || this.yopilgan) return
+  connect(): void {
+    if (this.socket || this.closed) return
 
-    const sxema = location.protocol === 'https:' ? 'wss' : 'ws'
-    const soket = new WebSocket(`${sxema}://${location.host}/ws`)
-    this.soket = soket
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+    const socket = new WebSocket(`${scheme}://${location.host}/ws`)
+    this.socket = socket
 
-    soket.onopen = () => {
-      this.urinish = 0
-      // Obunalarni tiklaymiz — server eski ulanishning obunasini bilmaydi.
-      // Sessiya ham qayta yuboriladi, aks holda yangi ulanish filtrsiz qolib
-      // begona sessiyalarning eventlarini olib kelardi.
-      if (this.kanallar.size > 0) {
-        this.yubor({ type: 'sub', channels: [...this.kanallar], sessionId: this.sessionId })
+    socket.onopen = () => {
+      this.attempt = 0
+      // Restore subscriptions — the server knows nothing about the old
+      // connection's subscription. The session is re-sent too, otherwise the
+      // new connection would stay unfiltered and pull in events from foreign
+      // sessions.
+      if (this.channels.size > 0) {
+        this.send({ type: 'sub', channels: [...this.channels], sessionId: this.sessionId })
       }
     }
 
-    soket.onmessage = (xabar) => {
+    socket.onmessage = (message) => {
       let event: ServerEvent
       try {
-        event = JSON.parse(String(xabar.data)) as ServerEvent
+        event = JSON.parse(String(message.data)) as ServerEvent
       } catch {
-        return // buzuq JSON — e'tiborsiz
+        return // malformed JSON — ignore
       }
-      for (const t of this.tinglovchilar) {
+      for (const l of this.listeners) {
         try {
-          t(event)
-        } catch (xato) {
-          // Bitta tinglovchining xatosi qolganlarini to'xtatmasin
-          console.error('[ws] tinglovchi xatosi', xato)
+          l(event)
+        } catch (error) {
+          // One listener's error must not stop the rest
+          console.error('[ws] listener error', error)
         }
       }
     }
 
-    soket.onclose = () => {
-      this.soket = null
-      this.qaytaUlan()
+    socket.onclose = () => {
+      this.socket = null
+      this.reconnect()
     }
 
-    soket.onerror = () => {
-      // onclose baribir chaqiriladi — qayta ulanish o'sha yerda
-      soket.close()
+    socket.onerror = () => {
+      // onclose fires anyway — reconnecting happens there
+      socket.close()
     }
   }
 
-  private qaytaUlan(): void {
-    if (this.yopilgan || this.taymer) return
-    const kechikish = KECHIKISHLAR[Math.min(this.urinish, KECHIKISHLAR.length - 1)]
-    this.urinish += 1
-    this.taymer = setTimeout(() => {
-      this.taymer = null
-      this.ulan()
-    }, kechikish)
+  private reconnect(): void {
+    if (this.closed || this.timer) return
+    const delay = DELAYS[Math.min(this.attempt, DELAYS.length - 1)]
+    this.attempt += 1
+    this.timer = setTimeout(() => {
+      this.timer = null
+      this.connect()
+    }, delay)
   }
 
-  /** Kanalga obuna bo'ladi. Bekor qiluvchi funksiya qaytaradi. */
-  obuna(kanallar: string[]): () => void {
-    const yangilar = kanallar.filter((k) => !this.kanallar.has(k))
-    for (const k of kanallar) this.kanallar.add(k)
-    if (yangilar.length > 0 && this.soket?.readyState === WebSocket.OPEN) {
-      this.yubor({ type: 'sub', channels: yangilar, sessionId: this.sessionId })
+  /** Subscribes to channels. Returns an unsubscribe function. */
+  subscribe(channels: string[]): () => void {
+    const fresh = channels.filter((c) => !this.channels.has(c))
+    for (const c of channels) this.channels.add(c)
+    if (fresh.length > 0 && this.socket?.readyState === WebSocket.OPEN) {
+      this.send({ type: 'sub', channels: fresh, sessionId: this.sessionId })
     }
     return () => {
-      for (const k of kanallar) this.kanallar.delete(k)
-      // Serverda obunani bekor qilish eventi yo'q — keyingi ulanishda tiklanmaydi
+      for (const c of channels) this.channels.delete(c)
+      // There is no unsubscribe event on the server — it is not restored on
+      // the next connection
     }
   }
 
   /**
-   * Qaysi chat sessiyasi kuzatilayotganini serverga bildiradi.
+   * Tells the server which chat session is being watched.
    *
-   * Sessiya yaratilgach (birinchi xabarda) chaqiriladi. Shundan keyin server
-   * bu ulanishga faqat shu sessiyaning chat eventlarini yuboradi.
+   * Called once the session exists (on the first message). After that the
+   * server only sends this connection the chat events of that session.
    *
-   * `undefined` berilsa filtr olib tashlanadi — mijoz yana hamma sessiyani
-   * ko'radi (masalan "yangi suhbat" bosilib, sessiya hali yaratilmagan payt).
+   * Passing `undefined` removes the filter — the client sees all sessions
+   * again (for example after "new conversation" is clicked and the session
+   * does not exist yet).
    */
-  sessiyaniKuzat(sessionId: string | undefined): void {
+  watchSession(sessionId: string | undefined): void {
     if (this.sessionId === sessionId) return
     this.sessionId = sessionId
-    // Kanallar ham qayta yuboriladi — server ularni `add` qiladi, takrorlanishi
-    // zarar qilmaydi. Sessiyani tozalash uchun `null` yuboriladi: `undefined`
-    // JSON'da maydonni butunlay yo'qotadi, server esa uni "o'zgarishsiz
-    // qoldir" deb tushunadi.
-    this.yuborYokiKut({
+    // The channels are re-sent as well — the server `add`s them, so repeating
+    // does no harm. `null` is sent to clear the session: `undefined` would
+    // drop the field from the JSON entirely and the server would read that as
+    // "leave unchanged".
+    this.sendOrConnect({
       type: 'sub',
-      channels: [...this.kanallar],
+      channels: [...this.channels],
       sessionId: sessionId ?? null,
     })
   }
 
-  /** Server eventlarini tinglaydi. Bekor qiluvchi funksiya qaytaradi. */
-  kuzat(tinglovchi: Tinglovchi): () => void {
-    this.tinglovchilar.add(tinglovchi)
+  /** Listens to server events. Returns an unsubscribe function. */
+  watch(listener: Listener): () => void {
+    this.listeners.add(listener)
     return () => {
-      this.tinglovchilar.delete(tinglovchi)
+      this.listeners.delete(listener)
     }
   }
 
-  yubor(event: ClientEvent): boolean {
-    if (this.soket?.readyState !== WebSocket.OPEN) return false
-    this.soket.send(JSON.stringify(event))
+  send(event: ClientEvent): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    this.socket.send(JSON.stringify(event))
     return true
   }
 
   /**
-   * Soket ochiq bo'lmasa `onopen` gacha kutadigan yuborish.
+   * A send that waits for `onopen` when the socket is not open yet.
    *
-   * NEGA KERAK. `sub` — yagona event turi bo'lib, uning YETIB BORMASLIGI
-   * jimgina ma'lumot yo'qotadi: server chat eventlarini sessiya bo'yicha
-   * filtrlaydi, ya'ni `sub` tushmasa mijoz `chat.permission` ni UMUMAN
-   * olmaydi va agent javob kutib turaveradi. Oddiy `yubor()` esa soket
-   * ochiq bo'lmasa `false` qaytarib jimgina tashlab yuborardi.
+   * WHY IT IS NEEDED. `sub` is the one event type whose FAILURE TO ARRIVE
+   * silently loses data: the server filters chat events by session, so if
+   * `sub` never lands the client does not receive `chat.permission` AT ALL
+   * and the agent keeps waiting for an answer. A plain `send()` would just
+   * return `false` and drop it silently.
    *
-   * Bu poyga haqiqiy: birinchi xabar yuborilayotganda soket hali ulanayotgan
-   * yoki qayta ulanayotgan bo'lishi mumkin. `onopen` obunalarni baribir
-   * tiklaydi, lekin u paytgacha oraliq bor.
+   * The race is real: when the first message is sent the socket may still be
+   * connecting or reconnecting. `onopen` restores subscriptions anyway, but
+   * there is a gap until then.
    */
-  private yuborYokiKut(event: ClientEvent): void {
-    if (this.yubor(event)) return
-    this.ulan()
+  private sendOrConnect(event: ClientEvent): void {
+    if (this.send(event)) return
+    this.connect()
   }
 
-  get ulanganmi(): boolean {
-    return this.soket?.readyState === WebSocket.OPEN
+  get isConnected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN
   }
 }
 
-/** Butun ilova uchun yagona klient */
-export const ws = new WsKlient()
+/** The single client for the whole app */
+export const ws = new WsClient()

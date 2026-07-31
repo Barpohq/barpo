@@ -1,156 +1,156 @@
-// Toast — ekran pastida chiqadigan vaqtinchalik bildirishnoma.
+// Toast — a temporary notification that appears at the bottom of the screen.
 //
-// Nega Provider, nega har sahifada state emas: xabar chiqaradigan joy
-// ko'p (Chat, Suhbatlar, Skills…), lekin ko'rinishi bitta. Har sahifa
-// o'z state'i va taymerini yuritsa uchta narsa takrorlanardi — markup,
-// taymer va z-index. Provider ularni bir joyga yig'adi.
+// Why a Provider and not state on every page: there are many places that raise
+// a message (Chat, Conversations, Skills…) but only one appearance. If every
+// page kept its own state and timer, three things would be duplicated —
+// markup, timer and z-index. The Provider gathers them in one place.
 //
-// Ishlatish:
-//   const toast = useToast()              // lib/toast dan
-//   toast("Sinxronlandi: +3 yangi", 'success')
-//   toast("Ulab bo'lmadi", 'error')
+// Usage:
+//   const toast = useToast()              // from lib/toast
+//   toast('Synced: +3 new', 'success')
+//   toast('Could not connect', 'error')
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  CHIQISH_VAQTI,
-  DAVOMIYLIK,
+  DURATION,
+  EXIT_DURATION,
   ToastContext,
   type ToastFn,
-  type ToastTuri,
+  type ToastKind,
 } from '../lib/toast'
 
-type ToastYozuv = {
+type ToastEntry = {
   id: number
-  xabar: string
-  turi: ToastTuri
-  /** Chiqish animatsiyasi ketayotgan bo'lsa `true` — DOM'da hali turadi */
-  chiqmoqda?: boolean
+  message: string
+  kind: ToastKind
+  /** `true` while the exit animation runs — it is still in the DOM */
+  exiting?: boolean
 }
 
-const uslub: Record<
-  ToastTuri,
-  { chegara: string; matn: string; belgi: string; nur: string }
+const style: Record<
+  ToastKind,
+  { border: string; text: string; icon: string; glow: string }
 > = {
   info: {
-    chegara: 'border-line',
-    matn: 'text-ink',
-    belgi: '',
-    nur: 'transparent',
+    border: 'border-line',
+    text: 'text-ink',
+    icon: '',
+    glow: 'transparent',
   },
   success: {
-    chegara: 'border-mint/45',
-    matn: 'text-mint',
-    belgi: '✓',
-    nur: 'var(--color-mint)',
+    border: 'border-mint/45',
+    text: 'text-mint',
+    icon: '✓',
+    glow: 'var(--color-mint)',
   },
   warning: {
-    chegara: 'border-gold/45',
-    matn: 'text-gold',
-    belgi: '!',
-    nur: 'var(--color-gold)',
+    border: 'border-gold/45',
+    text: 'text-gold',
+    icon: '!',
+    glow: 'var(--color-gold)',
   },
   error: {
-    chegara: 'border-coral/45',
-    matn: 'text-coral',
-    belgi: '✕',
-    nur: 'var(--color-coral)',
+    border: 'border-coral/45',
+    text: 'text-coral',
+    icon: '✕',
+    glow: 'var(--color-coral)',
   },
 }
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [royxat, setRoyxat] = useState<ToastYozuv[]>([])
-  const keyingiId = useRef(0)
-  // Taymerlarni ref'da saqlaymiz: unmount'da hammasini tozalash uchun.
-  // Har toastda ikkitagacha taymer bo'ladi — ketish boshlanishi va
-  // DOM'dan olinishi.
-  const taymerlar = useRef(new Map<number, ReturnType<typeof setTimeout>[]>())
+  const [list, setList] = useState<ToastEntry[]>([])
+  const nextId = useRef(0)
+  // Timers are kept in a ref so they can all be cleared on unmount. Each toast
+  // has up to two timers — the start of its exit and its removal from the DOM.
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>[]>())
 
-  const taymerQosh = (id: number, t: ReturnType<typeof setTimeout>) => {
-    const bor = taymerlar.current.get(id)
-    if (bor) bor.push(t)
-    else taymerlar.current.set(id, [t])
+  const addTimer = (id: number, t: ReturnType<typeof setTimeout>) => {
+    const existing = timers.current.get(id)
+    if (existing) existing.push(t)
+    else timers.current.set(id, [t])
   }
 
-  const tozala = (id: number) => {
-    for (const t of taymerlar.current.get(id) ?? []) clearTimeout(t)
-    taymerlar.current.delete(id)
+  const clear = (id: number) => {
+    for (const t of timers.current.get(id) ?? []) clearTimeout(t)
+    timers.current.delete(id)
   }
 
   /**
-   * Ikki bosqichli yopish: avval `chiqmoqda` bayrog'i qo'yiladi (CSS
-   * animatsiyani boshlaydi), animatsiya tugagach yozuv DOM'dan olinadi.
+   * Two-step dismissal: first the `exiting` flag is set (which starts the CSS
+   * animation), then once the animation finishes the entry leaves the DOM.
    *
-   * Birdaniga o'chirsak toast "yo'q bo'lib qolar" edi — ko'z uchun keskin.
+   * Removing it at once would make the toast "blink out" — jarring to the eye.
    */
-  const ochir = useCallback((id: number) => {
-    setRoyxat((r) => r.map((t) => (t.id === id ? { ...t, chiqmoqda: true } : t)))
-    taymerQosh(
+  const dismiss = useCallback((id: number) => {
+    setList((l) => l.map((t) => (t.id === id ? { ...t, exiting: true } : t)))
+    addTimer(
       id,
       setTimeout(() => {
-        setRoyxat((r) => r.filter((t) => t.id !== id))
-        taymerlar.current.delete(id)
-      }, CHIQISH_VAQTI),
+        setList((l) => l.filter((t) => t.id !== id))
+        timers.current.delete(id)
+      }, EXIT_DURATION),
     )
   }, [])
 
   const toast = useCallback<ToastFn>(
-    (xabar, turi = 'info') => {
-      const id = keyingiId.current++
-      setRoyxat((r) => [...r, { id, xabar, turi }])
-      taymerQosh(
+    (message, kind = 'info') => {
+      const id = nextId.current++
+      setList((l) => [...l, { id, message, kind }])
+      addTimer(
         id,
-        setTimeout(() => ochir(id), DAVOMIYLIK[turi]),
+        setTimeout(() => dismiss(id), DURATION[kind]),
       )
     },
-    [ochir],
+    [dismiss],
   )
 
-  /** Bosib yopishda kutib turgan taymerlar bekor qilinadi */
-  const qolYopish = useCallback(
+  /** Dismissing by click cancels the pending timers */
+  const dismissByClick = useCallback(
     (id: number) => {
-      tozala(id)
-      ochir(id)
+      clear(id)
+      dismiss(id)
     },
-    [ochir],
+    [dismiss],
   )
 
   useEffect(() => {
-    const joriy = taymerlar.current
+    const current = timers.current
     return () => {
-      for (const royxat of joriy.values()) for (const t of royxat) clearTimeout(t)
-      joriy.clear()
+      for (const entry of current.values()) for (const t of entry) clearTimeout(t)
+      current.clear()
     }
   }, [])
 
   return (
     <ToastContext.Provider value={toast}>
       {children}
-      <ToastQatlami royxat={royxat} onOchir={qolYopish} />
+      <ToastLayer list={list} onDismiss={dismissByClick} />
     </ToastContext.Provider>
   )
 }
 
 /**
- * Ko'rsatuvchi qatlam.
+ * The presentation layer.
  *
- * `pointer-events-none` konteynerda, `auto` esa har toastda: toast ostidagi
- * tugmalar bosilaverishi kerak, lekin toastning o'zi bosilib yopilsin.
+ * `pointer-events-none` on the container, `auto` on each toast: buttons under
+ * a toast must stay clickable, but the toast itself must be clickable to
+ * dismiss.
  *
- * `z-100` — modallardan (z-50, z-60) ham tepada: modal ichidan chiqqan xato
- * ham ko'rinishi kerak.
+ * `z-100` — above the modals too (z-50, z-60): an error raised from inside a
+ * modal must still be visible.
  *
- * `aria-live="polite"` — screen reader xabarni o'qiydi, lekin foydalanuvchi
- * yozayotganini bo'lmaydi. Xato uchun ham `polite`: `assertive` har xatoda
- * fokusni uzardi.
+ * `aria-live="polite"` — the screen reader reads the message but does not
+ * interrupt the user's typing. `polite` for errors as well: `assertive` would
+ * steal focus on every error.
  */
-function ToastQatlami({
-  royxat,
-  onOchir,
+function ToastLayer({
+  list,
+  onDismiss,
 }: {
-  royxat: ToastYozuv[]
-  onOchir: (id: number) => void
+  list: ToastEntry[]
+  onDismiss: (id: number) => void
 }) {
-  if (royxat.length === 0) return null
+  if (list.length === 0) return null
 
   return (
     <div
@@ -158,38 +158,38 @@ function ToastQatlami({
       aria-live="polite"
       aria-atomic="false"
     >
-      {royxat.map((t) => {
-        const u = uslub[t.turi]
+      {list.map((t) => {
+        const s = style[t.kind]
         return (
           <button
             key={t.id}
-            onClick={() => onOchir(t.id)}
+            onClick={() => onDismiss(t.id)}
             title="Click to dismiss"
-            // `origin-bottom`: scale pastdan o'sadi — toast qatordagi
-            // o'z joyidan ko'tarilayotgandek ko'rinadi
-            className={`${t.chiqmoqda ? 'toast-chiqish' : 'toast-kirish'} pointer-events-auto flex w-full origin-bottom items-start gap-2.5 rounded-xl border ${u.chegara} bg-panel2/95 px-4 py-2.5 text-left text-sm ${u.matn} shadow-2xl backdrop-blur-sm transition-[filter,border-color] duration-200 hover:brightness-115`}
+            // `origin-bottom`: the scale grows from below — the toast looks as
+            // if it rises from its own place in the row
+            className={`${t.exiting ? 'toast-exit' : 'toast-enter'} pointer-events-auto flex w-full origin-bottom items-start gap-2.5 rounded-xl border ${s.border} bg-panel2/95 px-4 py-2.5 text-left text-sm ${s.text} shadow-2xl backdrop-blur-sm transition-[filter,border-color] duration-200 hover:brightness-115`}
             style={
-              // Turga mos yumshoq nur — chekka rangini takrorlaydi, lekin
-              // `info` da umuman yo'q (neytral toast e'tibor tortmasin)
-              u.nur === 'transparent'
+              // A soft glow matching the kind — it echoes the border colour,
+              // but is absent for `info` (a neutral toast must not draw the eye)
+              s.glow === 'transparent'
                 ? undefined
                 : {
-                    boxShadow: `0 8px 28px -6px color-mix(in oklab, ${u.nur} 28%, transparent), 0 2px 8px -2px rgb(0 0 0 / 0.5)`,
+                    boxShadow: `0 8px 28px -6px color-mix(in oklab, ${s.glow} 28%, transparent), 0 2px 8px -2px rgb(0 0 0 / 0.5)`,
                   }
             }
           >
-            {u.belgi && (
+            {s.icon && (
               <span
                 className="mt-px grid size-4 shrink-0 place-items-center rounded-full font-mono text-[10px] leading-none"
                 style={{
-                  background: `color-mix(in oklab, ${u.nur} 20%, transparent)`,
+                  background: `color-mix(in oklab, ${s.glow} 20%, transparent)`,
                 }}
                 aria-hidden
               >
-                {u.belgi}
+                {s.icon}
               </span>
             )}
-            <span className="min-w-0 flex-1 leading-relaxed">{t.xabar}</span>
+            <span className="min-w-0 flex-1 leading-relaxed">{t.message}</span>
           </button>
         )
       })}
