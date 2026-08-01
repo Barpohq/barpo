@@ -4,18 +4,18 @@
   "version": "0.1.0",
   "type": "module",
   "workspaces": [
-    "platform-ui",
-    "platform-shared",
-    "platform-server",
-    "platform-ai",
-    "platform-config"
+    "barpo-ui",
+    "barpo-shared",
+    "barpo-server",
+    "barpo-ai",
+    "barpo-config"
   ],
   "scripts": {
-    "dev:server": "bun --cwd platform-server run dev",
-    "dev:ui": "bun --cwd platform-ui run dev",
-    "test": "bun --cwd platform-server test && bun --cwd platform-ai test && bun --cwd platform-config test",
-    "build": "bun --cwd platform-ui run build",
-    "schema": "bun run platform-config/src/schema-write.ts"
+    "dev:server": "cd barpo-server && bun run dev",
+    "dev:ui": "cd barpo-ui && bun run dev",
+    "test": "bun test",
+    "build": "cd barpo-ui && bun run build",
+    "schema": "bun run barpo-config/src/schema-write.ts"
   },
   "devDependencies": {
     "typebox": "^1.3.8"

@@ -20,13 +20,13 @@ problems show up on top of it. The goal has not changed, the route has.
 
 | Package | Role |
 |---|---|
-| `platform-shared` | shared types + the WS protocol (discriminated union) |
-| `platform-server` | Bun.serve + Hono + bun:sqlite (WAL), port **8787** |
-| `platform-ai` | provider detection, the agent stream, tools, security |
-| `platform-config` | JSON + JSON Schema settings, global + project layers |
-| `platform-ui` | React + Vite, dev proxy `/api` and `/ws` → 8787 |
+| `barpo-shared` | shared types + the WS protocol (discriminated union) |
+| `barpo-server` | Bun.serve + Hono + bun:sqlite (WAL), port **8787** |
+| `barpo-ai` | provider detection, the agent stream, tools, security |
+| `barpo-config` | JSON + JSON Schema settings, global + project layers |
+| `barpo-ui` | React + Vite, dev proxy `/api` and `/ws` → 8787 |
 
-Each package has its own README with the detail; `platform-ai/README.md` is the
+Each package has its own README with the detail; `barpo-ai/README.md` is the
 one to read first — it carries the security model.
 
 ## Getting it running
@@ -35,8 +35,8 @@ one to read first — it carries the security model.
 bun install
 bun test                                     # 1610 tests
 bun run schema                               # regenerate the config schema
-cd platform-server && bun run src/index.ts   # backend :8787
-cd platform-ui && bun run dev                # UI
+cd barpo-server && bun run src/index.ts   # backend :8787
+cd barpo-ui && bun run dev                # UI
 ```
 
 ## What is built
@@ -100,7 +100,7 @@ nothing to do with language:
   `clearRunningStreams()` fixes it.
 
 Two deliberate exceptions to the translation: the Uzbek word lists in
-`platform-ai/src/constraints.ts` ARE the language-detection feature, and
+`barpo-ai/src/constraints.ts` ARE the language-detection feature, and
 `classifier.ts` still accepts the old Uzbek JSON keys as a fallback because
 small models echo them back.
 
@@ -188,7 +188,7 @@ expression and a prompt. Every firing opens a **brand-new session**, which is
 the point: a fresh context each run is what keeps a daily report reproducible,
 where one long conversation would drift and eventually hit compaction.
 
-The pieces, all under `platform-server/src/schedule/`:
+The pieces, all under `barpo-server/src/schedule/`:
 
 - **`cron.ts`** — a 5-field parser written in-house. The npm packages all carry a
   timezone database and a scheduler we do not need. `nextRun` walks the calendar
@@ -301,7 +301,7 @@ pass covers a closed laptop; it does not cover a machine that stays off past
 4. **Docker isolation** — reimplement `ExecutionEnv` on top of Docker exec.
 5. **Move to AgentHarness** — session trees, `steer()`, provider retry.
 6. **Integration tests + Playwright.**
-7. **Clean up the dead demo exports** in `platform-ui/src/data/mock.ts`
+7. **Clean up the dead demo exports** in `barpo-ui/src/data/mock.ts`
    (`buildPlans`, `cannedReplies`, `installedApps`, `agents` and friends now
    have zero references).
 8. **Restrict `img` in `Markdown.tsx`** — an external `![](http://…)` in an LLM
@@ -310,13 +310,13 @@ pass covers a closed laptop; it does not cover a machine that stays off past
 
 ## Notes for agents (important technical details)
 
-- **Adding a route:** `platform-server/src/routes/<name>.ts` plus one import and
+- **Adding a route:** `barpo-server/src/routes/<name>.ts` plus one import and
   one `api.route()` line in `createApp()` in `app.ts`.
 - **Adding a WS event:** follow the procedure in
-  `platform-shared/src/protocol.ts` — there is a 4-step comment there. Both
+  `barpo-shared/src/protocol.ts` — there is a 4-step comment there. Both
   `eventChannel()` and `eventSession()` need updating.
 - **Adding a config setting:** just one line in `FIELDS` in
-  `platform-config/src/schema.ts` plus a field on the `Config` type, then
+  `barpo-config/src/schema.ts` plus a field on the `Config` type, then
   `bun run schema`. Validation, the default value, and the JSON Schema follow
   automatically.
 - **Audit:** only through `auditWrite(...)` — the table blocks UPDATE/DELETE with
@@ -333,7 +333,7 @@ pass covers a closed laptop; it does not cover a machine that stays off past
   by every test file in the process. For apps use `test/app-fixture.ts`
   (`useTempApps()` / `publishTestApp()` / `cleanupApps()`) rather than writing
   folders by hand.
-- The runtime database lives in `platform-server/data/` — not in git; migrations
+- The runtime database lives in `barpo-server/data/` — not in git; migrations
   and the seed run automatically on first start.
 
 ### Nine boundaries that must not be broken
