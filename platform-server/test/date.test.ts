@@ -8,7 +8,7 @@
 // when the suite happens to run.
 
 import { describe, expect, test } from 'bun:test'
-import { GROUP_ORDER, shortTime, dateGroup } from '../../platform-ui/src/lib/date.ts'
+import { GROUP_ORDER, shortTime, dateGroup, auditDate } from '../../platform-ui/src/lib/date.ts'
 
 /** One "now" shared by every test: 2026-07-28 at 14:00 */
 const NOW = new Date(2026, 6, 28, 14, 0, 0)
@@ -103,5 +103,41 @@ describe('shortTime', () => {
 
   test('a malformed date yields an empty string', () => {
     expect(shortTime('not a date', NOW)).toBe('')
+  })
+})
+
+describe('auditDate', () => {
+  // The audit log keeps its exact "HH:MM"; this only supplies the DAY, and
+  // only when the clock time alone would be ambiguous.
+  test('today is empty — the time alone is unambiguous', () => {
+    expect(auditDate(date(2026, 7, 28, 9, 0), NOW)).toBe('')
+  })
+
+  test('an earlier day carries its date', () => {
+    // Without this, an entry from 09:00 today and one from 09:00 yesterday
+    // render identically — the whole reason the field exists.
+    expect(auditDate(date(2026, 7, 27, 9, 0), NOW)).toBe('Jul 27')
+  })
+
+  test('another year is shown with the year', () => {
+    expect(auditDate(date(2025, 11, 3), NOW)).toBe('Nov 3, 2025')
+  })
+
+  test('a date at 23:00 yesterday is still yesterday at 14:00 today', () => {
+    // Calendar days, not 24-hour windows — 15 hours apart, but a different day
+    expect(auditDate(date(2026, 7, 27, 23, 0), NOW)).toBe('Jul 27')
+  })
+
+  test('a future date (a wrongly set clock) is treated as today', () => {
+    expect(auditDate(date(2026, 7, 29, 9, 0), NOW)).toBe('')
+  })
+
+  test('a missing field yields an empty string', () => {
+    // Entries written before `at` existed — they keep showing the bare time
+    expect(auditDate(undefined, NOW)).toBe('')
+  })
+
+  test('a malformed date yields an empty string', () => {
+    expect(auditDate('not a date', NOW)).toBe('')
   })
 })

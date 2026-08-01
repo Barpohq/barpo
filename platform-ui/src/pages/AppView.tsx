@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AppManifest, Widget } from '../data/mock'
+import type { AppManifest, Widget } from '@barpo/shared'
 import AiView from '../components/AiView'
 import ActionButtons from '../components/ActionButtons'
 import SettingsForm from '../components/SettingsForm'
