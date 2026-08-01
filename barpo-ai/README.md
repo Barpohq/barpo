@@ -54,9 +54,47 @@ Built on:
 - [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi/tree/main/packages/agent)
   — the agent loop, tool calls, and ready-made `read`/`write`/`edit`/`bash` tools
 
+The security model this package implements is described from the system's point
+of view in [`docs/architecture.md`](../docs/architecture.md); what follows is
+how it is built.
+
+## File map
+
+```
+agent.ts            — the agent stream: prompt assembly, tools, cleanup
+conversation.ts     — the tool-free stream (delta/done/error only)
+context.ts          — history with tool results, and compaction
+detect.ts           — which providers are usable on this machine
+ollama.ts           — the local Ollama probe
+local-auth.ts       — reading ~/.claude and ~/.codex subscription tokens
+source-sync.ts      — writing a rotated OpenAI refresh token back
+credentials.ts      — the platform's own token store (600, gitignored)
+
+environment.ts      — RestrictedEnv: the working-directory boundary
+command-analysis.ts — assessing a bash command, part by part
+permission.ts       — PermissionManager: asking, remembering, timing out
+classifier.ts       — auto mode's "did this go beyond what was asked?"
+constraints.ts      — user constraints re-read from the conversation
+mode.ts             — ModeManager: confirm/auto, block counters, fallback
+registry.ts         — TTL + LRU for the per-session managers
+hooks.ts            — before/after interception around a tool call
+
+search-tools.ts     — the grep/find/ls tools
+search-engine.ts    — backend selection: rg when present, Node otherwise
+search-core.ts      — the shared matching logic both backends run
+server-tools.ts     · dashboard-tools.ts · schedule-tools.ts — injected tools
+
+mcp-protocol.ts · mcp-transport.ts · mcp-client.ts
+mcp-manager.ts  · mcp-tools.ts     — the MCP client (see below)
+
+project-context.ts  — AGENTS.md / CLAUDE.md
+skill-load.ts · skill-file.ts — skills and their frontmatter
+memory.ts           — the agent's own notes
+```
+
 ## What the caller supplies
 
-`AgentOptions` is more than a session id and a working directory. Three of its
+`AgentOptions` is more than a session id and a working directory. Seven of its
 fields are **inversions**: the data lives in `barpo-server`'s SQLite, but
 this package does not depend on the server — so the server hands in a function
 instead.
@@ -69,6 +107,10 @@ instead.
 | `classifierHistory` | the TEXT-ONLY history for the classifier — better supplied by the caller (two layers instead of one) |
 | `serverProvider` | ↩ the SSH servers connected to the platform → the `serverList` tool |
 | `dashboardSink` | ↩ where a published app manifest is stored → the `appPublish` tool |
+| `dashboardRemover` | ↩ how an app is erased → the `appDelete` tool |
+| `scheduleSink` | ↩ where a new schedule is written → the `scheduleCreate` tool |
+| `scheduleLister` | ↩ the schedules that exist → the `scheduleList` tool |
+| `scheduleRemover` | ↩ how a schedule is removed → the `scheduleDelete` tool |
 | `mcpProvider` | ↩ which MCP servers to connect for this session → the `mcp__*` tools |
 | `toolObserver` | called before every tool call, for the audit log. Does not block |
 | `hooks` | extra hooks, appended to the ones from the config |
@@ -130,7 +172,16 @@ lands in the `warnings` list.
 | `grep` `find` `ls` | `search-tools.ts` | none — but working directory only |
 | `serverList` | `server-tools.ts` | none — read-only |
 | `appPublish` | `dashboard-tools.ts` | none — the user asked for it |
+| `appDelete` | `dashboard-tools.ts` | always, and **only a human answers** (`requireUser`) |
+| `scheduleCreate` `scheduleDelete` | `schedule-tools.ts` | always, but auto mode may answer |
+| `scheduleList` | `schedule-tools.ts` | none — read-only |
 | `mcp__<server>__<tool>` | `mcp-tools.ts` | always, via `McpManager.call()` |
+
+`appDelete` is the one tool that refuses an automated answer: `requireUser`
+skips auto mode AND any stored "always", so an app disappears only when a human
+said so, every time. The schedule tools deliberately do NOT use it — a schedule
+is reversible and destroys nothing, so demanding a human answer even in auto
+mode would be permission fatigue.
 
 A tool disabled in `agent.tools.enabled` is **not declared at all** — better
 than "I will refuse if you call it", because the model does not waste turns
@@ -271,8 +322,63 @@ Once off it **does not come back automatically** — the user has to press the
 "Re-enable" button in the chat. An allowed action resets the consecutive
 counter to zero; the total counter stays.
 
-**Model choice.** Independent of the main chat model. Measured in a live test
-(8 scenarios):
+**Model choice.** The classifier runs on its own model, chosen independently of
+the main chat model — but not independently of its PROVIDER.
+
+> **THE CLASSIFIER FOLLOWS THE CHAT'S PROVIDER.** This is the rule that matters
+> most here, and it was learned the hard way.
+>
+> Selection used to run over every detected model and take the cheapest-looking
+> one, wherever it lived. On an account whose chat runs on a Codex
+> **subscription**, that meant picking `openai/gpt-4.1-nano` — a paid API model
+> on a different billing channel. The chat worked fine; the classifier answered
+> "You have no credits remaining", auto mode shut itself off, and a scheduled
+> run died with it. Everything the user could see was configured correctly.
+>
+> The provider a conversation already uses is known to be reachable and paid
+> for. Starting the search there removes a whole class of failure that is
+> invisible from the UI.
+
+`pickClassifierModel()` takes the first that applies:
+
+1. the `PLATFORM_CLASSIFIER_MODEL` env var — forced, for working around a
+   temporary failure
+2. `permission.classifierModel` from the config — the user's permanent choice
+3. `CLASSIFIER_BY_PROVIDER`, **for the chat's provider**
+4. the heuristic, restricted to the chat's provider
+5. the heuristic over every provider — the last resort, so auto mode still
+   works when the chat's provider has nothing suitable (a local Ollama holding
+   only `qwen3`, for instance)
+
+Env ranks above config because env is the temporary workaround and config is
+the permanent setting. Both take `provider/model` form.
+
+**The table is written down rather than guessed**, because a model's name
+predicts neither its latency nor its price. Measured: `gpt-5.4` 2.9s against
+`gpt-5.4-mini` 4.1s — the "mini" is the slower one. Priced: `gpt-5.6-luna`
+$0.20/$1.20 against `gpt-5.4` $2.50/$15.00 — 12× the cost for 1.6s. Price wins,
+because the classifier runs before every dangerous tool call.
+
+| Provider | First choice | Why |
+|---|---|---|
+| `openai-codex` | `gpt-5.6-luna` | cheapest capable in the family by a wide margin. `gpt-5.3-codex-spark` is deliberately absent — the catalogue lists it, the API refuses it |
+| `anthropic` | **`claude-sonnet-5`** | see below |
+| `google` | `gemini-2.5-flash-lite` | 8/8 at ~1.3s, the fastest thing measured anywhere |
+| `openrouter` | `anthropic/claude-sonnet-5` | known-good models named explicitly rather than trusting the proxy's own ordering |
+| `openai` | `gpt-4.1-nano` | cheapest capable on the paid API |
+
+Entries are ORDERED and second choices exist on purpose: a provider exposes
+different models to different plans, so the first name may simply not be on this
+account.
+
+**Anthropic is a deliberate exception to "cheapest capable" — Sonnet, not
+Haiku.** The classifier makes a SECURITY decision; it is the only thing standing
+between an agent running unattended and a destructive command. Haiku 4.5 scored
+8/8 on the original scenarios, but those are the easy ones to get right — the
+expensive mistake is the subtle prompt injection nobody wrote a test for. Paying
+more per check is the right trade for the one call allowed to say "no".
+
+The original 8-scenario measurements, which set the shape of the heuristic:
 
 | Model | Accuracy | Latency |
 |---|---|---|
@@ -282,11 +388,12 @@ counter to zero; the total counter stays.
 | `gpt-5-mini` | 0/8 | "Reasoning is mandatory" — 400 |
 | Ollama `qwen3:8b` | 0/8 | no answer even after 90s |
 
-So the choice is not "the cheapest": models where reasoning is **mandatory**
-(qwen3, the GPT-5/o family, deepseek-r1) and older generations are excluded,
-and tested models take priority. It can be forced with the
-`PLATFORM_CLASSIFIER_MODEL` env var or the `permission.classifierModel` setting
-(both in `provider/model` form; the env var wins).
+So "the cheapest" was never a sufficient criterion: free is worthless if the
+model cannot answer. Models where reasoning is **mandatory** (qwen3, the GPT-5/o
+family, deepseek-r1) and older generations are excluded from the heuristic. The
+`gpt-5` exclusion is matched as `(^|/)gpt-5(-|$)` rather than `\bgpt-5`, which
+had swallowed the entire later family and left a Codex-only account with no
+candidate at all.
 
 ### `permission.ts` — PermissionManager
 
@@ -618,8 +725,9 @@ exist — `validateCode()` in `state-run.ts`, `validateActionCode()` in
 **MCP OAuth.** Only static credentials work today (env or an HTTP header),
 because the hand-written client does not implement the OAuth flow.
 
-**AgentHarness.** The lower-level `Agent` is used at the moment. Moving to
-`AgentHarness` would provide the session tree, `steer()`/`followUp()`
+**AgentHarness.** Partly adopted: the tools are declared in pi's
+`AgentHarnessTool` shape, but the loop itself is still the lower-level `Agent`.
+Completing the move would provide the session tree, `steer()`/`followUp()`
 (steering mid-stream) and provider retries out of the box.
 
 ## Tests
@@ -628,11 +736,12 @@ because the hand-written client does not implement the OAuth flow.
 bun test
 ```
 
-782 tests across 37 files. They do not go over the network (except the Ollama
-and `rg` tests — those are conditional: if the program is missing, the test
-skips itself). The security tests exercise `RestrictedEnv`, `assessCommand`,
-classifier isolation and `sanitiseEnv` directly — without an LLM involved, i.e.
-they check that the boundary is enforced at the code level.
+801 tests across 37 files — 757 pass, 44 skip. They do not go over the network
+(the Ollama and `rg` tests are the exception and are conditional: if the program
+is missing, the test skips itself, which is where most of those 44 come from).
+The security tests exercise `RestrictedEnv`, `assessCommand`, classifier
+isolation and `sanitiseEnv` directly — without an LLM involved, i.e. they check
+that the boundary is enforced at the code level.
 
 Some deserve special mention:
 

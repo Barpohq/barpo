@@ -1,15 +1,13 @@
-# AI Platform — UI
+# @barpo/ui
 
-The interface of **the program that builds programs**: a new service is
-ordered through chat, the platform builds it in the background, and the
-finished app **adds its own dashboard** to the platform (the "Apps" section in
-the sidebar).
+The interface of **the program that builds programs**: a new service is ordered
+through chat, the platform builds it in the background, and the finished app
+**adds its own dashboard** to the platform (the "Apps" section in the sidebar).
 
-Most of the UI is wired to the backend — chat, conversations, agents, servers,
-skills, MCP servers and the app dashboards all talk to real endpoints
-(`lib/api.ts`, `lib/ws.ts`). Three pages still read from `data/mock.ts`:
-`Audit.tsx`, `Dashboard.tsx` and `Workflow.tsx` — for them the endpoints are
-ready, only the `fetch` has to be written.
+Every page reads from the real backend — chat, conversations, agents, servers,
+skills, MCP servers, schedules, the audit log and the app dashboards all talk to
+live endpoints (`lib/api.ts`, `lib/ws.ts`). One known exception, labelled in the
+UI itself: `Terminal.tsx` is still a scripted replay, not a live session.
 
 ## Getting started
 
@@ -18,19 +16,22 @@ bun install
 bun run dev
 ```
 
+The dev server proxies `/api` and `/ws` to the backend on port 8787
+(`vite.config.ts`), so no absolute address appears in the frontend code. The
+backend has to be running: `cd barpo-server && bun run dev`.
+
 ## Structure
 
 ```
 src/
-  data/mock.ts     — mock data for the pages that are not wired up yet,
-                     plus the `AppManifest` / `Widget` types
   lib/
-    api.ts         — REST calls (models, chat, projects, skills, MCP, servers, apps)
+    api.ts         — REST calls (models, chat, projects, skills, MCP, servers, apps, schedules, audit)
     ws.ts          — a single WebSocket client (reconnects automatically)
     apps.ts        — the installed apps in the sidebar (REST + WS)
     app-states.ts  — polling the live state of a dashboard
     running.ts     — the agent streams running in the background (REST + WS)
     conversations.ts — the conversation list shared by the sidebar and its page
+    fleet.ts       — the header ticker: servers connected, disk warnings (real SSH metrics)
     hash-path.ts   — URL hash ↔ app state (pure functions, tested)
     date.ts        — date grouping and formatting for the conversation list
     toast.ts       — the toast context and hook
@@ -62,27 +63,35 @@ src/
     Servers.tsx       — real SSH server management, live metrics
     Skills.tsx        — skill sources, catalog and installation (with scopes)
     Mcp.tsx           — MCP servers: registry / GitHub / manual sources, settings
-    Audit.tsx         — append-only audit log, filtering
-    Terminal.tsx      — a view of the tmux/Claude Code session, the approval flow
+    Schedules.tsx     — recurring tasks and the platform's own limit resumes
+    Audit.tsx         — append-only audit log, server-side filtering, paged
+    Terminal.tsx      — a scripted preview of the tmux session view (see below)
 ```
 
-The menu is deliberately short: **Chat · Agents · Servers · Skill store · MCP
-servers · Audit log · Terminal + Apps**. The platform is meant to be simple
-enough to install on an ordinary PC — no surplus technical pages for people who
-do not run servers. (`pages/Dashboard.tsx` and `Workflow.tsx` are kept but not
-wired into the menu; one line in `App.tsx` brings them back if needed.)
+The `AppManifest` and `Widget` types live in `@barpo/shared`
+(`barpo-shared/src/types.ts`), validated by `manifest-validate.ts` — the same
+definitions the server writes against, so the two cannot drift.
+
+The menu is deliberately short: **Agents · Servers · Skill store · MCP servers ·
+Schedules · Audit log · Terminal**, plus the installed apps. Chat is not in that
+list — it is the sidebar's own expandable section (`ConversationList.tsx`),
+because it carries the conversation list with it. The platform is meant to be
+simple enough to install on an ordinary PC, so there are no surplus technical
+pages for people who do not run servers.
 
 ## Design decisions
 
 - **Progressive disclosure** — the default state is chat only; the "PRO MODE"
   button reveals the sidebar, the status strip and every technical page (the
-  philosophy from 02-ai-platform.md §3.5).
+  philosophy from [`docs/vision.md`](../docs/vision.md) §3.5).
 - Colour palette: ink-blue background + azure accent + gold (cost). The chart
   series (`--color-s1..s4`) passed the dataviz validator (CVD-safe).
 - Fonts: Bricolage Grotesque (headings) · Manrope (body) · JetBrains Mono
   (logs, numbers) — all local (@fontsource), no CDN required.
-- The mock numbers come from real results on the roadmap (247 clusters,
-  151 accepted, $0.037/post, 96% approval).
+- **Every number shown is a measured one.** The header ticker used to display
+  invented figures that stayed the same whether you had five servers or none;
+  `lib/fleet.ts` now reads them from the real endpoints, and a value that cannot
+  be measured is not shown at all.
 
 ## Navigation (deep links)
 
@@ -93,7 +102,7 @@ The URL hash addresses any page directly:
 #chat/<uuid>         — plain mode, an open conversation
 #pro/chat            — pro mode, the chat page
 #pro/chat/<uuid>     — pro mode, an open conversation
-#pro/servers         — pro mode, another page (#pro/audit, #pro/terminal, …)
+#pro/servers         — pro mode, another page (#pro/audit, #pro/schedules, …)
 #pro/app:<id>        — pro mode, an installed app
 ```
 
@@ -104,12 +113,10 @@ functions, covered by tests.
 
 ## Dynamic app modules — architecture
 
-The UI uses a "server-driven UI" model, and that is the recommendation for the
-real version too:
+The UI uses a "server-driven UI" model:
 
-1. **Manifest** — every service that gets built brings a JSON manifest with it:
-   name, icon, backend service address and **its dashboard widgets as a schema**
-   (the `AppManifest` type, `src/data/mock.ts`).
+1. **Manifest** — every app is a folder on disk; the server reads it and hands
+   the UI a manifest: name, icon, and **its dashboard widgets as a schema**.
 2. **Host renderer** — `pages/AppView.tsx` turns the schema into UI
    (stats / bars / table / logs / note / deploy / git widgets). The frontend is
    **not rebuilt** for a new app — only data arrives. Widget text may contain
@@ -117,8 +124,11 @@ real version too:
    `lib/app-states.ts`. Beyond the widgets, an app can also ship a settings form
    (`SettingsForm.tsx`, schema-driven), action buttons (`ActionButtons.tsx`) and
    an AI-written view (`AiView.tsx`).
-3. **Registration** — the orchestrator sends a new manifest over the WebSocket
-   and the UI adds it to the sidebar with `installApp()`.
+3. **Registration** — the server broadcasts a new manifest over the WebSocket
+   and `lib/apps.ts` (`useApps`) adds it to the sidebar; `app.removed` takes it
+   away again, carrying the id alone because by then the folder is gone. The
+   initial list is fetched AFTER the subscription is in place, or an app
+   published in between would be missed.
 
 Why not iframes or module federation? The schema-widget model is safer
 (AI-written code does not run in the host UI context — a defence against prompt
@@ -136,16 +146,24 @@ the reply       →  WS: chat.delta × N                    (text)
                     WS: chat.classifier                  (auto mode decision)
                     WS: chat.mode                        (the mode changed)
                     WS: chat.status                      (a stream started/finished)
-                 →  chat.done | chat.error
+                 →  chat.done | chat.error | chat.scheduled
 ```
 
 The reason for the split: whether the request was accepted (or rejected — a 409
 provider lock, say) has to be known immediately, whereas the reply takes a long
 time and there is no need to hold an HTTP response open for it.
 
+`chat.scheduled` is the third way a stream can end, and it is not an error: a
+provider limit interrupted the reply and the platform booked a continuation, so
+the chat says "paused until 14:35" and the conversation resumes by itself.
+
 The model picker gets its list from `/api/models` — the providers detected on
 the user's machine (a local Ollama, environment keys, `~/.claude` and `~/.codex`
-subscriptions). Models are grouped by provider, with the free ones on top.
+subscriptions). Models are grouped by provider, ordered by **billing channel**
+rather than price: local first, then subscription, then API key. Price would be
+the wrong key — a subscription model carries the catalogue's per-token cost even
+though the user does not pay it, so sorting on `cost` would bury the channel
+they have already paid for underneath the one that bills them.
 
 **Provider lock:** once the first message is sent the session binds to its
 provider and the picker locks (🔒). Use "+ new conversation" for a different
@@ -200,14 +218,33 @@ events. They surface in three places: a live indicator next to the conversation
 in the sidebar, a counter badge next to "Agents", and the `Agents` page with its
 stop button.
 
-## Remaining backend work
+## Schedules
 
-1. The remaining exports in `src/data/mock.ts` — `auditLog` (`Audit.tsx`),
-   `costDays` / `modelCosts` / `llmCalls` (`Dashboard.tsx`), `workflowSteps`
-   (`Workflow.tsx`) and `tmuxLines` (`Terminal.tsx`). Each maps to a single API
-   endpoint that is **already available** on the backend; only a function in
-   `lib/api.ts` is missing.
-2. `builder.create` — the real endpoint in the orchestrator that launches Claude
-   Code in a tmux session; the build steps arrive as `build.*` events (already
-   defined in the protocol).
-3. Approval cards and the Telegram approval flow are fed by the same backend.
+Two kinds of row appear on this page and they read differently:
+
+- **recurring** — the user or the agent set up a repeating task on a cron
+  timetable. It can be paused, resumed and deleted. Pausing and resuming go
+  through `PATCH /api/schedules/:id`; resuming re-arms first, so a schedule
+  paused last week does not fire the moment it comes back.
+- **resume** — the platform booked a continuation because a provider limit
+  interrupted a conversation. Nobody asked for it, so the row explains itself:
+  what stopped, and when it picks back up.
+
+The list stays current over the WebSocket (`schedule.changed` /
+`schedule.removed`), so a run finishing while the page is open updates it
+without a refresh.
+
+## Known gaps
+
+- **`Terminal.tsx` is a scripted replay.** No SSH connection is opened, no tmux
+  session exists, and the server names in it are illustrations. The page says so
+  in a banner rather than pretending otherwise; `ssh.ts` already has the
+  connection layer and `CHANNELS.terminal` already exists, so the replacement is
+  wiring rather than design.
+- **`builder.create`** — the endpoint that launches a real build in a tmux
+  session is not written. The `build.*` events are already defined in the
+  protocol and the pages that would consume them are not built either.
+- **Approval cards and the Telegram approval flow** wait on the same backend
+  work.
+- **`playwright` is a dependency but there are no e2e specs yet** — the
+  dependency was added ahead of the tests.

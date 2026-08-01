@@ -6,7 +6,8 @@
 > dashboard back into Barpo. Deploy to a domain or a port is one choice away,
 > built in.
 
-Self-hosted and open source. Your keys, your servers, your data.
+Self-hosted and open source ([Apache-2.0](LICENSE)). Your keys, your servers,
+your data.
 
 *The name comes from the Uzbek "barpo qilmoq" — to build, to bring into being.*
 
@@ -19,13 +20,15 @@ A working backend, AI agent layer and web UI — 1775 tests green.
 ```bash
 bun install
 bun test
-cd barpo-server && bun run src/index.ts   # backend :8787
+cd barpo-server && bun run dev            # backend :8787
 cd barpo-ui && bun run dev                # UI
 ```
 
 Chat with an agent that reads and writes files, runs commands, connects to MCP
 servers and manages real servers over SSH — with a permission layer in front of
-every dangerous action. [CONTINUE.md](CONTINUE.md) has the full picture.
+every dangerous action. You will need a model:
+[getting started](docs/getting-started.md) covers the three ways to supply one.
+[CONTINUE.md](CONTINUE.md) has the full picture of where the work stands.
 
 ## What makes Barpo different
 
@@ -54,20 +57,17 @@ every dangerous action. [CONTINUE.md](CONTINUE.md) has the full picture.
 - Progressive disclosure — a casual user never sees the complexity, a power user can reach everything
 - Security is part of the design — the AI is never handed a password, every action has a permission level, everything lands in the audit log
 
-## Documentation map
+## Documentation
 
-| File | Contents |
+| | |
 |---|---|
-| [CONTINUE.md](CONTINUE.md) | **Start here to pick the work back up** — current state, what is built, the boundaries that must not be broken |
-| [02-ai-platform.md](02-ai-platform.md) | The vision: bot-to-platform evolution, modules, architecture |
-| [04-risks.md](04-risks.md) | Critical analysis: risks, weak points, and mitigation strategies |
+| [docs/](docs/README.md) | The full index |
+| [Getting started](docs/getting-started.md) | Install, connect a model, first conversation |
+| [Architecture](docs/architecture.md) | How the pieces fit — and the security model |
+| [CONTINUE.md](CONTINUE.md) | **Picking the work back up** — current state, decisions, the twelve invariants |
 
-Each package carries its own README with the implementation detail —
-[barpo-ai](barpo-ai/README.md) (the security model),
-[barpo-server](barpo-server/README.md) (routes, database, WS protocol),
-[barpo-config](barpo-config/README.md),
-[barpo-ui](barpo-ui/README.md), and
-[mcp-servers](mcp-servers/README.md).
+Each package carries its own README with the implementation detail, and
+[CONTRIBUTING.md](CONTRIBUTING.md) has the working rules.
 
 ## History and inspirations
 
