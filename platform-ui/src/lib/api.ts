@@ -28,6 +28,7 @@ import type {
   Server,
   ServerMetrics,
   SettingField,
+  Schedule,
   Skill,
   SkillScope,
   SkillSource,
@@ -681,4 +682,48 @@ export function deleteServer(id: string): Promise<{ ok: boolean; note?: string }
 
 export function fetchServerMetrics(id: string): Promise<{ metrics: ServerMetrics }> {
   return request<{ metrics: ServerMetrics }>(`/api/servers/${id}/metrics`)
+}
+
+// ---------------------------------------------------------------------------
+// Schedules
+// ---------------------------------------------------------------------------
+
+export function fetchSchedules(): Promise<{ schedules: Schedule[] }> {
+  return request<{ schedules: Schedule[] }>('/api/schedules')
+}
+
+/**
+ * Creates a recurring task.
+ *
+ * `cron` is validated on the SERVER — a bad expression comes back as a 400
+ * with the reason in `detail`, which the form shows verbatim. Validating it
+ * again here would mean two parsers to keep in step.
+ */
+export function createSchedule(input: {
+  title: string
+  cron: string
+  prompt: string
+  projectId?: string
+}): Promise<{ schedule: Schedule }> {
+  return request<{ schedule: Schedule }>('/api/schedules', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+}
+
+/** Pause or resume. Only these two — the rest are outcomes the scheduler writes. */
+export function setScheduleStatus(
+  id: string,
+  status: 'active' | 'paused',
+): Promise<{ schedule: Schedule }> {
+  return request<{ schedule: Schedule }>(`/api/schedules/${id}`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify({ status }),
+  })
+}
+
+export function deleteSchedule(id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/schedules/${id}`, { method: 'DELETE' })
 }

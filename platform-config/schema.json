@@ -77,7 +77,10 @@
                 "ls",
                 "serverList",
                 "appPublish",
-                "appDelete"
+                "appDelete",
+                "scheduleCreate",
+                "scheduleList",
+                "scheduleDelete"
               ],
               "type": "array",
               "items": {
@@ -124,7 +127,7 @@
           "maximum": 3600
         },
         "classifierModel": {
-          "description": "Model for the auto-mode classifier, as `provider/model`. When `null` it is chosen automatically (fast, proven models first).",
+          "description": "Model for the auto-mode classifier, as `provider/model`. When `null` it is chosen automatically FROM THE CHAT'S OWN PROVIDER — that one is known to be reachable and paid for, whereas the cheapest model overall may sit on a billing channel with no credit on it.",
           "default": null,
           "type": [
             "string",

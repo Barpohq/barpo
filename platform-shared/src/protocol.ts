@@ -18,6 +18,7 @@ import type {
   PermissionAnswer,
   PermissionMode,
   PermissionRequest,
+  Schedule,
   ToolCard,
   ToolCall,
 } from './types.ts'
@@ -315,6 +316,51 @@ export interface TerminalLineEvent {
   line: string
 }
 
+/**
+ * The reply stopped because the provider's quota ran out, and a continuation
+ * has been SCHEDULED.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────┐
+ * │ WHY THIS IS NOT A `chat.error`. An error tells the user the turn is  │
+ * │ lost and something needs doing. Here the opposite is true: the       │
+ * │ platform already knows when the limit lifts and has booked the       │
+ * │ continuation, so the honest message is "paused until 14:35", not     │
+ * │ "failed". Sending an error as well would ask the user to act on      │
+ * │ something already handled.                                           │
+ * │                                                                      │
+ * │ It IS session-bound (`eventSession`), because it names the           │
+ * │ conversation that stalled.                                           │
+ * └──────────────────────────────────────────────────────────────────────┘
+ */
+export interface ChatScheduledEvent {
+  type: 'chat.scheduled'
+  sessionId: string
+  messageId: string
+  /** The schedule that will do the continuing */
+  scheduleId: string
+  /** When it resumes — epoch ms, UTC */
+  runAt: number
+  /** The provider error the decision was based on, for the tooltip */
+  reason: string
+}
+
+/** A schedule was created, changed, or fired — the list keeps itself current */
+export interface ScheduleChangedEvent {
+  type: 'schedule.changed'
+  schedule: Schedule
+}
+
+/**
+ * A schedule was deleted.
+ *
+ * The ID alone, for the same reason as `app.removed`: the row is already gone,
+ * and the list only needs to know which entry to drop.
+ */
+export interface ScheduleRemovedEvent {
+  type: 'schedule.removed'
+  id: string
+}
+
 export type ServerEvent =
   | HelloEvent
   | ChatDeltaEvent
@@ -335,6 +381,9 @@ export type ServerEvent =
   | AppRemovedEvent
   | AuditEntryEvent
   | TerminalLineEvent
+  | ChatScheduledEvent
+  | ScheduleChangedEvent
+  | ScheduleRemovedEvent
 
 export type ProtocolEvent = ClientEvent | ServerEvent
 
@@ -349,6 +398,7 @@ export const CHANNELS = {
   apps: 'apps',
   audit: 'audit',
   terminal: 'terminal',
+  schedules: 'schedules',
 } as const
 
 export type Channel = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -365,7 +415,15 @@ export function eventChannel(event: ServerEvent): Channel | null {
     case 'chat.status':
     case 'chat.done':
     case 'chat.error':
+    // `chat.scheduled` belongs to the CHAT channel, not `schedules`: it is
+    // part of the reply stream (it replaces the error that would otherwise
+    // end the turn), and the chat page must see it without subscribing to a
+    // second channel. The `schedules` channel carries the LIST's events.
+    case 'chat.scheduled':
       return CHANNELS.chat
+    case 'schedule.changed':
+    case 'schedule.removed':
+      return CHANNELS.schedules
     case 'build.step':
     case 'build.choice':
     case 'build.done':
@@ -407,6 +465,9 @@ export function eventSession(event: ServerEvent): string | null {
     case 'chat.mode':
     case 'chat.done':
     case 'chat.error':
+    // Session-bound: it names the conversation that stalled, and only the
+    // client watching that conversation should be told it is paused.
+    case 'chat.scheduled':
       return event.sessionId
 
     // `chat.status` DOES carry a `sessionId`, but it is DELIBERATELY not
@@ -416,6 +477,15 @@ export function eventSession(event: ServerEvent): string | null {
     // permission" markers of the others. The event carries no content (no
     // text, no tool result, no permission detail) — only an id and a status.
     case 'chat.status':
+      return null
+
+    // `schedule.changed`/`schedule.removed` are LIST events, not session
+    // events. A recurring schedule outlives any single session (each run opens
+    // a new one), so binding them to `sessionId` would hide a schedule from the
+    // very page that lists them. The payload is the schedule row itself, which
+    // holds no message text or tool output.
+    case 'schedule.changed':
+    case 'schedule.removed':
       return null
 
     default:

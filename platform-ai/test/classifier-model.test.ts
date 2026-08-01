@@ -126,3 +126,156 @@ describe('the tested models take priority', () => {
     expect(picked?.model).toBe('some-flash-lite')
   })
 })
+
+// ===========================================================================
+// The classifier follows the CHAT's provider
+// ===========================================================================
+
+describe('the chat provider decides where the classifier comes from', () => {
+  /**
+   * ┌────────────────────────────────────────────────────────────────────┐
+   * │ THE BUG THIS PREVENTS, in full, because it cost a real scheduled   │
+   * │ run and was invisible from the UI.                                 │
+   * │                                                                    │
+   * │ The chat ran on an `openai-codex` SUBSCRIPTION. Selection scanned  │
+   * │ every detected model, scored `openai/gpt-4.1-nano` cheapest, and   │
+   * │ picked it — a PAID API model on a different billing channel. The   │
+   * │ chat worked fine. The classifier answered "You have no credits     │
+   * │ remaining", auto mode shut itself off, and the unattended run died │
+   * │ mid-command. Nothing in the settings looked wrong.                 │
+   * └────────────────────────────────────────────────────────────────────┘
+   */
+  const mixed = () => [
+    model({ provider: 'openai', id: 'gpt-4.1-nano', cost: { input: 0.1, output: 0.4 } }),
+    model({ provider: 'openai-codex', id: 'gpt-5.6-luna', cost: { input: 0.2, output: 1.2 } }),
+    model({ provider: 'openai-codex', id: 'gpt-5.4', cost: { input: 2.5, output: 15 } }),
+    model({ provider: 'anthropic', id: 'claude-sonnet-5', cost: { input: 3, output: 15 } }),
+    model({ provider: 'anthropic', id: 'claude-haiku-4-5-20251001', cost: { input: 1, output: 5 } }),
+  ]
+
+  test('a subscription chat does NOT fall through to a paid API model', () => {
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const picked = pickClassifierModel(mixed(), null, 'openai-codex')
+    expect(picked?.provider).toBe('openai-codex')
+    // …and specifically the cheap one, not the fast-but-expensive one
+    expect(picked?.model).toBe('gpt-5.6-luna')
+  })
+
+  test('each provider gets its own written-down choice', () => {
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    expect(pickClassifierModel(mixed(), null, 'openai')?.model).toBe('gpt-4.1-nano')
+    expect(pickClassifierModel(mixed(), null, 'anthropic')?.model).toBe('claude-sonnet-5')
+  })
+
+  test('Anthropic uses SONNET, not the cheaper Haiku', () => {
+    // A deliberate exception to "cheapest capable": the classifier is the only
+    // thing standing between an unattended agent and a destructive command,
+    // and the expensive mistake is the subtle injection nobody wrote a test
+    // for. Haiku is listed as the fallback, not the first choice.
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const picked = pickClassifierModel(mixed(), null, 'anthropic')
+    expect(picked?.model).toBe('claude-sonnet-5')
+  })
+
+  test('the table order wins over the catalogue order', () => {
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    // `gpt-5.4` is listed FIRST here; the table still prefers luna.
+    const reversed = [
+      model({ provider: 'openai-codex', id: 'gpt-5.4' }),
+      model({ provider: 'openai-codex', id: 'gpt-5.6-luna' }),
+    ]
+    expect(pickClassifierModel(reversed, null, 'openai-codex')?.model).toBe('gpt-5.6-luna')
+  })
+
+  test('the next entry is used when the first is not on the account', () => {
+    // A provider exposes different models to different plans, which is why
+    // the table holds second and third choices.
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const partial = [model({ provider: 'openai-codex', id: 'gpt-5.4-nano' })]
+    expect(pickClassifierModel(partial, null, 'openai-codex')?.model).toBe('gpt-5.4-nano')
+  })
+
+  test('a provider with no table entry falls back to the heuristic WITHIN it', () => {
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const models = [
+      model({ provider: 'openai', id: 'gpt-4.1-nano', cost: { input: 0.1, output: 0.4 } }),
+      model({ provider: 'exotic-provider', id: 'big-model', cost: { input: 9, output: 9 } }),
+      model({ provider: 'exotic-provider', id: 'small-model', cost: { input: 1, output: 1 } }),
+    ]
+    const picked = pickClassifierModel(models, null, 'exotic-provider')
+    expect(picked?.provider).toBe('exotic-provider')
+    expect(picked?.model).toBe('small-model')
+  })
+
+  test('it leaves the provider only when nothing there can do the job', () => {
+    // A local Ollama holding only `qwen3` — which never leaves its <think>
+    // stage. Auto mode should still work rather than being lost entirely.
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const models = [
+      model({ provider: 'ollama', id: 'qwen3:8b', cost: { input: 0, output: 0 } }),
+      model({ provider: 'openai', id: 'gpt-4.1-nano', cost: { input: 0.1, output: 0.4 } }),
+    ]
+    const picked = pickClassifierModel(models, null, 'ollama')
+    expect(picked?.provider).toBe('openai')
+  })
+
+  test('with no chat provider given the old global behaviour applies', () => {
+    // Callers that genuinely have no session (a config screen, a diagnostic)
+    // must keep working.
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    expect(pickClassifierModel(mixed(), null)).toBeDefined()
+  })
+
+  test('config and env still outrank the chat provider', () => {
+    // The user's explicit choice is not overridden by a heuristic, however
+    // well-motivated.
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    expect(pickClassifierModel(mixed(), 'google/gemini-2.5-flash-lite', 'openai-codex')).toEqual({
+      provider: 'google',
+      model: 'gemini-2.5-flash-lite',
+    })
+
+    process.env.PLATFORM_CLASSIFIER_MODEL = 'xai/grok-3-mini'
+    expect(pickClassifierModel(mixed(), 'google/gemini-2.5-flash-lite', 'openai-codex')).toEqual({
+      provider: 'xai',
+      model: 'grok-3-mini',
+    })
+  })
+})
+
+describe('the gpt-5 exclusion is narrow enough to be useful', () => {
+  // It used to be `\bgpt-5`, which matched the whole later family and left a
+  // Codex-only account with no candidate at all — the very failure above.
+  test('the bare gpt-5 generation is still excluded', () => {
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const picked = pickClassifierModel([
+      model({ provider: 'openai', id: 'gpt-5', cost: { input: 0, output: 0 } }),
+      model({ provider: 'openai', id: 'gpt-5-mini', cost: { input: 0, output: 0 } }),
+      model({ provider: 'openrouter', id: 'openai/gpt-5-mini', cost: { input: 0, output: 0 } }),
+      model({ provider: 'openai', id: 'gpt-4.1-nano', cost: { input: 9, output: 9 } }),
+    ])
+    // Every gpt-5 variant is skipped even though they are free
+    expect(picked?.model).toBe('gpt-4.1-nano')
+  })
+
+  test('the later gpt-5.x family is NOT excluded — it was measured working', () => {
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const picked = pickClassifierModel([
+      model({ provider: 'openai-codex', id: 'gpt-5.4-mini', cost: { input: 0.75, output: 4.5 } }),
+    ])
+    expect(picked?.model).toBe('gpt-5.4-mini')
+  })
+
+  test('codex-spark is excluded — the catalogue lists it, the API refuses it', () => {
+    delete process.env.PLATFORM_CLASSIFIER_MODEL
+    const picked = pickClassifierModel(
+      [
+        model({ provider: 'openai-codex', id: 'gpt-5.3-codex-spark', cost: { input: 0, output: 0 } }),
+        model({ provider: 'openai-codex', id: 'gpt-5.6-luna', cost: { input: 9, output: 9 } }),
+      ],
+      null,
+      'openai-codex',
+    )
+    expect(picked?.model).toBe('gpt-5.6-luna')
+  })
+})

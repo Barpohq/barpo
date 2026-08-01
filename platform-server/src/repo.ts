@@ -19,6 +19,10 @@ import type {
   McpSource,
   McpTransportKind,
   Project,
+  Schedule,
+  ScheduleCreator,
+  ScheduleKind,
+  ScheduleStatus,
   Server,
   Skill,
   SkillInstall,
@@ -30,6 +34,7 @@ import type {
 } from '@platforma/shared'
 import { db as globalDb } from './db.ts'
 import { readAppFolder } from './app-store.ts'
+import { describeCron } from './schedule/cron.ts'
 
 // ---------------------------------------------------------------------------
 // Servers
@@ -1660,4 +1665,254 @@ export function readBuild(id: string, database?: Database): BuildSession | null 
   const d = database ?? globalDb()
   const r = d.query<BuildRow, [string]>('SELECT * FROM build_sessions WHERE id = ?').get(id)
   return r ? buildFromRow(r) : null
+}
+
+// ---------------------------------------------------------------------------
+// Schedules
+// ---------------------------------------------------------------------------
+
+interface ScheduleRow {
+  id: string
+  kind: ScheduleKind
+  session_id: string | null
+  project_id: string | null
+  prompt: string
+  cron: string | null
+  provider: string | null
+  model: string | null
+  run_at: number
+  status: ScheduleStatus
+  created_by: ScheduleCreator
+  title: string
+  created_at: string
+  last_run_at: string | null
+  last_error: string | null
+  runs: number
+}
+
+/**
+ * `cronText` is computed HERE rather than stored.
+ *
+ * A stored description would be a second copy of the same fact, and the two
+ * drift the moment `describeCron` learns a new shape — the list would then show
+ * yesterday's wording for schedules created yesterday. It is pure string work
+ * on a list that holds tens of rows, not thousands.
+ */
+function scheduleFromRow(r: ScheduleRow): Schedule {
+  return {
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    sessionId: r.session_id ?? undefined,
+    projectId: r.project_id ?? undefined,
+    prompt: r.prompt,
+    cron: r.cron ?? undefined,
+    cronText: r.cron ? describeCron(r.cron) : undefined,
+    provider: r.provider ?? undefined,
+    model: r.model ?? undefined,
+    runAt: r.run_at,
+    status: r.status,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    lastRunAt: r.last_run_at ?? undefined,
+    lastError: r.last_error ?? undefined,
+    runs: r.runs,
+  }
+}
+
+export interface NewSchedule {
+  kind: ScheduleKind
+  title: string
+  prompt: string
+  runAt: number
+  createdBy: ScheduleCreator
+  sessionId?: string
+  projectId?: string
+  cron?: string
+  provider?: string
+  model?: string
+}
+
+/**
+ * Writes a schedule row. The caller has already worked out `runAt` (from a cron
+ * expression, or from when a rate limit resets) — this layer does no time
+ * arithmetic, so there is exactly one place that decides when things fire.
+ */
+export function createSchedule(input: NewSchedule, database?: Database): Schedule {
+  const d = database ?? globalDb()
+  const id = crypto.randomUUID()
+  const createdAt = new Date().toISOString()
+
+  d.prepare(
+    `INSERT INTO schedules
+       (id, kind, session_id, project_id, prompt, cron, provider, model,
+        run_at, status, created_by, title, created_at, runs)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0)`,
+  ).run(
+    id,
+    input.kind,
+    input.sessionId ?? null,
+    input.projectId ?? null,
+    input.prompt,
+    input.cron ?? null,
+    input.provider ?? null,
+    input.model ?? null,
+    input.runAt,
+    input.createdBy,
+    input.title,
+    createdAt,
+  )
+
+  return readSchedule(id, d)!
+}
+
+/** Newest first — the same ordering as every other list in the UI */
+export function readSchedules(database?: Database): Schedule[] {
+  const d = database ?? globalDb()
+  return d
+    .query<ScheduleRow, []>('SELECT * FROM schedules ORDER BY created_at DESC')
+    .all()
+    .map(scheduleFromRow)
+}
+
+export function readSchedule(id: string, database?: Database): Schedule | null {
+  const d = database ?? globalDb()
+  const r = d.query<ScheduleRow, [string]>('SELECT * FROM schedules WHERE id = ?').get(id)
+  return r ? scheduleFromRow(r) : null
+}
+
+/**
+ * The schedules due to fire — `status = 'active'` AND `run_at <= now`.
+ *
+ * THE `<=` IS DELIBERATE, AND IT IS WHAT MAKES A MISSED RUN RECOVERABLE. If
+ * the machine was asleep at 09:00 the row is not skipped: `run_at` stays in the
+ * past, so the first tick after waking finds it and the report goes out late
+ * rather than never. A late report beats a silently missing one — but see
+ * `scheduler.ts`, which caps how late a run may be before it is abandoned.
+ */
+export function dueSchedules(now: number, database?: Database): Schedule[] {
+  const d = database ?? globalDb()
+  return d
+    .query<ScheduleRow, [number]>(
+      "SELECT * FROM schedules WHERE status = 'active' AND run_at <= ? ORDER BY run_at ASC",
+    )
+    .all(now)
+    .map(scheduleFromRow)
+}
+
+/**
+ * Whether a session already has a pending `resume`.
+ *
+ * The rate-limit detector asks this before creating one: a limit error can
+ * arrive several times in a row (the user retries, or two streams overlap), and
+ * without the check the same conversation would be queued to continue three
+ * times over.
+ */
+export function pendingResume(sessionId: string, database?: Database): Schedule | null {
+  const d = database ?? globalDb()
+  const r = d
+    .query<ScheduleRow, [string]>(
+      `SELECT * FROM schedules
+        WHERE session_id = ? AND kind = 'resume' AND status = 'active'
+        ORDER BY run_at ASC`,
+    )
+    .get(sessionId)
+  return r ? scheduleFromRow(r) : null
+}
+
+/**
+ * Records the outcome of a run and arms the next one.
+ *
+ * `nextRunAt` carries the whole difference between the two kinds: a recurring
+ * schedule passes its next cron firing and stays 'active'; a `resume` passes
+ * nothing and becomes 'done'. Doing it in one statement keeps the row from
+ * being briefly visible in a half-updated state.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────┐
+ * │ A PAUSE MADE DURING THE RUN SURVIVES IT.                             │
+ * │                                                                      │
+ * │ An agent run takes minutes, and the user can press Pause at any      │
+ * │ point in them — the PATCH route writes 'paused' and answers OK.      │
+ * │ Writing 'active' here unconditionally then un-paused it seconds      │
+ * │ later, and the schedule carried on doing unattended work that the    │
+ * │ user had been told was stopped. The `status != 'paused'` guard in    │
+ * │ the statement is what makes the pause stick: the next firing is      │
+ * │ still recorded (so unpausing later resumes the right rhythm), only   │
+ * │ the status is left alone.                                            │
+ * │                                                                      │
+ * │ It is done inside the UPDATE rather than by reading the row first,   │
+ * │ so a pause landing between the read and the write cannot slip        │
+ * │ through the gap.                                                     │
+ * └──────────────────────────────────────────────────────────────────────┘
+ */
+export function markScheduleRun(
+  id: string,
+  outcome: { nextRunAt?: number; error?: string },
+  database?: Database,
+): void {
+  const d = database ?? globalDb()
+  const status: ScheduleStatus = outcome.nextRunAt
+    ? // A failed recurring run still re-arms — one broken report is not a
+      // reason to stop reporting. The error stays on the row so the list can
+      // show it, and the next success clears it.
+      'active'
+    : outcome.error
+      ? 'failed'
+      : 'done'
+
+  d.prepare(
+    `UPDATE schedules
+        SET runs = runs + 1,
+            last_run_at = ?,
+            last_error = ?,
+            run_at = COALESCE(?, run_at),
+            status = CASE WHEN status = 'paused' THEN 'paused' ELSE ? END
+      WHERE id = ?`,
+  ).run(new Date().toISOString(), outcome.error ?? null, outcome.nextRunAt ?? null, status, id)
+}
+
+/**
+ * Points a recurring schedule at the session its latest run created.
+ *
+ * Kept separate from `markScheduleRun` because it happens EARLIER — the session
+ * exists as soon as the run starts, whereas the outcome is only known when the
+ * stream ends. If the run then fails, the list still links to the conversation
+ * where the failure is visible.
+ */
+export function setScheduleSession(
+  id: string,
+  sessionId: string | null,
+  database?: Database,
+): void {
+  const d = database ?? globalDb()
+  d.prepare('UPDATE schedules SET session_id = ? WHERE id = ?').run(sessionId, id)
+}
+
+/** Pause / resume from the UI. Returns the updated row, or `null` if unknown. */
+export function setScheduleStatus(
+  id: string,
+  status: ScheduleStatus,
+  database?: Database,
+): Schedule | null {
+  const d = database ?? globalDb()
+  const existing = readSchedule(id, d)
+  if (!existing) return null
+
+  // Re-activating a schedule whose `runAt` is in the past would fire it
+  // immediately — which is rarely what "unpause" means. The caller recomputes
+  // the next firing and passes it through `markScheduleRun`; here we only move
+  // the status.
+  d.prepare('UPDATE schedules SET status = ? WHERE id = ?').run(status, id)
+  return readSchedule(id, d)
+}
+
+/** Moves the next firing — used when unpausing, and by the UI's "run later". */
+export function setScheduleRunAt(id: string, runAt: number, database?: Database): void {
+  const d = database ?? globalDb()
+  d.prepare('UPDATE schedules SET run_at = ? WHERE id = ?').run(runAt, id)
+}
+
+export function deleteSchedule(id: string, database?: Database): boolean {
+  const d = database ?? globalDb()
+  return d.prepare('DELETE FROM schedules WHERE id = ?').run(id).changes > 0
 }

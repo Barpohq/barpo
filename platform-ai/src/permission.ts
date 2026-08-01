@@ -100,6 +100,17 @@ export interface ClassifierContext {
   signal?: AbortSignal
   /** `permission.classifierModel` from the config — picked automatically when absent */
   model?: string | null
+  /**
+   * The provider this CONVERSATION runs on, so the classifier can prefer a
+   * model from the same one.
+   *
+   * Why it matters: the chat's provider is known to be reachable and paid
+   * for. Picking the cheapest model across every provider once landed the
+   * classifier on a paid API key while the chat itself ran on a subscription
+   * — the chat worked and the classifier answered "no credits remaining",
+   * which shut auto mode off with nothing visibly misconfigured.
+   */
+  chatProvider?: string | null
 }
 
 /**
@@ -226,6 +237,7 @@ export class PermissionManager {
           },
           workDir: context.workDir,
           model: context.model,
+          chatProvider: context.chatProvider,
         },
         context.signal,
       )

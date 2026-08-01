@@ -15,6 +15,7 @@ import { healthRoutes } from './routes/health.ts'
 import { mcpRoutes } from './routes/mcp.ts'
 import { modelsRoutes } from './routes/models.ts'
 import { projectsRoutes } from './routes/projects.ts'
+import { schedulesRoutes } from './routes/schedules.ts'
 import { serversRoutes } from './routes/servers.ts'
 import { skillsRoutes } from './routes/skills.ts'
 
@@ -31,6 +32,7 @@ export function createApp(): Hono {
   api.route('/', chatRoutes)
   api.route('/', modelsRoutes)
   api.route('/', projectsRoutes)
+  api.route('/', schedulesRoutes)
   // ↑ new route modules are added here
 
   app.route('/api', api)

@@ -16,6 +16,7 @@ import {
   syncSkills,
 } from './repo.ts'
 import { ensureBuiltinSource } from './builtin-skills.ts'
+import { startScheduler, stopScheduler, tick } from './schedule/scheduler.ts'
 import { chatSendHandler } from './ws/chat-handler.ts'
 import { applySeed } from './seed.ts'
 import { hub, newConnectionState, type ConnectionState } from './ws/hub.ts'
@@ -57,6 +58,20 @@ const builtinMcp = ensureBuiltinMcpSource(
 if (builtinMcp) {
   console.log(`[mcp] builtin servers in the catalog: ${builtinMcp.count}`)
 }
+
+// 1d) The schedule tick.
+//
+// ONE PASS RUNS IMMEDIATELY, before the periodic timer starts. That is what
+// catches up the runs missed while the machine was off: `run_at` stays in the
+// past for a schedule that did not fire, so the first pass finds it (and
+// `MAX_LATENESS_MS` decides whether it is still worth doing). Waiting the full
+// tick interval would work too, but a report that is already late should not
+// wait another thirty seconds.
+//
+// It is NOT awaited: a run can take minutes, and the HTTP server must be
+// accepting requests long before that.
+void tick().catch((error) => console.error('[schedule] the startup pass failed:', error))
+startScheduler()
 
 // 2) Wire the chat.send events arriving over WS into the orchestrator.
 //    (REST /api/chat/send takes the very same path — the two give an identical
@@ -104,6 +119,9 @@ auditWrite('platform', 'Server started', `port ${server.port}`, 'read', 'OK')
 function stop(signal: string) {
   console.log(`\n[platform] ${signal} — shutting down...`)
   server.stop()
+  // The tick holds a timer; a run already in flight finishes on its own (its
+  // reply is written by `streamReply` either way).
+  stopScheduler()
   // MCP processes — THE LAST LINE OF DEFENCE. `process.exit()` does not kill
   // child processes: they would be orphaned and keep running in the
   // background (see the registry comment in `mcp-transport.ts`).

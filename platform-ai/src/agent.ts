@@ -57,6 +57,13 @@ import {
   type DashboardRemover,
   type DashboardSink,
 } from './dashboard-tools.ts'
+import {
+  SCHEDULE_PROMPT_SECTION,
+  scheduleToolsRaw,
+  type ScheduleLister,
+  type ScheduleRemover,
+  type ScheduleSink,
+} from './schedule-tools.ts'
 import { McpManager, type McpConnectableServer } from './mcp-manager.ts'
 import { MCP_PROMPT_SECTION, isMcpTool, mcpToolsRaw } from './mcp-tools.ts'
 import type { PermissionManager } from './permission.ts'
@@ -156,6 +163,22 @@ export interface AgentOptions {
    * present — the tool always asks the user first (see `dashboard-tools.ts`).
    */
   dashboardRemover?: DashboardRemover
+  /**
+   * The functions behind the schedule tools — writing, listing and deleting
+   * recurring tasks.
+   *
+   * The same inversion as `dashboardSink`: schedules live in SQLite and the
+   * tick that fires them lives in `platform-server`, which this package does
+   * not depend on.
+   *
+   * They are three SEPARATE options rather than one object, so a caller can
+   * hand out reading without writing. `scheduleCreate`/`scheduleDelete` are
+   * additionally declared only when the permission manager is present — a tool
+   * that commits the platform to unattended work must be able to ask first.
+   */
+  scheduleSink?: ScheduleSink
+  scheduleLister?: ScheduleLister
+  scheduleRemover?: ScheduleRemover
   /**
    * The source that supplies the MCP servers to connect for the session.
    *
@@ -300,6 +323,7 @@ export const AGENT_SYSTEM_PROMPT = (
   hasServers = false,
   hasDashboard = false,
   hasMcp = false,
+  hasSchedules = false,
 ) =>
   [
     'You are the AI assistant of this platform. You work on the user\'s project:',
@@ -379,10 +403,12 @@ export const AGENT_SYSTEM_PROMPT = (
     '- bash: run a command',
     ...(hasServers ? SERVER_PROMPT_SECTION.list : []),
     ...(hasDashboard ? DASHBOARD_PROMPT_SECTION.list : []),
+    ...(hasSchedules ? SCHEDULE_PROMPT_SECTION.list : []),
     ...(hasMcp ? MCP_PROMPT_SECTION.list : []),
     '',
     ...(hasServers ? [...SERVER_PROMPT_SECTION.rules, ''] : []),
     ...(hasDashboard ? [...DASHBOARD_PROMPT_SECTION.rules, ''] : []),
+    ...(hasSchedules ? [...SCHEDULE_PROMPT_SECTION.rules, ''] : []),
     ...(hasMcp ? [...MCP_PROMPT_SECTION.rules, ''] : []),
     'To find files use `grep`/`find`/`ls`, NOT `bash` — they are faster and ask',
     'for no permission. Reach for `bash` only when nothing else will do. Those',
@@ -473,6 +499,10 @@ export async function* agentStream(
       workDir: options.workDir,
       signal: options.signal,
       model: config.permission.classifierModel,
+      // The conversation's own provider — the classifier prefers a model from
+      // it, because it is known to be reachable and paid for. See the box on
+      // `pickClassifierModel`.
+      chatProvider: choice.provider,
     })
   } else {
     options.permission.setClassifierContext(undefined)
@@ -645,9 +675,16 @@ export async function* agentStream(
         mcpManager,
         options.dashboardRemover,
         options.permission,
+        options.scheduleSink,
+        options.scheduleLister,
+        options.scheduleRemover,
       )
       const hasServers = tools.some((t) => t.name === 'serverList')
       const hasDashboard = tools.some((t) => t.name === 'appPublish')
+      // Any one of the three is enough for the prompt section: a caller that
+      // offers only `scheduleList` still needs the agent to know schedules
+      // exist, otherwise it will never look.
+      const hasSchedules = tools.some((t) => t.name.startsWith('schedule'))
       // The MCP tools are dynamic — we do not know their names in advance, so
       // we check by prefix. If there is not a single one, the prompt DOES NOT
       // mention MCP.
@@ -663,6 +700,7 @@ export async function* agentStream(
             hasServers,
             hasDashboard,
             hasMcp,
+            hasSchedules,
           ),
           model,
           tools,
@@ -845,6 +883,9 @@ function prepareTools(
   mcpManager?: McpManager,
   dashboardRemover?: DashboardRemover,
   permission?: PermissionManager,
+  scheduleSink?: ScheduleSink,
+  scheduleLister?: ScheduleLister,
+  scheduleRemover?: ScheduleRemover,
 ): AgentTool<never>[] {
   // pi's ready-made tools + our own search and server tools. They all take the
   // context as their last argument, so the wrapper below applies to them
@@ -858,6 +899,7 @@ function prepareTools(
     ...searchToolsRaw(),
     ...serverToolsRaw(serverProvider),
     ...dashboardToolsRaw(dashboardSink, dashboardRemover, permission),
+    ...scheduleToolsRaw(scheduleSink, scheduleLister, scheduleRemover, permission),
   ]
 
   // A tool disabled in the config is NOT DECLARED AT ALL — the agent does not

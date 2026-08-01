@@ -78,6 +78,9 @@ the decision that came out of it — the part that is expensive to rediscover.
     entirely English. See below, because it left two things behind worth
     knowing.
 11. **An app became a FOLDER, and gained update + delete** — see below.
+12. **The time layer** — the platform now starts work on its own: it resumes a
+    conversation after a provider limit resets, and runs recurring tasks on a
+    cron timetable. See below.
 
 ### What the translation exposed (2026-07-31)
 
@@ -169,6 +172,125 @@ elsewhere. Deletion uses the RECORDED `dir`, never a recomputed one: if
 `PLATFORM_APPS` changed since publishing, recomputing would point at a
 directory that was never this app's.
 
+### The time layer — work that starts on its own (2026-07-31)
+
+Two problems that look different and share one mechanism.
+
+**A subscription plan runs out mid-task.** The agent stops, and somebody has to
+work out when the limit resets and come back to say "carry on". The platform now
+does that itself: the provider error is read for a reset time (`limit-detect.ts`),
+five minutes are added, and a `resume` schedule continues THE SAME conversation
+at that point. The user sees "paused until 14:35" — a `chat.scheduled` event
+sent INSTEAD of `chat.error`, because nothing is left for them to do.
+
+**Something has to be done every day.** A `recurring` schedule stores a cron
+expression and a prompt. Every firing opens a **brand-new session**, which is
+the point: a fresh context each run is what keeps a daily report reproducible,
+where one long conversation would drift and eventually hit compaction.
+
+The pieces, all under `platform-server/src/schedule/`:
+
+- **`cron.ts`** — a 5-field parser written in-house. The npm packages all carry a
+  timezone database and a scheduler we do not need. `nextRun` walks the calendar
+  FIELD BY FIELD, so `0 0 1 1 *` costs the same as `* * * * *`; a naive "add a
+  minute and test" loop would spin 525,600 times and look like a hang. Times are
+  LOCAL. Cron's day-of-month/day-of-week OR rule is implemented as standard —
+  `0 9 13 * fri` means "the 13th, or any Friday", not "Friday the 13th".
+- **`limit-detect.ts`** — text matching, and it has to be, because pi-agent-core
+  never gives us the HTTP layer: a provider error arrives as a STRING on the last
+  assistant message. Built to fail safe — an unrecognised error costs one manual
+  "carry on", whereas a false positive parks a conversation for a limit that was
+  never hit. `context length exceeded` contains the word "limit" and is
+  explicitly excluded: rescheduling it would retry the same doomed request once
+  an hour forever.
+- **`scheduler.ts`** — a `setTimeout` CHAIN (not `setInterval`, which queues the
+  next call regardless of how long the last took and lets a backlog land at
+  once). One pass runs at startup, which is what catches up runs missed while
+  the machine was off. A missed run is caught up if it is under six hours late
+  and SKIPPED with a recorded reason beyond that — a week away must not produce
+  seven reports at breakfast.
+- **`schedule-sink.ts`** — the server half of the agent's tools. Its one job that
+  matters: a cron expression the model invented is parsed BEFORE a row is
+  written, so a schedule that can never fire is never stored.
+
+The agent gets `scheduleCreate` / `scheduleList` / `scheduleDelete`. Create and
+delete go through the permission layer but do NOT use `requireUser` (unlike
+`appDelete`): a schedule is reversible and destroys nothing, so demanding a
+human answer even in auto mode would be permission fatigue.
+
+**A scheduled run works in AUTO permission mode, and that is not optional.** In
+`confirm` mode the agent stops at the first `bash`, waits five minutes for an
+answer nobody is there to give, and reads the silence as a refusal — the run
+burns its tokens, produces nothing, and reports no error, so the schedule looks
+like it worked. `enableAutoMode()` therefore switches the session over before
+the stream starts.
+
+The safety condition is the CLASSIFIER, checked first: auto mode is not "no
+checks", it is "the checks are made by a model rather than a person". With no
+classifier available there is no check at all, so the run is REFUSED and the
+reason is recorded (the session is still created, so the refusal is visible
+rather than looking like the schedule never fired). Auto can also turn itself
+off mid-run — a broken classifier, three consecutive blocks, twenty in total
+(`mode.ts`); `runWithAutoMode()` then cuts the stream short with `stopStream`
+rather than letting each remaining tool call time out separately, and writes
+the reason to `lastError`.
+
+**The classifier follows the CHAT's provider** (`classifier.ts`,
+`CLASSIFIER_BY_PROVIDER`). This was found by a scheduled run dying: selection
+used to scan every detected model and take the cheapest-looking one, so on an
+account whose chat runs on a Codex SUBSCRIPTION it picked `openai/gpt-4.1-nano`
+— a paid API model on a different billing channel. The chat worked; the
+classifier answered "no credits remaining", auto mode shut off, and the run died
+mid-command with nothing visibly misconfigured.
+
+The provider a conversation already uses is known to be reachable and paid for,
+so the search starts there: env → config → the table for the chat's provider →
+the heuristic within that provider → the heuristic everywhere (so a local Ollama
+holding only `qwen3` does not cost you auto mode entirely).
+
+The table is written down rather than guessed, because names predict neither
+latency nor price. Measured: `gpt-5.4` 2.9s, `gpt-5.4-mini` 4.1s — the "mini" is
+slower. Priced: `gpt-5.6-luna` $0.20/$1.20 vs `gpt-5.4` $2.50/$15.00 — 12× for
+1.6s. Price wins, because the classifier runs before every dangerous tool call.
+Anthropic is a deliberate exception: **Sonnet, not Haiku**, since this is the one
+call allowed to say "no" and the expensive mistake is the subtle injection
+nobody wrote a test for.
+
+The `gpt-5` exclusion was also too broad — `\bgpt-5` matched the entire later
+family, so a Codex-only account had no candidate at all. It is now
+`(^|/)gpt-5(-|$)`, which stops at the dot; `codex-spark` is excluded separately
+(the catalogue lists it, the API refuses it).
+
+**A schedule inherits the model of the conversation that created it.** Without
+that, every run picked whatever was first in the detected list, so a report set
+up while talking to one model would be written by another with nothing to
+indicate the change. `scheduleCreate` takes optional `provider`/`model` for the
+"run it on something cheaper" case; half an argument is treated as none. A
+pinned model that no longer exists falls back to the default rather than
+failing — a report from a different model beats no report.
+
+**The thing that will bite whoever extends this:** a scheduled run starts in an
+empty conversation. A prompt that says "prepare the report we discussed"
+produces nothing — silently, every day, until someone checks. The tool
+description, the config hint and the UI form all say so, and
+`schedule-sink.ts` rejects a prompt under ten characters, but nothing can
+validate this properly.
+
+A sharper version of the same problem was found on a live run and IS fixed:
+`SCHEDULED_RUN_NOTE`. A stored prompt naturally reads "Every day, check the
+issues and label them" — which, to a model waking in an empty conversation with
+`scheduleCreate` in its toolbox, reads as a request to SET UP a schedule. Twice
+in a row the agent called `scheduleList`, found the schedule that had just
+started it, replied "one already exists so I did not create a duplicate", and
+stopped. No error, no work done, `lastError` empty: the schedule reported
+success. The note now precedes every recurring prompt and says plainly that the
+scheduling has already happened and this is the run. A `resume` does not get it
+— that conversation already has its history.
+
+**Known limit, not a bug:** if the machine is off, nothing fires. The startup
+pass covers a closed laptop; it does not cover a machine that stays off past
+`MAX_LATENESS_MS`. A launchd/systemd unit is the real fix and is not written.
+
 ## Idea backlog (no required order)
 
 1. **Wire the remaining UI pages to the API** — `Audit.tsx`, `Dashboard.tsx`
@@ -227,6 +349,9 @@ directory that was never this app's.
 | **`afterToolCall` preserves image blocks** | `agent.ts` (`nonTextBlocks`) | the model silently fails to see the image — with no error message |
 | **A deletion path resolves inside the apps root** | `apps-dir.ts` (`isInsideAppsRoot`) | a symlinked app folder makes `rm -rf` follow the link out of our directory |
 | **`appDelete` never accepts an automated answer** | `permission.ts` (`requireUser`) | auto mode or one stored "always" erases the user's apps without a human deciding |
+| **A cron expression is parsed before its row is written** | `schedule-sink.ts`, `routes/schedules.ts` | a schedule that can never fire sits in the list looking active — failure disguised as success |
+| **Deleting a conversation never deletes a recurring schedule** | migration 017 (`schedules_keep_recurring`) | tidying up old chats silently cancels the user's daily report |
+| **A context-length error is never read as a quota error** | `limit-detect.ts` (`NOT_A_QUOTA`) | the same doomed request is retried once an hour forever |
 
 All of them are enforced by tests — fix the code rather than "fixing" the test.
 

@@ -1031,3 +1031,73 @@ export interface AppRecord {
    */
   errors?: string[]
 }
+
+// ---------------------------------------------------------------------------
+// Schedules — work that starts without a human being present
+// ---------------------------------------------------------------------------
+
+/**
+ * WHY a schedule exists at all, in two sentences.
+ *
+ * A subscription plan runs out of hourly or weekly quota mid-task, and the
+ * agent stops. Somebody then has to work out when the limit resets and come
+ * back to say "carry on" — which is the kind of clerical work the platform
+ * should be doing itself.
+ *
+ * The same machinery answers a second need: "prepare this report every day".
+ * One is reactive and fires once, the other is a standing rule.
+ */
+export type ScheduleKind = 'resume' | 'recurring'
+
+/**
+ * 'active'  — the tick will fire it
+ * 'paused'  — switched off by the user; stays in the list
+ * 'done'    — a 'resume' that has run (kept, so "why did my chat continue at
+ *             3am?" has an answer)
+ * 'failed'  — the last run threw; `lastError` says why. A 'recurring' schedule
+ *             still re-arms — one failed report is not a reason to stop
+ *             reporting.
+ */
+export type ScheduleStatus = 'active' | 'paused' | 'done' | 'failed'
+
+/**
+ * Who created it. Shown in the list, because "I never asked for this" deserves
+ * an answer:
+ *   'user'   — the UI
+ *   'agent'  — the model, through the permission layer
+ *   'system' — the rate-limit detector
+ */
+export type ScheduleCreator = 'user' | 'agent' | 'system'
+
+export interface Schedule {
+  id: string
+  kind: ScheduleKind
+  /** A human-readable label for the list */
+  title: string
+  /**
+   * For 'resume' — the session to continue.
+   * For 'recurring' — the session the LAST run created (absent before the
+   * first run). The next run opens a new one.
+   */
+  sessionId?: string
+  /** A recurring run opens its session inside this project */
+  projectId?: string
+  /** What is sent when it fires */
+  prompt: string
+  /** A 5-field cron expression — absent for 'resume', which fires once */
+  cron?: string
+  /** Plain-language rendering of `cron`, for display only */
+  cronText?: string
+  /** The model the run uses; absent means "the session's own", or the default */
+  provider?: string
+  model?: string
+  /** When it next fires — epoch ms, UTC */
+  runAt: number
+  status: ScheduleStatus
+  createdBy: ScheduleCreator
+  createdAt: string
+  lastRunAt?: string
+  lastError?: string
+  /** How many times it has fired */
+  runs: number
+}

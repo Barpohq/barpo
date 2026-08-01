@@ -64,6 +64,14 @@ interface Msg {
   /** Has the reply stream finished — while false the cursor blinks */
   streaming?: boolean
   error?: string
+  /**
+   * The provider's quota ran out and the platform booked a continuation.
+   *
+   * KEPT SEPARATE FROM `error` on purpose. It is not a failure: nothing is
+   * asked of the user, and rendering it in the red error box would say
+   * otherwise. The text names the time the conversation picks back up.
+   */
+  scheduled?: string
 }
 
 /**
@@ -539,6 +547,23 @@ export default function Chat({
           setMsgs((m) =>
             m.map((x) =>
               x.id === event.messageId ? { ...x, streaming: false, error: event.error } : x,
+            ),
+          )
+          setPermissions([])
+          if (pending.current === event.messageId) {
+            pending.current = null
+            setBusy(false)
+          }
+          break
+
+        // The reply stopped on the provider's quota, and the platform has
+        // already booked the continuation. This arrives INSTEAD of
+        // `chat.error` — the stream is over either way, so the message is
+        // closed exactly as an error would close it, but shown as a notice.
+        case 'chat.scheduled':
+          setMsgs((m) =>
+            m.map((x) =>
+              x.id === event.messageId ? { ...x, streaming: false, scheduled: event.reason } : x,
             ),
           )
           setPermissions([])
@@ -1066,6 +1091,15 @@ export default function Chat({
                 {m.error && (
                   <div className="mt-2 rounded-lg border border-line bg-panel px-3 py-2 text-sm text-coral">
                     {m.error}
+                  </div>
+                )}
+                {/* Not the error colour: nothing here needs the user to act */}
+                {m.scheduled && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-lazur-dim/40 bg-panel px-3 py-2 text-sm text-muted">
+                    <svg viewBox="0 0 20 20" className="mt-0.5 h-4 w-4 shrink-0 stroke-lazur" fill="none" strokeWidth="1.5">
+                      <path d="M10 5v5l3 2M10 17a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z" />
+                    </svg>
+                    <span className="leading-relaxed">{m.scheduled}</span>
                   </div>
                 )}
               </div>
