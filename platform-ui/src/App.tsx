@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import ConversationList from './components/ConversationList'
-import { type AppManifest } from './data/mock'
 import { fetchProjects } from './lib/api'
 import { buildHash, parseHash } from './lib/hash-path'
 import { useApps } from './lib/apps'
+import { useFleet } from './lib/fleet'
 import { useRunning } from './lib/running'
 import { storeConversationsOpen, isConversationsOpen } from './lib/sidebar-storage'
 import { useConversations } from './lib/conversations'
@@ -94,22 +94,46 @@ function ProToggle({ pro, onToggle }: { pro: boolean; onToggle: () => void }) {
   )
 }
 
-function Ticker({ appCount }: { appCount: number }) {
-  const items = [
-    ['▣', `${appCount} apps running`],
-    ['$', 'today 0.084'],
-    ['⇅', '5/5 servers connected'],
-    ['!', 'helsinki-1 disk 84%'],
-  ]
+/**
+ * The header ticker — ONLY things that are actually measured.
+ *
+ * It used to carry a made-up cost ("today 0.084"), a fixed "5/5 servers
+ * connected" and a "helsinki-1 disk 84%" for a server that need not even
+ * exist. A number that looks authoritative and is invented is worse than no
+ * number: it gets trusted. Cost is gone entirely — the platform does not
+ * record LLM spend yet, so there is nothing honest to display.
+ *
+ * Each item disappears when it has nothing to say (no apps, no servers, no
+ * disk over the line), so an empty ticker means an empty platform.
+ */
+function Ticker({ appCount, runningCount }: { appCount: number; runningCount: number }) {
+  const fleet = useFleet()
+
+  const items: { sym: string; text: string; warn?: boolean }[] = []
+  if (appCount > 0) items.push({ sym: '▣', text: `${appCount} ${appCount === 1 ? 'app' : 'apps'}` })
+  if (runningCount > 0) items.push({ sym: '◈', text: `${runningCount} running` })
+  if (!fleet.loading && fleet.total > 0) {
+    items.push({ sym: '⇅', text: `${fleet.connected}/${fleet.total} servers connected` })
+  }
+  if (fleet.diskWarning) {
+    items.push({
+      sym: '!',
+      text: `${fleet.diskWarning.server} disk ${fleet.diskWarning.disk}%`,
+      warn: true,
+    })
+  }
+
+  // Nothing measured yet — the bar would be an empty stripe, so it is not drawn
+  if (items.length === 0) return null
+
   return (
     <div className="flex items-center gap-6 overflow-x-auto border-b border-line bg-panel px-5 py-1.5 font-mono text-[11px] whitespace-nowrap text-muted [scrollbar-width:none]">
-      {items.map(([sym, text], i) => (
-        <span key={i} className="flex items-center gap-1.5">
-          <span className={i === 3 ? 'text-gold' : 'text-lazur'}>{sym}</span>
-          {text}
+      {items.map((item) => (
+        <span key={item.text} className="flex items-center gap-1.5">
+          <span className={item.warn ? 'text-gold' : 'text-lazur'}>{item.sym}</span>
+          {item.text}
         </span>
       ))}
-      <span className="ml-auto text-faint">demo · 2026-07-27</span>
     </div>
   )
 }
@@ -119,22 +143,11 @@ export default function App() {
   const [pro, setPro] = useState(init.pro)
   const [page, setPageRaw] = useState<Page>(init.page)
   // Apps COME FROM THE SERVER (`/api/apps` plus the `app.installed` and
-  // `app.updated` events). This list used to be built from mock data and never
-  // read from the server — so a dashboard published by `appPublish` never
-  // showed up, and a refresh did not help either.
-  const { apps: serverApps } = useApps()
-  /**
-   * Apps added by the mock build flow (demo mode).
-   *
-   * Kept SEPARATE from the server ones: otherwise a new list arriving over the
-   * WS would wipe out the mock app.
-   */
-  const [mockApps, setMockApps] = useState<AppManifest[]>([])
-  // The server list wins: on an id clash the real manifest is kept.
-  const apps = [
-    ...serverApps,
-    ...mockApps.filter((m) => !serverApps.some((s) => s.id === m.id)),
-  ]
+  // `app.updated` events) — and from nowhere else. There used to be a second,
+  // local list here holding apps invented by a scripted build flow in the
+  // chat; it meant the sidebar could show a dashboard that existed on no disk
+  // and vanished on refresh.
+  const { apps } = useApps()
   /** The sidebar's "New chat" — incremented on every press, watched by Chat */
   const [newConversationSignal, setNewConversationSignal] = useState(0)
   /**
@@ -244,18 +257,6 @@ export default function App() {
     })
   }
 
-  // A new app manifest arrives — it is added to the sidebar and routing at
-  // once. On the real platform this comes from the orchestrator over WebSocket.
-  function installApp(m: AppManifest) {
-    setMockApps((a) => (a.some((x) => x.id === m.id) ? a : [...a, m]))
-  }
-
-  function openApp(id: string) {
-    setPro(true)
-    setPageRaw(`app:${id}`)
-    window.location.hash = `pro/app:${id}`
-  }
-
   const activeApp = page.startsWith('app:') ? apps.find((a) => `app:${a.id}` === page) : undefined
 
   return (
@@ -268,14 +269,14 @@ export default function App() {
           <span className="font-display text-[15px] font-semibold tracking-tight">
             platform
             <span className="ml-2 hidden font-mono text-[10px] font-normal text-faint sm:inline">
-              self-hosted · v0.1-demo
+              self-hosted · v{__APP_VERSION__}
             </span>
           </span>
         </div>
         <ProToggle pro={pro} onToggle={togglePro} />
       </header>
 
-      {pro && <Ticker appCount={apps.length} />}
+      {pro && <Ticker appCount={apps.length} runningCount={runningList.length} />}
 
       <div className="flex min-h-0 flex-1">
         {/* Pro sidebar — progressive disclosure: absent entirely in plain mode */}
@@ -387,8 +388,6 @@ export default function App() {
           {(!pro || page === 'chat') && (
             <Chat
               pro={pro}
-              onInstallApp={installApp}
-              openApp={openApp}
               newConversationSignal={newConversationSignal}
               openSession={sessionId}
               onSessionChanged={sessionChanged}

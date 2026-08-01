@@ -4,7 +4,7 @@
 // the outside.
 
 import { Hono } from 'hono'
-import { auditRead, auditCount } from '../audit.ts'
+import { auditRead, auditCount, auditActors } from '../audit.ts'
 
 export const auditRoutes = new Hono()
 
@@ -28,5 +28,9 @@ auditRoutes.get('/audit', (c) => {
   return c.json({
     entries: auditRead(filter),
     total: auditCount({ level: filter.level, actor: filter.actor }),
+    // The full actor list travels with every response: the dropdown has to
+    // offer actors the current filter excludes, otherwise a filter could never
+    // be widened back out.
+    actors: auditActors(),
   })
 })

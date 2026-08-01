@@ -24,6 +24,11 @@ import { hub, newConnectionState, type ConnectionState } from './ws/hub.ts'
 const PORT = Number(process.env.PORT ?? 8787)
 
 // 1) Database: open + migrations (automatic inside db()) + seed
+//
+// The seed currently writes NOTHING (see seed.ts — every table is better off
+// empty than filled with invented rows), so the log line below stays silent.
+// The call remains as the hook for the next table that genuinely needs a
+// starting row.
 const database = db()
 const seed = applySeed(database)
 if (seed.audit || seed.apps) {
@@ -113,7 +118,17 @@ const server = Bun.serve<ConnectionState, never>({
 
 console.log(`[platform] http://localhost:${server.port}  ·  ws://localhost:${server.port}/ws`)
 
-auditWrite('platform', 'Server started', `port ${server.port}`, 'read', 'OK')
+// A restart is worth recording in production — it explains a gap in the log.
+// In DEVELOPMENT it is not: `bun --watch` restarts on every keystroke-save, and
+// those entries pile up until the real actions are buried among hundreds of
+// identical "Server started" rows.
+//
+// The check defaults to WRITING: an unset NODE_ENV means someone is running
+// the server directly (`bun run start`, a systemd unit, a container), and
+// missing a real restart is worse than one extra row.
+if (process.env.NODE_ENV !== 'development') {
+  auditWrite('platform', 'Server started', `port ${server.port}`, 'read', 'OK')
+}
 
 // A clean shutdown: close the database so the WAL gets checkpointed
 function stop(signal: string) {

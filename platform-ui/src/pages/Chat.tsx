@@ -12,7 +12,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
-  AppManifest,
   ChatAttachment,
   ChatMessage,
   ModelInfo,
@@ -126,8 +125,6 @@ const suggestions = [
 
 interface ChatProps {
   pro: boolean
-  onInstallApp: (m: AppManifest) => void
-  openApp: (id: string) => void
   /**
    * The "new conversation" signal from outside (the sidebar). The window is
    * cleared every time it increases. A counter, because re-sending the same

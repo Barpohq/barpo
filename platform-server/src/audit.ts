@@ -44,6 +44,7 @@ export function auditWrite(
 
   const entry: AuditEntry = {
     time: hourMinute(now),
+    at: now.toISOString(),
     actor,
     action,
     target,
@@ -54,7 +55,7 @@ export function auditWrite(
   d.prepare(
     `INSERT INTO audit_log (time, actor, action, target, level, result, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(entry.time, actor, action, target, level, result, now.toISOString())
+  ).run(entry.time, actor, action, target, level, result, entry.at)
 
   hub.broadcast({ type: 'audit.entry', entry })
 
@@ -87,9 +88,12 @@ export function auditRead(filter: AuditFilter = {}, database?: Database): AuditE
   const limit = Math.min(Math.max(filter.limit ?? 100, 1), 1000)
   const offset = Math.max(filter.offset ?? 0, 0)
 
+  // `created_at AS at` — the column keeps its SQL name, the client gets the
+  // field the type declares. Without it the UI only ever sees "HH:MM" and two
+  // entries a week apart are indistinguishable.
   return d
     .query<AuditEntry, (string | number)[]>(
-      `SELECT time, actor, action, target, level, result
+      `SELECT time, created_at AS at, actor, action, target, level, result
          FROM audit_log
          ${where}
         ORDER BY id DESC
@@ -118,4 +122,20 @@ export function auditCount(filter: AuditFilter = {}, database?: Database): numbe
     .query<{ count: number }, string[]>(`SELECT COUNT(*) AS count FROM audit_log ${where}`)
     .get(...args)
   return row?.count ?? 0
+}
+
+/**
+ * Every actor that appears in the log — this feeds the Audit page's actor
+ * dropdown.
+ *
+ * It is deliberately NOT derived from the returned entries: those are capped
+ * by `limit`, so an actor that only shows up in older entries would silently
+ * vanish from the filter — and picking it would then be impossible.
+ */
+export function auditActors(database?: Database): string[] {
+  const d = database ?? globalDb()
+  return d
+    .query<{ actor: string }, []>('SELECT DISTINCT actor FROM audit_log ORDER BY actor')
+    .all()
+    .map((r) => r.actor)
 }
