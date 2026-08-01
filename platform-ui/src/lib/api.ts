@@ -752,11 +752,14 @@ export function fetchAudit(filter: {
   level?: string
   actor?: string
   limit?: number
+  /** How many entries to skip — this is what "load more" advances */
+  offset?: number
 } = {}): Promise<AuditPage> {
   const query = new URLSearchParams()
   if (filter.level && filter.level !== 'all') query.set('level', filter.level)
   if (filter.actor && filter.actor !== 'all') query.set('actor', filter.actor)
   if (filter.limit !== undefined) query.set('limit', String(filter.limit))
+  if (filter.offset) query.set('offset', String(filter.offset))
   const suffix = query.size > 0 ? `?${query}` : ''
   return request<AuditPage>(`/api/audit${suffix}`)
 }

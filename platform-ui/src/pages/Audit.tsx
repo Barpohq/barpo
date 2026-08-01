@@ -3,16 +3,23 @@
 // The page used to render a hardcoded fixture, which meant it showed the same
 // twelve invented rows regardless of what the platform had actually done —
 // including on a fresh install that had done nothing at all. Now it reads
-// `/api/audit` and filters on the server (the log
-// grows without bound, so filtering in the browser would not scale) and stays
-// live: `auditWrite` broadcasts every new entry over the WS.
+// `/api/audit` and filters on the server (the log grows without bound, so
+// filtering in the browser would not scale) and stays live: `auditWrite`
+// broadcasts every new entry over the WS.
+//
+// The log is PAGED: the server caps a response, so older entries are fetched
+// on demand rather than being unreachable behind the first hundred rows.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CHANNELS, type AuditEntry, type AuditLevel } from '@platforma/shared'
 import { fetchAudit } from '../lib/api'
 import { LEVEL_LABEL, RESULT_LABEL } from '../lib/audit-label'
+import { auditDate } from '../lib/date'
 import { ws } from '../lib/ws'
 import { Card, LevelBadge, PageHead } from '../ui'
+
+/** Entries per request — also the size of one "load more" step */
+const PAGE_SIZE = 100
 
 // The keys come from the database — their labels live in `lib/audit-label.ts`
 const resultStyle: Record<string, string> = {
@@ -28,6 +35,25 @@ const levels: (AuditLevel | 'all')[] = ['all', 'read', 'write', 'dangerous']
 const levelLabel = (l: (typeof levels)[number]): string =>
   l === 'all' ? 'all' : LEVEL_LABEL[l]
 
+/**
+ * Are these the same entry — used to drop duplicates when a live row and a
+ * fetched page overlap.
+ *
+ * `AuditEntry` carries no id (the table's primary key is not exposed), so the
+ * comparison is by content. `at` is the ISO instant and makes a collision
+ * essentially impossible; the remaining fields cover entries written before
+ * that field existed.
+ */
+function sameEntry(a: AuditEntry, b: AuditEntry): boolean {
+  return (
+    a.at === b.at &&
+    a.time === b.time &&
+    a.actor === b.actor &&
+    a.action === b.action &&
+    a.target === b.target
+  )
+}
+
 export default function Audit() {
   const [level, setLevel] = useState<(typeof levels)[number]>('all')
   const [actor, setActor] = useState('all')
@@ -36,19 +62,49 @@ export default function Audit() {
   const [actors, setActors] = useState<string[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  /**
+   * Entries that arrived over the WS while a request was in flight.
+   *
+   * WITHOUT THIS they are lost: the server takes its snapshot, an action
+   * happens, the WS handler prepends the row — and then the response lands and
+   * `setEntries` replaces it with the older snapshot. A real action would
+   * silently vanish from the log until the next filter change. Same reasoning
+   * as the merge in `lib/apps.ts` and `lib/running.ts`.
+   *
+   * A ref, not state: it must be readable inside the fetch callback without
+   * re-running the effect that owns the request.
+   */
+  const liveDuringFetch = useRef<AuditEntry[]>([])
+
+  /** Does this entry belong on screen under the filter that is active now */
+  const matchesFilter = useCallback(
+    (entry: AuditEntry) =>
+      (level === 'all' || entry.level === level) && (actor === 'all' || entry.actor === actor),
+    [level, actor],
+  )
 
   // Refetch whenever a filter changes — the server does the filtering, so a
   // widened filter can bring back rows the previous response never held.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    fetchAudit({ level, actor })
+    liveDuringFetch.current = []
+    fetchAudit({ level, actor, limit: PAGE_SIZE })
       .then((page) => {
         if (cancelled) return
-        setEntries(page.entries)
+        // Anything that arrived mid-request goes back on top. It is newer than
+        // everything in the snapshot, so prepending keeps the newest-first
+        // order; the id check guards against the entry being in both.
+        const live = liveDuringFetch.current.filter(
+          (l) => !page.entries.some((e) => sameEntry(e, l)),
+        )
+        liveDuringFetch.current = []
+        setEntries([...live, ...page.entries])
         setActors(page.actors)
-        setTotal(page.total)
+        setTotal(page.total + live.length)
         setError(null)
       })
       .catch((e) => {
@@ -73,8 +129,10 @@ export default function Audit() {
       const entry = event.entry
       // The active filter applies to live entries too — otherwise a row that
       // the filter excludes would appear anyway and look like a bug.
-      if (level !== 'all' && entry.level !== level) return
-      if (actor !== 'all' && entry.actor !== actor) return
+      if (!matchesFilter(entry)) return
+      // Remembered as well, in case a request is in flight right now (see the
+      // ref above). Harmless when there is none: it is cleared on every fetch.
+      liveDuringFetch.current = [entry, ...liveDuringFetch.current]
       setEntries((previous) => [entry, ...previous])
       setTotal((n) => n + 1)
       // A brand-new actor has to reach the dropdown, or it could never be
@@ -87,7 +145,30 @@ export default function Audit() {
       unwatch()
       unsubscribe()
     }
-  }, [level, actor])
+  }, [matchesFilter])
+
+  /**
+   * The next page of OLDER entries.
+   *
+   * The offset is `entries.length` minus whatever arrived live, because those
+   * rows sit in front of the server's window and would otherwise shift it —
+   * skipping one older entry for each live one.
+   */
+  function loadMore() {
+    setLoadingMore(true)
+    fetchAudit({ level, actor, limit: PAGE_SIZE, offset: entries.length })
+      .then((page) => {
+        setEntries((previous) => [
+          ...previous,
+          // A live entry can already be on screen; do not repeat it
+          ...page.entries.filter((e) => !previous.some((p) => sameEntry(p, e))),
+        ])
+        setTotal(page.total)
+        setError(null)
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoadingMore(false))
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -154,7 +235,14 @@ export default function Audit() {
             <tbody>
               {entries.map((e, i) => (
                 <tr key={i} className="border-t border-line/60">
-                  <td className="px-5 py-2.5 font-mono text-xs text-faint">{e.time}</td>
+                  <td className="px-5 py-2.5 font-mono text-xs whitespace-nowrap text-faint">
+                    {/* The day comes first and only when it is not today —
+                        without it two entries a week apart read identically */}
+                    {auditDate(e.at) && (
+                      <span className="mr-1.5 text-faint/70">{auditDate(e.at)}</span>
+                    )}
+                    {e.time}
+                  </td>
                   <td className="px-3 py-2.5 font-mono text-xs text-lazur">{e.actor}</td>
                   <td className="px-3 py-2.5 text-[13px]">{e.action}</td>
                   <td className="px-3 py-2.5 font-mono text-xs text-muted">{e.target}</td>
@@ -179,6 +267,20 @@ export default function Audit() {
           </table>
         </div>
       </Card>
+
+      {/* Older entries. The server caps a response, so without this the rows
+          past the first page would be unreachable from the UI entirely. */}
+      {entries.length < total && (
+        <div className="mt-4 flex justify-center">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="rounded-lg border border-line px-4 py-2 text-[13px] text-muted transition hover:border-lazur-dim hover:text-lazur disabled:opacity-50"
+          >
+            {loadingMore ? 'Loading…' : `Load ${Math.min(PAGE_SIZE, total - entries.length)} older`}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

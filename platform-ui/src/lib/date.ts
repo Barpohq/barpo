@@ -6,6 +6,11 @@
 /** One day, in milliseconds */
 const DAY = 24 * 60 * 60 * 1000
 
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+]
+
 /**
  * Which group a conversation falls into.
  *
@@ -65,12 +70,35 @@ export function shortTime(iso: string, now: Date = new Date()): string {
   if (days < 7) return `${days} d`
 
   // Past a week an explicit date is easier to read: "Jul 12"
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ]
-  const month = months[date.getMonth()] ?? ''
+  const month = MONTHS[date.getMonth()] ?? ''
   // If it is another year, show the year too
+  return date.getFullYear() === now.getFullYear()
+    ? `${month} ${date.getDate()}`
+    : `${month} ${date.getDate()}, ${date.getFullYear()}`
+}
+
+/**
+ * The date part of an audit entry — empty for today.
+ *
+ * The audit log keeps its exact "HH:MM" (you read it to find out WHEN
+ * something happened), but once the log spans several days the clock time
+ * alone is ambiguous: 09:00 today and 09:00 last week render identically.
+ * This adds the day in front, and only when it is not today — otherwise every
+ * row on a fresh platform would carry the same redundant date.
+ *
+ * `iso` is optional: entries written before the field existed do not have it,
+ * and those simply keep showing the bare time.
+ */
+export function auditDate(iso: string | undefined, now: Date = new Date()): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / DAY)
+  // Today, or a clock set in the future — the time alone is unambiguous
+  if (days <= 0) return ''
+
+  const month = MONTHS[date.getMonth()] ?? ''
   return date.getFullYear() === now.getFullYear()
     ? `${month} ${date.getDate()}`
     : `${month} ${date.getDate()}, ${date.getFullYear()}`

@@ -37,6 +37,19 @@ describe('auditWrite', () => {
     expect(entry.result).toBe('OK')
   })
 
+  test('the full instant travels with the entry, not just HH:MM', () => {
+    // `time` alone cannot distinguish 09:00 today from 09:00 last week, so the
+    // UI needs the date as well. The column was always stored — it simply was
+    // not read back out.
+    const written = auditWrite('daemon', 'Health check', 'nyc-1', 'read')
+    expect(written.at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+
+    const [read] = auditRead()
+    expect(read?.at).toBe(written.at)
+    // The two fields describe the SAME moment
+    expect(new Date(read!.at!).toISOString()).toBe(written.at)
+  })
+
   test('the newest entry comes back first', () => {
     auditWrite('a', 'first', 't', 'read')
     auditWrite('b', 'second', 't', 'read')

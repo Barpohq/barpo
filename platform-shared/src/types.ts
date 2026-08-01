@@ -87,7 +87,19 @@ export interface LlmCall {
 export type AuditLevel = 'read' | 'write' | 'dangerous'
 
 export interface AuditEntry {
+  /** "HH:MM" — the time of day, ready to display */
   time: string
+  /**
+   * The full moment, ISO 8601. WITHOUT THIS the log cannot be read once it
+   * spans more than a day: `time` is only "HH:MM", so an entry from
+   * 09:00 today and one from 09:00 last week look identical. The column has
+   * always been in the database (`created_at`); it simply was not carried out
+   * to the client.
+   *
+   * Optional because entries created before this field existed do not have it
+   * — read it defensively.
+   */
+  at?: string
   actor: string
   action: string
   target: string

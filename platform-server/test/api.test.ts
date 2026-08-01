@@ -190,6 +190,28 @@ describe('GET /api/audit', () => {
     expect(body.entries.every((e) => e.actor === 'collector')).toBe(true)
   })
 
+  test('offset reaches entries past the first page', async () => {
+    // Without an offset the rows beyond the limit are unreachable from the UI
+    // entirely — the counter would say "100 of 500" and stop there.
+    for (let i = 0; i < 5; i++) auditWrite('bot', `action-${i}`, 't', 'read')
+
+    const { body: page1 } = await get<{ entries: AuditEntry[]; total: number }>(
+      '/api/audit?limit=2',
+    )
+    const { body: page2 } = await get<{ entries: AuditEntry[] }>('/api/audit?limit=2&offset=2')
+
+    expect(page1.total).toBe(5)
+    expect(page1.entries.map((e) => e.action)).toEqual(['action-4', 'action-3'])
+    expect(page2.entries.map((e) => e.action)).toEqual(['action-2', 'action-1'])
+  })
+
+  test('entries carry the full date, not only HH:MM', async () => {
+    auditWrite('bot', 'An action', 't', 'read')
+
+    const { body } = await get<{ entries: AuditEntry[] }>('/api/audit')
+    expect(body.entries[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
   test('the actor list ignores the active filter', async () => {
     // Otherwise the dropdown would shrink to the selected actor and the filter
     // could never be widened back out.
