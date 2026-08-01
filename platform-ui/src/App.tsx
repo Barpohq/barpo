@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import ConversationList from './components/ConversationList'
+import { BarpoMark } from './ui'
 import { fetchProjects } from './lib/api'
 import { buildHash, parseHash } from './lib/hash-path'
 import { useApps } from './lib/apps'
@@ -263,11 +264,9 @@ export default function App() {
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between gap-4 border-b border-line px-5 py-3">
         <div className="flex items-center gap-2.5">
-          <span className="grid size-7 place-items-center rounded-lg bg-lazur-dim font-display text-sm font-bold text-bg" aria-hidden>
-            ai
-          </span>
+          <BarpoMark className="size-7 shrink-0" />
           <span className="font-display text-[15px] font-semibold tracking-tight">
-            platform
+            Barpo
             <span className="ml-2 hidden font-mono text-[10px] font-normal text-faint sm:inline">
               self-hosted · v{__APP_VERSION__}
             </span>

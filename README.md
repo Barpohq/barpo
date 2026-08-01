@@ -1,4 +1,4 @@
-# Barpo
+<img src=".github/logo.svg" alt="Barpo" height="32">
 
 > **The program that builds programs.**
 > Describe the app you want in a chat — a Telegram bot, a website, a full-stack
@@ -14,7 +14,7 @@ Self-hosted and open source. Your keys, your servers, your data.
 
 ## Where the code stands
 
-A working backend, AI agent layer and web UI — 1761 tests green.
+A working backend, AI agent layer and web UI — 1775 tests green.
 
 ```bash
 bun install

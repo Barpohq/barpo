@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 132 32" width="132" height="32" role="img" aria-label="Barpo">
+  <!-- The README lockup: mark plus wordmark. Uses the dimmer lazur throughout
+       so the mark holds its contrast on GitHub's light theme as well as its
+       dark one — the brighter #45c8b5 of the in-app mark washes out on white. -->
+  <rect x="0" y="4" width="7.5" height="24" rx="2" fill="#1fa090"/>
+  <rect x="9.5" y="4" width="11.5" height="10" rx="2" fill="#17786c"/>
+  <rect x="9.5" y="18" width="14.5" height="10" rx="2" fill="#17786c"/>
+  <text x="34" y="25" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="24" font-weight="700" letter-spacing="-0.5" fill="#1fa090">Barpo</text>
+</svg>

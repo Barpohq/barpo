@@ -2,6 +2,24 @@ import type { ReactNode } from 'react'
 import type { AuditLevel } from '@barpo/shared'
 import { LEVEL_LABEL } from './lib/audit-label'
 
+/**
+ * The Barpo mark — a "B" assembled out of blocks ("barpo qilmoq": to build).
+ *
+ * The upright takes the brighter lazur so the letter's spine reads first; the
+ * lower counter is wider than the upper one, which is what resolves the shape
+ * into a B rather than four loose squares. Kept in sync with
+ * `public/favicon.svg`.
+ */
+export function BarpoMark({ className = 'size-7' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
+      <rect x="4" y="4" width="7.5" height="24" rx="2" fill="var(--color-lazur)" />
+      <rect x="13.5" y="4" width="11.5" height="10" rx="2" fill="var(--color-lazur-dim)" />
+      <rect x="13.5" y="18" width="14.5" height="10" rx="2" fill="var(--color-lazur-dim)" />
+    </svg>
+  )
+}
+
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl border border-line bg-panel ${className}`}>
