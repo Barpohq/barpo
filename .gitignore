@@ -6,4 +6,4 @@ node_modules/
 # SQLite WAL sidecar files and the runtime database directory
 *.db-wal
 *.db-shm
-platform-server/data/
+barpo-server/data/

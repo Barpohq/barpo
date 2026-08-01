@@ -1,4 +1,4 @@
-# Barpo
+<img src=".github/logo.svg" alt="Barpo" height="32">
 
 > **The program that builds programs.**
 > Describe the app you want in a chat — a Telegram bot, a website, a full-stack
@@ -14,13 +14,13 @@ Self-hosted and open source. Your keys, your servers, your data.
 
 ## Where the code stands
 
-A working backend, AI agent layer and web UI — 1761 tests green.
+A working backend, AI agent layer and web UI — 1775 tests green.
 
 ```bash
 bun install
 bun test
-cd platform-server && bun run src/index.ts   # backend :8787
-cd platform-ui && bun run dev                # UI
+cd barpo-server && bun run src/index.ts   # backend :8787
+cd barpo-ui && bun run dev                # UI
 ```
 
 Chat with an agent that reads and writes files, runs commands, connects to MCP
@@ -63,10 +63,10 @@ every dangerous action. [CONTINUE.md](CONTINUE.md) has the full picture.
 | [04-risks.md](04-risks.md) | Critical analysis: risks, weak points, and mitigation strategies |
 
 Each package carries its own README with the implementation detail —
-[platform-ai](platform-ai/README.md) (the security model),
-[platform-server](platform-server/README.md) (routes, database, WS protocol),
-[platform-config](platform-config/README.md),
-[platform-ui](platform-ui/README.md), and
+[barpo-ai](barpo-ai/README.md) (the security model),
+[barpo-server](barpo-server/README.md) (routes, database, WS protocol),
+[barpo-config](barpo-config/README.md),
+[barpo-ui](barpo-ui/README.md), and
 [mcp-servers](mcp-servers/README.md).
 
 ## History and inspirations

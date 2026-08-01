@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Barpo — a "B" assembled out of blocks. The name comes from the Uzbek
+       "barpo qilmoq": to build, to bring into being.
+
+       The upright carries the brighter lazur so the letter's spine reads
+       first; the two counters take the dimmer tone. The lower block is wider
+       than the upper one — that asymmetry is what makes the silhouette
+       resolve as a B instead of four loose squares, and it survives all the
+       way down to 16px. -->
+  <rect x="4" y="4" width="7.5" height="24" rx="2" fill="#45c8b5"/>
+  <rect x="13.5" y="4" width="11.5" height="10" rx="2" fill="#1fa090"/>
+  <rect x="13.5" y="18" width="14.5" height="10" rx="2" fill="#1fa090"/>
+</svg>
