@@ -20,7 +20,7 @@
 // AI only writes the code inside it.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppState } from '@platforma/shared'
+import type { AppState } from '@barpo/shared'
 
 /** Client-side state of a single dashboard state */
 export interface StateEntry {

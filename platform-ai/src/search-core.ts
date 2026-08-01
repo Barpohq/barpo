@@ -69,21 +69,21 @@ export const SKIPPED_DIRS = [
   //
   // WHY IT IS SKIPPED. Conversations attached to a project share a single
   // directory (`work-dir.ts`), and uploads live in
-  // `.platforma/sessions/<sid>/`. If it were not skipped, an agent `grep`
+  // `.barpo/sessions/<sid>/`. If it were not skipped, an agent `grep`
   // would return results from OTHER conversations' attached files — noise,
   // plus information leaking between conversations.
   //
-  // A DELIBERATE SIDE EFFECT: skills (`.platforma/skills`) and memory
-  // (`.platforma/memory`) also drop out of search. They land in the prompt
+  // A DELIBERATE SIDE EFFECT: skills (`.barpo/skills`) and memory
+  // (`.barpo/memory`) also drop out of search. They land in the prompt
   // in full anyway (`skill-load.ts`, `memory.ts`), so the agent does see
   // them — it just cannot hunt through them with `grep`. The trade is
   // intentional: keeping other conversations' files invisible matters more.
   //
   // Given an explicit path the list is bypassed anyway (see the note above),
   // so the agent can freely read
-  // `read('.platforma/sessions/…/files/rasm.png')` — the attachment
+  // `read('.barpo/sessions/…/files/rasm.png')` — the attachment
   // flow relies on that.
-  '.platforma',
+  '.barpo',
   'node_modules',
   '.svn',
   '.hg',

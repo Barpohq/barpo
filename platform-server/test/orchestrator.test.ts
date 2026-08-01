@@ -1,6 +1,6 @@
 // Orchestrator: LLM stream → WS events → DB.
 //
-// The real LLM is never called — the @platforma/ai module is replaced with a
+// The real LLM is never called — the @barpo/ai module is replaced with a
 // fake stream (mock.module has to run BEFORE the imports, which is why it sits
 // at the top of the file).
 //
@@ -12,7 +12,7 @@ import type { Database } from 'bun:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ServerEvent } from '@platforma/shared'
+import type { ServerEvent } from '@barpo/shared'
 
 /** The fake events returned by the next call */
 let fakeEvents: unknown[] = []
@@ -24,7 +24,7 @@ let lastCall: { choice: unknown; messages: unknown; options?: unknown } | null =
 // `detectModels` would disappear, and because this mock is global other test
 // files (platform-ai/test/permission.test.ts, for example) would receive
 // incomplete objects and fall over.
-const realAi = await import('@platforma/ai')
+const realAi = await import('@barpo/ai')
 
 /**
  * The permission manager — taken from the REAL registry, with a listener added
@@ -50,7 +50,7 @@ function denyingPermissions(sessionId: string) {
   return manager
 }
 
-mock.module('@platforma/ai', () => ({
+mock.module('@barpo/ai', () => ({
   ...realAi,
   conversationStream: async function* (choice: unknown, messages: unknown, options: unknown) {
     lastCall = { choice, messages, options }

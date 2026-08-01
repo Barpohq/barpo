@@ -22,7 +22,7 @@ import type {
   PermissionRequest,
   Project,
   ToolCall,
-} from '@platforma/shared'
+} from '@barpo/shared'
 import AttachmentChip from '../components/AttachmentChip'
 import ProjectPicker from '../components/ProjectPicker'
 import Markdown from '../components/Markdown'

@@ -55,7 +55,7 @@ import type { Migration } from './index.ts'
 //
 // STORED PATHS ARE NOT REWRITTEN. `projects.folder` holds absolute paths and
 // `chat_attachments.path` holds paths relative to the work dir; both embed the
-// literal `.platforma` directory name. That directory is not renamed in this
+// literal `.barpo` directory name. That directory is not renamed in this
 // pass, so the stored values stay valid as they are.
 
 export const migration: Migration = {

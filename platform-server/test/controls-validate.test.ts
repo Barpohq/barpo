@@ -14,7 +14,7 @@ import {
   validateActions,
   validateManifest,
   validateSettings,
-} from '@platforma/shared'
+} from '@barpo/shared'
 
 /** The smallest valid settings block */
 const settingsBase = {

@@ -9,7 +9,7 @@
 // `ServerEvent` union from the protocol and the caller discriminates on
 // `type`.
 
-import type { ClientEvent, ServerEvent } from '@platforma/shared'
+import type { ClientEvent, ServerEvent } from '@barpo/shared'
 
 type Listener = (event: ServerEvent) => void
 

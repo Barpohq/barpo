@@ -253,8 +253,8 @@ function addUzbekData(db: Database) {
        (id, session_id, message_id, tur, nom, asl_nom, yol, mime, hajm, created_at)
      VALUES (?, 'sess1', 'msg1', ?, ?, ?, ?, ?, 10, '2026-01-01')`,
   )
-  attachment.run('a1', 'rasm', 'x.png', 'asl.png', '.platforma/sessiyalar/sess1/fayllar/x.png', 'image/png')
-  attachment.run('a2', 'fayl', 'y.txt', 'asl.txt', '.platforma/sessiyalar/sess1/fayllar/y.txt', 'text/plain')
+  attachment.run('a1', 'rasm', 'x.png', 'asl.png', '.barpo/sessiyalar/sess1/fayllar/x.png', 'image/png')
+  attachment.run('a2', 'fayl', 'y.txt', 'asl.txt', '.barpo/sessiyalar/sess1/fayllar/y.txt', 'text/plain')
 }
 
 describe('migration 013 — the Uzbek → English rename', () => {
@@ -771,6 +771,57 @@ describe('migration 013 — the Uzbek → English rename', () => {
 
       expect(db.query('SELECT * FROM audit_log').all()).toHaveLength(before)
       expect(db.query('SELECT * FROM skill_sources').all()).toHaveLength(1)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+describe('migration 018 — the working title "platforma" becomes "barpo"', () => {
+  test('the builtin skill and mcp source identifiers are renamed', () => {
+    const db = databaseBefore(18)
+    try {
+      db.run(
+        `INSERT INTO skill_sources (id, kind, url, owner, repo, ref, created_at)
+         VALUES ('s1', 'builtin', 'platforma://builtin', 'platforma', 'builtin-skills', '', '2026-01-01')`,
+      )
+      db.run(
+        `INSERT INTO mcp_sources (id, kind, source_name, ref, created_at)
+         VALUES ('m1', 'builtin', 'platforma-builtin', '', '2026-01-01')`,
+      )
+
+      applyMigrations(db)
+
+      const skill = db
+        .query<{ owner: string; url: string }, []>('SELECT owner, url FROM skill_sources')
+        .get()!
+      expect(skill.owner).toBe('barpo')
+      expect(skill.url).toBe('barpo://builtin')
+
+      const mcp = db
+        .query<{ source_name: string }, []>('SELECT source_name FROM mcp_sources')
+        .get()!
+      expect(mcp.source_name).toBe('barpo-builtin')
+    } finally {
+      db.close()
+    }
+  })
+
+  test("a user's own github source with the same owner is not touched", () => {
+    const db = databaseBefore(18)
+    try {
+      db.run(
+        `INSERT INTO skill_sources (id, kind, url, owner, repo, ref, created_at)
+         VALUES ('s2', 'github', 'https://github.com/platforma/x', 'platforma', 'x', '', '2026-01-01')`,
+      )
+
+      applyMigrations(db)
+
+      const row = db
+        .query<{ owner: string; url: string }, []>('SELECT owner, url FROM skill_sources')
+        .get()!
+      expect(row.owner).toBe('platforma')
+      expect(row.url).toBe('https://github.com/platforma/x')
     } finally {
       db.close()
     }

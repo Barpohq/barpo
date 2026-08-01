@@ -14,7 +14,7 @@
 // serves both components.
 
 import { useState } from 'react'
-import type { Project } from '@platforma/shared'
+import type { Project } from '@barpo/shared'
 
 interface Props {
   projects: Project[]

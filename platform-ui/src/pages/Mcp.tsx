@@ -18,7 +18,7 @@ import type {
   McpSource,
   McpTransportKind,
   Project,
-} from '@platforma/shared'
+} from '@barpo/shared'
 import {
   ApiError,
   fetchProjects,

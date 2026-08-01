@@ -31,7 +31,7 @@ import type {
   SkillSourceKind,
   ToolCall,
   ToolCard,
-} from '@platforma/shared'
+} from '@barpo/shared'
 import { db as globalDb } from './db.ts'
 import { readAppFolder } from './app-store.ts'
 import { describeCron } from './schedule/cron.ts'
@@ -250,7 +250,7 @@ export function readSkill(id: string, database?: Database): Skill | null {
  * installed for this project. When `projectId` is null (a session with no
  * project) only the global ones apply.
  *
- * At the start of a session `.platforma/skills/` is built from this list.
+ * At the start of a session `.barpo/skills/` is built from this list.
  */
 export function activeSkills(projectId: string | null, database?: Database): Skill[] {
   const d = database ?? globalDb()

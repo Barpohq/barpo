@@ -17,7 +17,7 @@
 // │ A test enforces that it stays that way (classifier-isolation.test.ts).  │
 // └─────────────────────────────────────────────────────────────────────────┘
 
-import type { ModelInfo, PermissionKind } from '@platforma/shared'
+import type { ModelInfo, PermissionKind } from '@barpo/shared'
 import { cachedResult, modelsCollection } from './detect.ts'
 import { extractConstraints } from './constraints.ts'
 

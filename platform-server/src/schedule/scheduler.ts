@@ -16,9 +16,9 @@
 // │     started twice.                                                   │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import type { ModelChoice, Schedule } from '@platforma/shared'
-import { cachedResult, detectModels, modeManager, pickClassifierModel } from '@platforma/ai'
-import { config } from '@platforma/config'
+import type { ModelChoice, Schedule } from '@barpo/shared'
+import { cachedResult, detectModels, modeManager, pickClassifierModel } from '@barpo/ai'
+import { config } from '@barpo/config'
 import { auditWrite } from '../audit.ts'
 import {
   createSchedule,
@@ -199,7 +199,7 @@ async function runWithAutoMode(
  * └──────────────────────────────────────────────────────────────────────┘
  *
  * WHY IT IS PREPENDED TO THE PROMPT rather than appended to the system
- * prompt: the system prompt is built inside `@platforma/ai`, which knows
+ * prompt: the system prompt is built inside `@barpo/ai`, which knows
  * nothing about schedules and should not learn. This text is part of the
  * instruction being given, so it belongs with it.
  *

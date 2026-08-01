@@ -2,7 +2,7 @@
 //
 // Network requests (GitHub) are NOT EXERCISED — they depend on an external
 // service. What is checked here is the logic that runs AFTER they return: the
-// catalog UPSERT, the scope, and how `.platforma/skills/` on disk is brought
+// catalog UPSERT, the scope, and how `.barpo/skills/` on disk is brought
 // into line with the database.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'

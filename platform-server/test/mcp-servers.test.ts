@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { McpCatalogEntry } from '@platforma/shared'
+import type { McpCatalogEntry } from '@barpo/shared'
 import { openDb, setDb } from '../src/db.ts'
 import {
   activeMcpServers,

@@ -2,11 +2,11 @@
 //
 // TWO PLACES, TWO JOBS:
 //
-//   STORE    ~/.platforma/skills-store/<sourceId>/<skillId>/
+//   STORE    ~/.barpo/skills-store/<sourceId>/<skillId>/
 //            The SINGLE copy of an installed skill's files. Even when one
 //            skill is used in 10 projects, there is only one copy here.
 //
-//   PROJECT  <workDir>/.platforma/skills/<name>/
+//   PROJECT  <workDir>/.barpo/skills/<name>/
 //            A COPY out of the store. Built at the start of a session.
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
@@ -21,15 +21,15 @@
 // │ another project's skill.                                             │
 // └──────────────────────────────────────────────────────────────────────┘
 //
-// `.platforma/skills/` is a MANAGED directory. The source of truth is the
+// `.barpo/skills/` is a MANAGED directory. The source of truth is the
 // database (`skill_installs`). At the start of every session it is brought
 // into line with the database: anything extra is deleted, anything missing is
 // copied in. Whatever the user put there by hand disappears in the next
 // session — deliberately so, because otherwise the state on disk and the
 // state in the database would drift apart over time.
 
-import { parseSkillFile } from '@platforma/ai'
-import type { Skill } from '@platforma/shared'
+import { parseSkillFile } from '@barpo/ai'
+import type { Skill } from '@barpo/shared'
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -47,7 +47,7 @@ import { readTar } from './tar.ts'
 export function storeRoot(): string {
   const env = process.env.PLATFORM_SKILLS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'skills-store')
+  return join(homedir(), '.barpo', 'skills-store')
 }
 
 /**
@@ -220,7 +220,7 @@ export function deleteSourceFromStore(sourceId: string): void {
 // ---------------------------------------------------------------------------
 
 /** The managed skill directory inside the working directory */
-export const WORK_SKILL_DIR = join('.platforma', 'skills')
+export const WORK_SKILL_DIR = join('.barpo', 'skills')
 
 export interface SyncResult {
   copied: number
@@ -228,7 +228,7 @@ export interface SyncResult {
 }
 
 /**
- * Brings `.platforma/skills/` in the working directory into line with the
+ * Brings `.barpo/skills/` in the working directory into line with the
  * given list of skills.
  *
  * DOES NOT THROW: if a copy fails, that one skill simply does not turn up.

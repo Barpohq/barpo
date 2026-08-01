@@ -1,8 +1,8 @@
 // The chat orchestrator — the bridge between a user message and the LLM reply.
 //
-// It does one job: take the session history, stream a reply from @platforma/ai
+// It does one job: take the session history, stream a reply from @barpo/ai
 // and broadcast every chunk over WS. AI details (provider, key, stream format,
-// tools, permissions) do not belong here — they live inside @platforma/ai.
+// tools, permissions) do not belong here — they live inside @barpo/ai.
 //
 // The stream sequence:
 //   chat.delta × N                               → chat.done    (success)
@@ -28,8 +28,8 @@ import {
   type ConversationEvent,
   type ConversationMessage,
   type StoredMessage,
-} from '@platforma/ai'
-import { config } from '@platforma/config'
+} from '@barpo/ai'
+import { config } from '@barpo/config'
 import { mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
@@ -40,7 +40,7 @@ import type {
   PermissionRequest,
   StreamStatus,
   ToolCall,
-} from '@platforma/shared'
+} from '@barpo/shared'
 import { auditWrite } from './audit.ts'
 import { publishDashboard } from './dashboard-save.ts'
 import { deleteApp } from './app-delete.ts'
@@ -102,7 +102,7 @@ function prepareSkills(sessionId: string, dir: string): void {
 }
 
 /**
- * Creates the memory directory (`.platforma/memory/`).
+ * Creates the memory directory (`.barpo/memory/`).
  *
  * AN IMPORTANT DIFFERENCE FROM SKILLS: this directory IS NOT SYNCHRONISED. The
  * source of truth for skills is the database and any extra folder is deleted;
@@ -247,7 +247,7 @@ export async function streamReply(
 
   // Copy the installed skills into the work directory. They are re-synced at
   // the start of every stream: the user may have installed a new skill during
-  // the conversation. The agent reads the list from `.platforma/skills/`
+  // the conversation. The agent reads the list from `.barpo/skills/`
   // itself (`skill-load.ts`).
   prepareSkills(sessionId, dir)
 
@@ -382,7 +382,7 @@ export async function streamReply(
           // one — and the tool refuses to act without the permission manager
           // below, which is the thing that makes the user confirm.
           dashboardRemover: (id: string) => deleteApp(id, sessionId),
-          // The schedule tools. Same inversion again: `@platforma/ai` knows
+          // The schedule tools. Same inversion again: `@barpo/ai` knows
           // nothing about the table or the tick — it hands over a title, a
           // cron expression and a prompt, and everything else (parsing the
           // expression, computing the first firing, broadcasting to the list)

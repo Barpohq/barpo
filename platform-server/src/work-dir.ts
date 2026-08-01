@@ -2,11 +2,11 @@
 //
 // There are two kinds of directory:
 //
-//   1) SESSION directory — ~/.platforma/work/<sessionId>/
+//   1) SESSION directory — ~/.barpo/work/<sessionId>/
 //      A conversation not attached to a project runs here: files created in
 //      one conversation must not bleed into another.
 //
-//   2) PROJECT directory — ~/.platforma/projects/<slug>/
+//   2) PROJECT directory — ~/.barpo/projects/<slug>/
 //      A conversation attached to a project runs here. ALL of a project's
 //      chats share one directory, so the user can open several conversations
 //      over the same codebase.
@@ -22,14 +22,14 @@ import { join } from 'node:path'
 export function worksRoot(): string {
   const env = process.env.PLATFORM_WORKS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'work')
+  return join(homedir(), '.barpo', 'work')
 }
 
 /** The root of every project directory */
 export function projectsRoot(): string {
   const env = process.env.PLATFORM_PROJECTS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'projects')
+  return join(homedir(), '.barpo', 'projects')
 }
 
 /**
@@ -121,7 +121,7 @@ export function sessionWorkDir(sessionId: string, projectFolder?: string | null)
 // own directory and do not get mixed up with uploads.
 
 /** The root of session-scoped data — relative to the work directory */
-export const SESSION_DIR = '.platforma/sessions'
+export const SESSION_DIR = '.barpo/sessions'
 
 /** The directory for files uploaded within a session */
 export const FILES_DIR = 'files'

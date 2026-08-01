@@ -10,7 +10,7 @@
 // agent has already seen it — rewriting history backwards would create a false
 // context.
 
-import type { ChatAttachment } from '@platforma/shared'
+import type { ChatAttachment } from '@barpo/shared'
 import { attachmentUrl } from '../lib/api'
 
 interface Props {

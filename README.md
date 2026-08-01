@@ -1,14 +1,20 @@
-# AI Platform — Project documentation
+# Barpo
 
-> A self-hosted, open-source AI orchestration platform.
-> It began as a Telegram AI news bot; that bot shipped, and the platform grew
-> out of it. The bot now lives on as a separate project in `ai-news-bot/`.
+> **The program that builds programs.**
+> Describe the app you want in a chat — a Telegram bot, a website, a full-stack
+> service. Barpo plans it, builds it, ships it, and the new app plugs its own
+> dashboard back into Barpo. Deploy to a domain or a port is one choice away,
+> built in.
+
+Self-hosted and open source. Your keys, your servers, your data.
+
+*The name comes from the Uzbek "barpo qilmoq" — to build, to bring into being.*
 
 ---
 
 ## Where the code stands
 
-A working backend, AI agent layer and web UI — 1610 tests green.
+A working backend, AI agent layer and web UI — 1761 tests green.
 
 ```bash
 bun install
@@ -21,13 +27,27 @@ Chat with an agent that reads and writes files, runs commands, connects to MCP
 servers and manages real servers over SSH — with a permission layer in front of
 every dangerous action. [CONTINUE.md](CONTINUE.md) has the full picture.
 
-## The project in brief
+## What makes Barpo different
 
-**The problem:** Doing serious work with AI today means juggling several separate tools — Claude, ChatGPT, Gemini, OpenRouter, Claude Code, various deploy services. Each one locks you into its own ecosystem, none of them talk to each other, and the harder jobs (server management, deploys) are still done by hand or through a terminal.
+- **Apps are the output, not chat logs.** You order an app; Barpo builds a real
+  project with real code and runs it.
+- **Every built app gets its own dashboard.** Apps describe their UI as a
+  widget manifest (stats, tables, logs, deploy, git) and Barpo renders it —
+  no frontend rebuild, no iframes.
+- **Deploy is a built-in extra, not a separate product.** Domain or port,
+  chosen in the same conversation.
+- **Git-first.** Every change the AI makes is a commit; rollback is always
+  available.
+- **Security is part of the design.** The AI is never handed a password, every
+  dangerous action passes a permission layer, everything lands in an
+  append-only audit log.
+- **Any AI provider.** 38 providers through one chat; keys come from your
+  environment, never leave your machine.
+- **A time layer.** Scheduled runs, cron tasks, and automatic resume when a
+  provider limit cuts a conversation short.
 
-**The solution:** Bring every AI provider, agent, server, and tool together on a single self-hosted platform. You give a high-level instruction through AI chat, and the platform launches whatever tools are needed in the background (Claude Code in a tmux session, for example) and gets the job done.
+## Philosophy
 
-**Philosophy:**
 - Build it for myself first — abstractions are born out of real needs, not invented up front
 - Open source and self-hosted — no vendor lock-in, my data stays on my server
 - Bottom-up — first a concrete working solution (the bot), then let the platform grow out of it
@@ -49,14 +69,10 @@ Each package carries its own README with the implementation detail —
 [platform-ui](platform-ui/README.md), and
 [mcp-servers](mcp-servers/README.md).
 
-## Context: where I stand
+## History and inspirations
 
-- 5 servers available, being connected to the platform
-- Claude, ChatGPT, and Gemini subscriptions, plus a habit of trying new models through OpenRouter
-- The web is my primary working environment
-- The first real need — a fully autonomous AI news bot for my Telegram channel — is built and running
-
-## Inspirations and similar projects
+Barpo began as a Telegram AI news bot; that bot shipped, and the platform grew
+out of it. The bot now lives on as a separate project in `ai-news-bot/`.
 
 - **OpenClaw / Hermes** — the top layer of the agent stack; a model for how open-source projects built by one person for themselves spread
 - **MCP (Model Context Protocol)** — the integration standard; rather than inventing our own, we build on what exists

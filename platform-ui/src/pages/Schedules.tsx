@@ -12,7 +12,7 @@
 // so a run finishing while the page is open updates it without a refresh.
 
 import { useCallback, useEffect, useState } from 'react'
-import type { Schedule } from '@platforma/shared'
+import type { Schedule } from '@barpo/shared'
 import {
   ApiError,
   createSchedule,

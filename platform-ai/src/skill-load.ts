@@ -32,7 +32,7 @@ import { basename, join } from 'node:path'
 import { parseSkillFile } from './skill-file.ts'
 
 /** The managed skill directory inside the working directory */
-export const SKILL_DIR = '.platforma/skills'
+export const SKILL_DIR = '.barpo/skills'
 
 /**
  * Limit on how many skills go into the prompt.
@@ -52,7 +52,7 @@ export interface LoadedSkill {
 }
 
 /**
- * Reads the `.platforma/skills/*​/SKILL.md` files in the working directory.
+ * Reads the `.barpo/skills/*​/SKILL.md` files in the working directory.
  *
  * NEVER THROWS: if the directory is missing or a file cannot be read, an
  * empty list is returned. A conversation works perfectly well without

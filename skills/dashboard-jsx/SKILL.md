@@ -10,7 +10,7 @@ You can write your own JSX in the app's `view.jsx` file. Use it when you need a
 layout the widgets cannot express.
 
 ```
-~/.platforma/apps/<id>/view.jsx
+~/.barpo/apps/<id>/view.jsx
 ```
 
 Write it with `write`/`edit` like any other file. It is picked up automatically

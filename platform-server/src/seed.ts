@@ -8,7 +8,7 @@
 // get connected — at that point this file only remains for a blank install.
 
 import type { Database } from 'bun:sqlite'
-import type { AppManifest, AuditEntry } from '@platforma/shared'
+import type { AppManifest, AuditEntry } from '@barpo/shared'
 
 // There is DELIBERATELY no server seed (since migration 007): a server row
 // points at a real SSH connection, so a made-up row would be a "server that

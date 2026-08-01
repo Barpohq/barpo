@@ -14,7 +14,7 @@
 // not even a refresh helped.
 
 import { useEffect, useState } from 'react'
-import { CHANNELS, type AppManifest } from '@platforma/shared'
+import { CHANNELS, type AppManifest } from '@barpo/shared'
 import { fetchApps } from './api'
 import { ws } from './ws'
 

@@ -50,7 +50,7 @@ import { basename, join } from 'node:path'
 import { parseSkillFile } from './skill-file.ts'
 
 /** Memory directory inside the working directory */
-export const MEMORY_DIR = '.platforma/memory'
+export const MEMORY_DIR = '.barpo/memory'
 
 /** The index file — the only memory file that goes into the prompt IN FULL */
 export const MEMORY_INDEX = 'MEMORY.md'

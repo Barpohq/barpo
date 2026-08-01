@@ -5,7 +5,7 @@
 // future.
 
 import { afterEach, describe, expect, test } from 'bun:test'
-import type { ModelInfo } from '@platforma/shared'
+import type { ModelInfo } from '@barpo/shared'
 import { pickClassifierModel } from '../src/classifier.ts'
 
 const ORIGINAL_ENV = process.env.PLATFORM_CLASSIFIER_MODEL

@@ -11,7 +11,7 @@ import { claudeCodeAuth, codexAuth } from '../src/local-auth.ts'
 let home: string
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'platforma-auth-'))
+  home = mkdtempSync(join(tmpdir(), 'barpo-auth-'))
 })
 
 afterEach(() => {

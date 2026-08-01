@@ -1,7 +1,7 @@
 // WS hub tests — subscriptions, the broadcast filter and client event handling.
 
 import { describe, expect, test } from 'bun:test'
-import type { ClientEvent, ServerEvent } from '@platforma/shared'
+import type { ClientEvent, ServerEvent } from '@barpo/shared'
 import { WsHub, type PlatformWS } from '../src/ws/hub.ts'
 
 /** A fake WS connection — collects the events it is sent into an array */

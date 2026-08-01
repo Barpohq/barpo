@@ -43,7 +43,7 @@ type FileShape = Record<string, Record<string, string>>
 export function mcpCredentialsPath(): string {
   const env = process.env.PLATFORM_MCP_CREDENTIALS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'mcp-credentials.json')
+  return join(homedir(), '.barpo', 'mcp-credentials.json')
 }
 
 export interface McpCredentialStore {

@@ -5,7 +5,7 @@
 import { Hono } from 'hono'
 import { db, schemaVersion } from '../db.ts'
 import { hub } from '../ws/hub.ts'
-import { PROTOCOL_VERSION } from '@platforma/shared'
+import { PROTOCOL_VERSION } from '@barpo/shared'
 
 export const healthRoutes = new Hono()
 

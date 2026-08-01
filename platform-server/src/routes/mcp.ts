@@ -21,7 +21,7 @@
 // a timeout (`mcp-registry.ts`, `github.ts`).
 
 import { Hono } from 'hono'
-import type { McpCatalogEntry, McpScope, McpSettingField } from '@platforma/shared'
+import type { McpCatalogEntry, McpScope, McpSettingField } from '@barpo/shared'
 import { auditWrite } from '../audit.ts'
 import { parseGithubRef } from '../github.ts'
 import { scanMcpSource } from '../mcp-github.ts'

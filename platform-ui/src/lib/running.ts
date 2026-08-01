@@ -11,7 +11,7 @@
 // the status of every session — the sidebar relies on exactly that.
 
 import { useEffect, useState } from 'react'
-import type { StreamStatus } from '@platforma/shared'
+import type { StreamStatus } from '@barpo/shared'
 import { fetchRunning } from './api'
 import { ws } from './ws'
 

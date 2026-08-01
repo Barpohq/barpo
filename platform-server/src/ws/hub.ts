@@ -16,7 +16,7 @@ import {
   PROTOCOL_VERSION,
   type ClientEvent,
   type ServerEvent,
-} from '@platforma/shared'
+} from '@barpo/shared'
 
 /** The data attached to every WS connection */
 export interface ConnectionState {

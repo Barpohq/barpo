@@ -13,7 +13,7 @@
 //
 // LAYER BOUNDARY — the same inversion as `dashboard-tools.ts` and
 // `server-tools.ts`. Schedules live in SQLite and the tick lives in
-// `platform-server`; `@platforma/ai` does NOT DEPEND on the server, so the
+// `platform-server`; `@barpo/ai` does NOT DEPEND on the server, so the
 // functions are supplied from outside (`ScheduleSink`, `ScheduleLister`,
 // `ScheduleRemover`). This file knows neither the database nor the timer.
 //

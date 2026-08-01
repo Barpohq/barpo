@@ -1,7 +1,7 @@
 // Mock data — demo mode. The numbers come from the project's real history
 // (roadmap 2026-07-26: 247 clusters, 151 accepted, $0.037/post, approval 96%).
 //
-// THE TYPES now live in the @platforma/shared package (platform-shared/src/types.ts) —
+// THE TYPES now live in the @barpo/shared package (platform-shared/src/types.ts) —
 // the backend uses the very same types. This file re-exports them, so imports like
 // `import { Agent } from '../data/mock'` in the pages keep working. When the backend
 // is wired up only the DATA is swapped out.
@@ -15,7 +15,7 @@ import type {
   LlmCall,
   ToolCard,
   WorkflowStep,
-} from '@platforma/shared'
+} from '@barpo/shared'
 
 export type {
   Agent,
@@ -35,7 +35,7 @@ export type {
   ToolCard,
   Widget,
   WorkflowStep,
-} from '@platforma/shared'
+} from '@barpo/shared'
 
 export const agents: Agent[] = [
   {

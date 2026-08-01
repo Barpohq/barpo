@@ -75,7 +75,7 @@ describe('a populated directory (temporary)', () => {
   test('ensuring is idempotent — a repeat call creates no duplicate', () => {
     const entries = [
       {
-        name: 'platforma/filesystem',
+        name: 'barpo/filesystem',
         description: 'File system',
         transport: 'stdio' as const,
         command: 'npx',

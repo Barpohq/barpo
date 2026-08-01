@@ -893,7 +893,7 @@ export interface ChatSession {
 /**
  * A project — a work directory bound to a name.
  *
- * The platform creates the folder itself (`~/.platforma/projects/<slug>/`);
+ * The platform creates the folder itself (`~/.barpo/projects/<slug>/`);
  * the user does not supply a path: if an arbitrary path were accepted, the
  * boundary for the agent tools could end up being `/`.
  */
@@ -961,7 +961,7 @@ export interface ChatMessage {
    * results exist only here, so without it the agent loses its memory every
    * turn.
    *
-   * The type is `unknown[]`: `@platforma/shared` must not depend on the AI
+   * The type is `unknown[]`: `@barpo/shared` must not depend on the AI
    * package (the UI imports these types too). The precise type is restored on
    * the server.
    *

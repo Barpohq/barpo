@@ -1,9 +1,9 @@
-# @platforma/server — the platform backend foundation
+# @barpo/server — the platform backend foundation
 
 The server side of the "a program that builds programs" platform. The database,
 migrations, audit system, WebSocket hub and REST endpoints are all in place.
 **The chat AI layer is wired up with tools**: the agent reads, writes and edits
-files, runs commands and searches the tree (`@platforma/ai`), and through this
+files, runs commands and searches the tree (`@barpo/ai`), and through this
 server it also reaches the connected servers, the installed MCP servers and the
 dashboard-publishing path. The build flow (chat → generated project) is not
 connected yet.
@@ -50,7 +50,7 @@ src/
   db.ts             — SQLite connection, WAL, migration runner
   repo.ts           — the database layer (SQL lives only here)
   audit.ts          — auditWrite / auditRead — the ONLY way to write an audit record
-  orchestrator.ts   — the chat reply stream: @platforma/ai → WS events → DB
+  orchestrator.ts   — the chat reply stream: @barpo/ai → WS events → DB
   chat-send.ts      — the shared send logic REST and WS both go through
   work-dir.ts       — the agent work directory: per session or per project
   attachment.ts     — an attachment's kind, decided from its CONTENT (magic bytes)
@@ -61,7 +61,7 @@ src/
 catalog entry, an install scope.
 
 ```
-  skill-store.ts    — the disk layer: ~/.platforma/skills-store/ → the project copy
+  skill-store.ts    — the disk layer: ~/.barpo/skills-store/ → the project copy
   builtin-skills.ts — the skills shipped with the platform (source kind `builtin`)
   github.ts         — the GitHub client: tree scan + tarball
   tar.ts            — a minimal tar reader written in-house (zip-slip protection)
@@ -125,7 +125,7 @@ report set up while talking to one model is not silently written by another.
 `scheduleCreate` accepts an explicit `provider`/`model` to override that; a
 pinned model that has since disappeared falls back to the default.
 
-**An app is a FOLDER, not a database row.** `~/.platforma/apps/<id>/` holds
+**An app is a FOLDER, not a database row.** `~/.barpo/apps/<id>/` holds
 `app.json` plus optional `view.jsx`, `states/<name>.js`, `settings.js` and
 `actions/<name>.js`; the `apps` table records only that a folder was published
 and where. Every request reads the folder, which is what makes editing a file —
@@ -180,7 +180,7 @@ skill and MCP server shown twice.
 
 ## The chat AI flow
 
-Everything to do with the LLM lives in the `@platforma/ai` package (keys, OAuth,
+Everything to do with the LLM lives in the `@barpo/ai` package (keys, OAuth,
 Ollama, model catalogues, the classifier). The server calls `detectModels()` and
 `agentStream()` — or `conversationStream()` for the tool-free mode.
 
@@ -200,7 +200,7 @@ A `chat.send` arriving over WS takes exactly the same path
 ### Tools
 
 The file and shell tools (`read`, `write`, `edit`, `bash`) and the search tools
-(`grep`, `find`, `ls`) come from `@platforma/ai`. Three more are supplied BY
+(`grep`, `find`, `ls`) come from `@barpo/ai`. Three more are supplied BY
 THIS SERVER, through callbacks handed to `agentStream()` (`orchestrator.ts`):
 
 | Tool | Supplied via | What it reaches |
@@ -223,19 +223,19 @@ from is this side's business. An empty MCP list means MCP does not start at all
 
 Two directories are prepared at the start of every stream:
 
-- `.platforma/skills/` — the installed skills are **synchronised** (global plus
+- `.barpo/skills/` — the installed skills are **synchronised** (global plus
   the ones installed for this session's project). Re-synced on every stream,
   because a skill may have been installed mid-conversation. The database is the
   source of truth, so an extra folder is removed.
-- `.platforma/memory/` — only its **existence** is guaranteed. The agent writes
+- `.barpo/memory/` — only its **existence** is guaranteed. The agent writes
   its own notes here and nobody deletes them.
 
 Neither throws: if the skills cannot be prepared the conversation still starts,
 only with an empty skill list. Abandoned attachments — uploaded but never sent —
 are cleaned up at the same point.
 
-Each session gets its own work directory, `~/.platforma/work/<sessionId>/`, and
-a session bound to a project runs in `~/.platforma/projects/<slug>/` instead, so
+Each session gets its own work directory, `~/.barpo/work/<sessionId>/`, and
+a session bound to a project runs in `~/.barpo/projects/<slug>/` instead, so
 every conversation about one codebase sees one set of files. Both roots are
 relocatable (`PLATFORM_WORKS`, `PLATFORM_PROJECTS`). A project folder carries no
 privilege of any kind: the boundary check applies to it exactly as it does to a
@@ -351,7 +351,7 @@ build a false context.
 
 **The user does not supply a path, only a name.** If a path were accepted, the
 boundary of the agent's tools could be pointed at `/` or `~`; the platform
-derives a slug and creates `~/.platforma/projects/<slug>/` itself. The folder is
+derives a slug and creates `~/.barpo/projects/<slug>/` itself. The folder is
 created BEFORE the row, so a failing file system never leaves a "project without
 a folder" behind.
 
@@ -466,7 +466,7 @@ outside.
 
 ## The WebSocket protocol
 
-Endpoint: `ws://<host>/ws`. The types live in `@platforma/shared/protocol` (a
+Endpoint: `ws://<host>/ws`. The types live in `@barpo/shared/protocol` (a
 discriminated union, keyed on the `type` field).
 
 As soon as the connection opens the server sends `hello`. After that the client

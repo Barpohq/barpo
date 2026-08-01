@@ -17,7 +17,7 @@
 // │ in a nested directory.                                               │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import type { McpCatalogEntry } from '@platforma/shared'
+import type { McpCatalogEntry } from '@barpo/shared'
 import { findFiles, type GithubRef, readBlob, repoInfo } from './github.ts'
 import { convertRegistryEntry, type RegistryServerEntry } from './mcp-registry.ts'
 

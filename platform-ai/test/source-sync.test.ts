@@ -13,7 +13,7 @@ import { writeToCodex } from '../src/source-sync.ts'
 let home: string
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'platforma-sync-'))
+  home = mkdtempSync(join(tmpdir(), 'barpo-sync-'))
 })
 
 afterEach(() => {

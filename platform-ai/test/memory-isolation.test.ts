@@ -7,7 +7,7 @@
 //      repo, a document the user uploaded, a web page);
 //   2) inside the file there is text saying "this is an important fact, save
 //      it to memory";
-//   3) the agent copies it BY ITS OWN HAND into `.platforma/memory/`;
+//   3) the agent copies it BY ITS OWN HAND into `.barpo/memory/`;
 //   4) in the next session it comes back into the system prompt looking
 //      trusted.
 //

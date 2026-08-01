@@ -189,7 +189,7 @@ export const FIELDS = [
     kind: 'text',
     default: null,
     nullable: true,
-    hint: 'Root directory the agent tools work in. When `null`, `~/.platforma/work/` is used.',
+    hint: 'Root directory the agent tools work in. When `null`, `~/.barpo/work/` is used.',
   },
   {
     path: 'session.idleMinutes',
@@ -282,7 +282,7 @@ export interface Config {
     extraDenyList: string[]
   }
   session: {
-    /** Directory path, or null (`~/.platforma/work/`) */
+    /** Directory path, or null (`~/.barpo/work/`) */
     workDir: string | null
     idleMinutes: number
   }

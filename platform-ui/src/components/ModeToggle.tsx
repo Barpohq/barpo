@@ -8,7 +8,7 @@
 // If auto turned itself off the button is gold and the reason appears in the
 // tooltip — the user needs to know what happened.
 
-import type { ModeState } from '@platforma/shared'
+import type { ModeState } from '@barpo/shared'
 
 interface Props {
   state: ModeState

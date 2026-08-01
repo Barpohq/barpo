@@ -18,7 +18,7 @@ import type { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAppPublishTool } from '@platforma/ai'
+import { createAppPublishTool } from '@barpo/ai'
 import { openDb } from '../src/db.ts'
 import { publishDashboard } from '../src/dashboard-save.ts'
 import { deleteApp } from '../src/app-delete.ts'
@@ -33,7 +33,7 @@ beforeEach(() => {
   // `deleteApp` and the audit trail reach for the global database.
   setDb(db)
 
-  root = mkdtempSync(join(tmpdir(), 'platforma-apps-'))
+  root = mkdtempSync(join(tmpdir(), 'barpo-apps-'))
   process.env.PLATFORM_APPS = root
 })
 

@@ -296,7 +296,7 @@ describe('the core rules are stated in the description', () => {
     const description = tool.description.replace(/\s+/g, ' ')
 
     expect(description).toContain('do NOT write an API')
-    expect(description).toContain('~/.platforma/apps/<id>/')
+    expect(description).toContain('~/.barpo/apps/<id>/')
     // The most valuable single line: how to change an app afterwards
     expect(description).toContain('TO UPDATE AN APP, EDIT ITS FILES')
     expect(description).toContain('states/<name>.js')

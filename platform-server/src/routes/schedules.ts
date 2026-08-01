@@ -12,7 +12,7 @@
 //     and recreate, and the list shows both.
 
 import { Hono } from 'hono'
-import type { ScheduleStatus } from '@platforma/shared'
+import type { ScheduleStatus } from '@barpo/shared'
 import { auditWrite } from '../audit.ts'
 import {
   createSchedule,

@@ -62,12 +62,12 @@ describe('attachmentNote', () => {
   const image: MessageAttachment = {
     kind: 'image',
     originalName: 'screen.png',
-    path: '.platforma/sessions/s1/files/screen.png',
+    path: '.barpo/sessions/s1/files/screen.png',
   }
   const file: MessageAttachment = {
     kind: 'file',
     originalName: 'report.pdf',
-    path: '.platforma/sessions/s1/files/report.pdf',
+    path: '.barpo/sessions/s1/files/report.pdf',
   }
 
   test('the text is left alone when there is no attachment', () => {

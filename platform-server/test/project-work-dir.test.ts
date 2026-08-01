@@ -19,7 +19,7 @@ let lastOptions: { workDir?: string; sessionId?: string } | null = null
 // CAREFUL: mock.module replaces the whole module — we keep the real exports
 // and only write over the ones we need (see the comment in
 // orchestrator.test.ts).
-const realAi = await import('@platforma/ai')
+const realAi = await import('@barpo/ai')
 const realPermissionManager = realAi.permissionManager
 const watched = new WeakSet<object>()
 
@@ -32,7 +32,7 @@ function denyingPermissionManager(sessionId: string) {
   return manager
 }
 
-mock.module('@platforma/ai', () => ({
+mock.module('@barpo/ai', () => ({
   ...realAi,
   agentStream: async function* (_choice: unknown, _messages: unknown, options: unknown) {
     lastOptions = options as { workDir?: string; sessionId?: string }

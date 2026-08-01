@@ -1,5 +1,5 @@
 {
-  "name": "@platforma/server",
+  "name": "@barpo/server",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,9 +10,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@platforma/ai": "workspace:*",
-    "@platforma/config": "workspace:*",
-    "@platforma/shared": "workspace:*",
+    "@barpo/ai": "workspace:*",
+    "@barpo/config": "workspace:*",
+    "@barpo/shared": "workspace:*",
     "hono": "^4.10.6"
   },
   "devDependencies": {

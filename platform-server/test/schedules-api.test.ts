@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { Schedule } from '@platforma/shared'
+import type { Schedule } from '@barpo/shared'
 import { app } from '../src/app.ts'
 import { openDb, setDb } from '../src/db.ts'
 import {

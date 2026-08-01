@@ -9,7 +9,7 @@
 // the user knows exactly what they are permitting.
 
 import { useState } from 'react'
-import type { PermissionAnswer, PermissionRequest } from '@platforma/shared'
+import type { PermissionAnswer, PermissionRequest } from '@barpo/shared'
 import { Card } from '../ui'
 
 interface Props {

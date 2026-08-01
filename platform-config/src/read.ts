@@ -1,8 +1,8 @@
 // Finding, reading and merging the config files.
 //
 // Two layers, bottom to top (the upper one overrides):
-//   1) global  — ~/.platforma/config.json
-//   2) project — <work dir>/.platforma/config.json
+//   1) global  — ~/.barpo/config.json
+//   2) project — <work dir>/.barpo/config.json
 //
 // Why two? Global is the user's usual settings (which model, which mode).
 // Project is a restriction for this particular job ("read-only tools in
@@ -27,7 +27,7 @@ import type { Config, PartialConfig } from './schema.ts'
 export const CONFIG_FILE = 'config.json'
 
 /** The config directory inside a project */
-export const PROJECT_DIR = '.platforma'
+export const PROJECT_DIR = '.barpo'
 
 export interface ReadOptions {
   /** Directory the project config is looked for in. If omitted, only the global one is read. */
@@ -41,11 +41,11 @@ export interface ConfigResult extends ValidationResult {
   readFiles: string[]
 }
 
-/** The global config directory: `~/.platforma/` */
+/** The global config directory: `~/.barpo/` */
 export function globalConfigDir(): string {
   const env = process.env.PLATFORM_CONFIG_DIR?.trim()
   if (env) return env
-  return join(homedir(), '.platforma')
+  return join(homedir(), '.barpo')
 }
 
 /**

@@ -17,7 +17,7 @@
 // current value — they only write a new one.
 
 import { useEffect, useMemo, useState } from 'react'
-import type { SettingField } from '@platforma/shared'
+import type { SettingField } from '@barpo/shared'
 import {
   ApiError,
   fetchAppSettings,

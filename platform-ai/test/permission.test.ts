@@ -1,7 +1,7 @@
 // The permission manager — requests, answers, the "always" pattern, timeout.
 
 import { afterEach, describe, expect, test } from 'bun:test'
-import type { PermissionRequest } from '@platforma/shared'
+import type { PermissionRequest } from '@barpo/shared'
 import { PermissionManager, permissionManager, closePermissionManager, clearPermissions } from '../src/permission.ts'
 
 afterEach(() => {

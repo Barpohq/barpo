@@ -25,7 +25,7 @@ import type { Migration } from './index.ts'
 // │ (masalan BASE_URL).                                                  │
 // │                                                                      │
 // │ Maxfiy qiymatlar (token, API kalit) alohida faylda:                  │
-// │ `mcp-kredensial.ts` → `~/.platforma/mcp-kredensiallar.json` (600).   │
+// │ `mcp-kredensial.ts` → `~/.barpo/mcp-kredensiallar.json` (600).   │
 // │ Sabab: baza fayli backup/eksport qilinadi va SELECT natijasi logga   │
 // │ tushishi mumkin — token u yerda yotmasligi kerak. Bu `kredensial.ts` │
 // │ dagi FaylKredensialOmbori qarori bilan bir xil.                      │

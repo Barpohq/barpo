@@ -24,12 +24,12 @@ The wrong approach:
 - ❌ adding a statistics endpoint to the app
 
 The right approach:
-- ✅ write `~/.platforma/apps/<id>/app.json` → `appPublish({ id })`
+- ✅ write `~/.barpo/apps/<id>/app.json` → `appPublish({ id })`
 
 ## The folder
 
 ```
-~/.platforma/apps/ai-news-bot/
+~/.barpo/apps/ai-news-bot/
   app.json            required — metadata, widgets, data, state/action config
   view.jsx            optional — a custom view (see the dashboard-jsx skill)
   states/cpu.js       optional — one file per live value
@@ -83,7 +83,7 @@ folder, validates it, and adds it to the sidebar.
 Every page request re-reads the folder, so:
 
 ```
-edit ~/.platforma/apps/ai-news-bot/states/cpu.js
+edit ~/.barpo/apps/ai-news-bot/states/cpu.js
 ```
 
 …is live on the next refresh. **No republish is needed.**
@@ -232,7 +232,7 @@ once stays 1.6% forever.
 For anything that changes over time, add a state: one JS file that runs on the
 server, with **its own refresh interval**.
 
-`~/.platforma/apps/server-monitoring/states/cpu.js`:
+`~/.barpo/apps/server-monitoring/states/cpu.js`:
 
 ```js
 module.exports = async function () {
@@ -242,7 +242,7 @@ module.exports = async function () {
 }
 ```
 
-`~/.platforma/apps/server-monitoring/states/disk.js`:
+`~/.barpo/apps/server-monitoring/states/disk.js`:
 
 ```js
 module.exports = async function () {
@@ -253,7 +253,7 @@ module.exports = async function () {
 }
 ```
 
-`~/.platforma/apps/server-monitoring/app.json`:
+`~/.barpo/apps/server-monitoring/app.json`:
 
 ```json
 {

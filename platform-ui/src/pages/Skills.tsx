@@ -10,7 +10,7 @@
 // later.
 
 import { useEffect, useMemo, useState } from 'react'
-import type { Project, Skill, SkillSource } from '@platforma/shared'
+import type { Project, Skill, SkillSource } from '@barpo/shared'
 import {
   ApiError,
   fetchProjects,

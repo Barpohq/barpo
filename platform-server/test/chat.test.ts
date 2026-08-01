@@ -5,8 +5,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { ChatSession } from '@platforma/shared'
-import { setCache, clearCache } from '@platforma/ai'
+import type { ChatSession } from '@barpo/shared'
+import { setCache, clearCache } from '@barpo/ai'
 import { app } from '../src/app.ts'
 import { openDb, setDb } from '../src/db.ts'
 import {

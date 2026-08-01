@@ -14,13 +14,13 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { PermissionAnswer, PermissionRequest } from '@platforma/shared'
+import type { PermissionAnswer, PermissionRequest } from '@barpo/shared'
 import {
   createScheduleCreateTool,
   createScheduleDeleteTool,
   createScheduleListTool,
   scheduleToolsRaw,
-} from '@platforma/ai'
+} from '@barpo/ai'
 import { openDb, setDb } from '../src/db.ts'
 import {
   createProject,

@@ -12,9 +12,9 @@
 // result, and the caller expresses that in its own language (REST — an HTTP
 // code, WS — `chat.error`).
 
-import { cachedResult } from '@platforma/ai'
-import type { ChatAttachment, ModelChoice } from '@platforma/shared'
-import { config } from '@platforma/config'
+import { cachedResult } from '@barpo/ai'
+import type { ChatAttachment, ModelChoice } from '@barpo/shared'
+import { config } from '@barpo/config'
 import { sessionWorkDir } from './work-dir.ts'
 import { isStreaming } from './orchestrator.ts'
 import {

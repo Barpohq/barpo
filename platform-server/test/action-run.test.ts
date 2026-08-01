@@ -6,7 +6,7 @@
 //   3) ERROR ISOLATION — if the AI code crashes the result is `ok: false`, not a throw
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { AppAction, AppSettings } from '@platforma/shared'
+import type { AppAction, AppSettings } from '@barpo/shared'
 import {
   ACTION_TIMEOUT_MS,
   clearLocks,

@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { McpServer } from '@platforma/shared'
+import type { McpServer } from '@barpo/shared'
 import { openDb, setDb } from '../src/db.ts'
 import {
   MemoryMcpCredentialStore,

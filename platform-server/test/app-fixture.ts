@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Database } from 'bun:sqlite'
-import type { AppManifest } from '@platforma/shared'
+import type { AppManifest } from '@barpo/shared'
 import { publishDashboard } from '../src/dashboard-save.ts'
 
 /**
@@ -29,7 +29,7 @@ export type ManifestLike = AppManifest | Record<string, unknown>
  * Call in `beforeEach`, and pass the result to `cleanupApps` in `afterEach`.
  */
 export function useTempApps(): string {
-  const root = mkdtempSync(join(tmpdir(), 'platforma-apps-'))
+  const root = mkdtempSync(join(tmpdir(), 'barpo-apps-'))
   process.env.PLATFORM_APPS = root
   return root
 }

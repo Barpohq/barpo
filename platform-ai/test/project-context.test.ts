@@ -25,7 +25,7 @@ import {
 let dir: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'platforma-context-'))
+  dir = mkdtempSync(join(tmpdir(), 'barpo-context-'))
 })
 
 afterEach(() => {

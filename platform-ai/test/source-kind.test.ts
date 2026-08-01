@@ -11,12 +11,12 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { BillingKind, ModelInfo } from '@platforma/shared'
+import type { BillingKind, ModelInfo } from '@barpo/shared'
 import { claudeCodeAuth, codexAuth, localAuths } from '../src/local-auth.ts'
 import { modelOrder } from '../src/detect.ts'
 
 function createHome(): string {
-  return mkdtempSync(join(tmpdir(), 'platforma-source-'))
+  return mkdtempSync(join(tmpdir(), 'barpo-source-'))
 }
 
 const TOKEN = JSON.stringify({

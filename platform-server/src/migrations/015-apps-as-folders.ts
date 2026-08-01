@@ -12,7 +12,7 @@ import type { Migration } from './index.ts'
 // │ rewriting the entire manifest from memory, and whatever it forgot to │
 // │ repeat was silently dropped.                                         │
 // │                                                                      │
-// │ The folder is now the source of truth (`~/.platforma/apps/<id>/`).   │
+// │ The folder is now the source of truth (`~/.barpo/apps/<id>/`).   │
 // │ This table records only THAT a folder was published, and where.      │
 // └──────────────────────────────────────────────────────────────────────┘
 //

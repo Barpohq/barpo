@@ -7,7 +7,7 @@
 // state for a few seconds — that is not an error.
 
 import { useCallback, useEffect, useState } from 'react'
-import type { Server, ServerMetrics } from '@platforma/shared'
+import type { Server, ServerMetrics } from '@barpo/shared'
 import {
   ApiError,
   fetchServerMetrics,
