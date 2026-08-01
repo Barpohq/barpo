@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
+import { auditRead } from '../src/audit.ts'
 import { openDb } from '../src/db.ts'
 import { publishApp, readApps, readPublication } from '../src/repo.ts'
 import { applySeed } from '../src/seed.ts'
@@ -21,13 +22,16 @@ afterEach(() => {
 })
 
 describe('applySeed', () => {
-  test('the first call fills every table', async () => {
+  test('a fresh install starts empty', async () => {
     const result = applySeed(db)
-    expect(result.audit).toBe(12)
-    // The app seed is deliberately empty — and now it CANNOT be anything else:
-    // an app is a folder on disk, so a seeded row would point nowhere.
-    expect(result.apps).toBe(0)
+
+    // NOTHING is seeded any more, and each zero has its own reason (see the
+    // notes in seed.ts): an app is a folder on disk, so a seeded row would
+    // point nowhere, and the audit log is the one table that must be
+    // trustworthy — invented history there is worse than no history.
+    expect(result).toEqual({ audit: 0, apps: 0 })
     expect(await readApps(db)).toHaveLength(0)
+    expect(auditRead({}, db)).toHaveLength(0)
   })
 
   test('a second call writes nothing (idempotent)', () => {

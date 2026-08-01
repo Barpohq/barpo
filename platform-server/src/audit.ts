@@ -119,3 +119,19 @@ export function auditCount(filter: AuditFilter = {}, database?: Database): numbe
     .get(...args)
   return row?.count ?? 0
 }
+
+/**
+ * Every actor that appears in the log — this feeds the Audit page's actor
+ * dropdown.
+ *
+ * It is deliberately NOT derived from the returned entries: those are capped
+ * by `limit`, so an actor that only shows up in older entries would silently
+ * vanish from the filter — and picking it would then be impossible.
+ */
+export function auditActors(database?: Database): string[] {
+  const d = database ?? globalDb()
+  return d
+    .query<{ actor: string }, []>('SELECT DISTINCT actor FROM audit_log ORDER BY actor')
+    .all()
+    .map((r) => r.actor)
+}

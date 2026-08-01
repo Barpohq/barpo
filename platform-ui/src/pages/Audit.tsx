@@ -1,10 +1,20 @@
-import { useMemo, useState } from 'react'
-import { auditLog, type AuditLevel } from '../data/mock'
+// The audit log — read from the DATABASE, not from a fixture.
+//
+// The page used to render a hardcoded fixture, which meant it showed the same
+// twelve invented rows regardless of what the platform had actually done —
+// including on a fresh install that had done nothing at all. Now it reads
+// `/api/audit` and filters on the server (the log
+// grows without bound, so filtering in the browser would not scale) and stays
+// live: `auditWrite` broadcasts every new entry over the WS.
+
+import { useEffect, useState } from 'react'
+import { CHANNELS, type AuditEntry, type AuditLevel } from '@platforma/shared'
+import { fetchAudit } from '../lib/api'
 import { LEVEL_LABEL, RESULT_LABEL } from '../lib/audit-label'
+import { ws } from '../lib/ws'
 import { Card, LevelBadge, PageHead } from '../ui'
 
-// The keys come from the database (`seed.ts`) — their labels live in
-// `lib/audit-label.ts`
+// The keys come from the database — their labels live in `lib/audit-label.ts`
 const resultStyle: Record<string, string> = {
   OK: 'text-mint',
   approved: 'text-mint',
@@ -22,10 +32,62 @@ export default function Audit() {
   const [level, setLevel] = useState<(typeof levels)[number]>('all')
   const [actor, setActor] = useState('all')
 
-  const actors = useMemo(() => ['all', ...new Set(auditLog.map((e) => e.actor))], [])
-  const rows = auditLog.filter(
-    (e) => (level === 'all' || e.level === level) && (actor === 'all' || e.actor === actor),
-  )
+  const [entries, setEntries] = useState<AuditEntry[]>([])
+  const [actors, setActors] = useState<string[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Refetch whenever a filter changes — the server does the filtering, so a
+  // widened filter can bring back rows the previous response never held.
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    fetchAudit({ level, actor })
+      .then((page) => {
+        if (cancelled) return
+        setEntries(page.entries)
+        setActors(page.actors)
+        setTotal(page.total)
+        setError(null)
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [level, actor])
+
+  // Live entries. A new row is prepended locally rather than refetched: the
+  // list is sorted newest-first, so this keeps the page in step without a
+  // request per event.
+  useEffect(() => {
+    ws.connect()
+    const unsubscribe = ws.subscribe([CHANNELS.audit])
+    const unwatch = ws.watch((event) => {
+      if (event.type !== 'audit.entry') return
+      const entry = event.entry
+      // The active filter applies to live entries too — otherwise a row that
+      // the filter excludes would appear anyway and look like a bug.
+      if (level !== 'all' && entry.level !== level) return
+      if (actor !== 'all' && entry.actor !== actor) return
+      setEntries((previous) => [entry, ...previous])
+      setTotal((n) => n + 1)
+      // A brand-new actor has to reach the dropdown, or it could never be
+      // selected until the next reload.
+      setActors((previous) =>
+        previous.includes(entry.actor) ? previous : [...previous, entry.actor].sort(),
+      )
+    })
+    return () => {
+      unwatch()
+      unsubscribe()
+    }
+  }, [level, actor])
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -56,7 +118,7 @@ export default function Audit() {
             onChange={(e) => setActor(e.target.value)}
             className="rounded-lg border border-line bg-panel px-2 py-1 font-mono text-xs text-ink"
           >
-            {actors.map((a) => (
+            {['all', ...actors].map((a) => (
               <option key={a} value={a}>
                 {a}
               </option>
@@ -64,9 +126,17 @@ export default function Audit() {
           </select>
         </label>
         <span className="ml-auto font-mono text-[11px] text-faint">
-          {rows.length} entries · today
+          {/* `total` counts every matching row; `entries` is capped by the
+              server's limit, so the two can differ on a busy platform */}
+          {entries.length < total ? `${entries.length} of ${total} entries` : `${total} entries`}
         </span>
       </div>
+
+      {error && (
+        <p className="mb-4 rounded-lg bg-coral/10 px-4 py-3 text-sm text-coral">
+          Could not load the audit log: {error}
+        </p>
+      )}
 
       <Card className="overflow-hidden">
         <div className="thin-scroll overflow-x-auto">
@@ -82,7 +152,7 @@ export default function Audit() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((e, i) => (
+              {entries.map((e, i) => (
                 <tr key={i} className="border-t border-line/60">
                   <td className="px-5 py-2.5 font-mono text-xs text-faint">{e.time}</td>
                   <td className="px-3 py-2.5 font-mono text-xs text-lazur">{e.actor}</td>
@@ -94,10 +164,14 @@ export default function Audit() {
                   </td>
                 </tr>
               ))}
-              {rows.length === 0 && (
+              {entries.length === 0 && !error && (
                 <tr>
                   <td colSpan={6} className="px-5 py-8 text-center text-sm text-faint">
-                    No entries match this filter — try widening it
+                    {loading
+                      ? 'Loading…'
+                      : level === 'all' && actor === 'all'
+                        ? 'The log is empty — it fills up as soon as the platform does something'
+                        : 'No entries match this filter — try widening it'}
                   </td>
                 </tr>
               )}

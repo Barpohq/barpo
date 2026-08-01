@@ -145,26 +145,58 @@ describe('DELETE /api/apps/:id', () => {
 })
 
 describe('GET /api/audit', () => {
-  test('the seeded audit entries come back', async () => {
+  // Nothing is seeded any more (see seed.ts), so each test writes the history
+  // it needs. That is closer to reality anyway: entries only ever come from
+  // `auditWrite`, never from a fixture.
+  function writeSample() {
+    auditWrite('collector', 'Pipeline started', 'helsinki-1', 'read')
+    auditWrite('collector', 'Report sent', 'admin chat', 'read')
+    auditWrite('skill:postgres-backup', 'DROP TABLE attempt blocked', 'db-01', 'dangerous', 'denied')
+  }
+
+  test('a fresh platform has an empty log', async () => {
     const { status, body } = await get<{ entries: AuditEntry[]; total: number }>('/api/audit')
     expect(status).toBe(200)
-    expect(body.total).toBe(12)
-    expect(body.entries).toHaveLength(12)
+    expect(body.total).toBe(0)
+    expect(body.entries).toEqual([])
+  })
+
+  test('written entries come back', async () => {
+    writeSample()
+
+    const { status, body } = await get<{ entries: AuditEntry[]; total: number }>('/api/audit')
+    expect(status).toBe(200)
+    expect(body.total).toBe(3)
+    expect(body.entries).toHaveLength(3)
   })
 
   test('the level filter works', async () => {
+    writeSample()
+
     const { body } = await get<{ entries: AuditEntry[]; total: number }>('/api/audit?level=dangerous')
     expect(body.total).toBe(1)
     expect(body.entries[0]?.action).toContain('DROP TABLE')
   })
 
   test('the actor filter and limit work together', async () => {
+    writeSample()
+
     const { body } = await get<{ entries: AuditEntry[]; total: number }>(
-      '/api/audit?actor=ai-news-bot&limit=2',
+      '/api/audit?actor=collector&limit=1',
     )
-    expect(body.total).toBe(4)
-    expect(body.entries).toHaveLength(2)
-    expect(body.entries.every((e) => e.actor === 'ai-news-bot')).toBe(true)
+    // `total` counts every match, `entries` is what the limit let through
+    expect(body.total).toBe(2)
+    expect(body.entries).toHaveLength(1)
+    expect(body.entries.every((e) => e.actor === 'collector')).toBe(true)
+  })
+
+  test('the actor list ignores the active filter', async () => {
+    // Otherwise the dropdown would shrink to the selected actor and the filter
+    // could never be widened back out.
+    writeSample()
+
+    const { body } = await get<{ actors: string[] }>('/api/audit?actor=collector')
+    expect(body.actors).toEqual(['collector', 'skill:postgres-backup'])
   })
 
   test('an entry written with auditWrite shows up on the endpoint', async () => {

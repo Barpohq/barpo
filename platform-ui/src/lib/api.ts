@@ -9,6 +9,7 @@
 
 import type {
   AppManifest,
+  AuditEntry,
   ChatAttachment,
   ChatMessage,
   ChatSession,
@@ -726,4 +727,36 @@ export function setScheduleStatus(
 
 export function deleteSchedule(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/schedules/${id}`, { method: 'DELETE' })
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+export interface AuditPage {
+  entries: AuditEntry[]
+  /** Entries matching the filter — may exceed `entries.length` (it is capped) */
+  total: number
+  /** Every actor in the log, filter-independent — this feeds the dropdown */
+  actors: string[]
+}
+
+/**
+ * The audit log. FILTERING HAPPENS ON THE SERVER: the log grows without bound,
+ * and fetching all of it just to filter in the browser would not scale.
+ *
+ * There is no write counterpart on purpose — entries are only ever produced
+ * inside the backend (`auditWrite`), never posted from a client.
+ */
+export function fetchAudit(filter: {
+  level?: string
+  actor?: string
+  limit?: number
+} = {}): Promise<AuditPage> {
+  const query = new URLSearchParams()
+  if (filter.level && filter.level !== 'all') query.set('level', filter.level)
+  if (filter.actor && filter.actor !== 'all') query.set('actor', filter.actor)
+  if (filter.limit !== undefined) query.set('limit', String(filter.limit))
+  const suffix = query.size > 0 ? `?${query}` : ''
+  return request<AuditPage>(`/api/audit${suffix}`)
 }

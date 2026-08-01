@@ -1,38 +1,35 @@
-// Initial data — the seed data from platform-ui/src/data/mock.ts.
+// Initial data for a blank install.
 //
 // IDEMPOTENT: every table is filled only if it is EMPTY. Nothing is written
 // over existing data when the server restarts, so changes the user made are
 // preserved.
 //
-// In the next stage real data sources (daemon telemetry, a real skill store)
-// get connected — at that point this file only remains for a blank install.
+// AS OF NOW THERE IS NOTHING LEFT TO SEED — and that is the point. Each table
+// below has its own note explaining why inventing a row for it would be a lie
+// rather than a convenience. The function stays because the shape (`applySeed`
+// + `SeedResult`) is what `index.ts` and the tests call, and because the next
+// table that genuinely needs a starting row belongs here.
 
 import type { Database } from 'bun:sqlite'
-import type { AppManifest, AuditEntry } from '@platforma/shared'
 
 // There is DELIBERATELY no server seed (since migration 007): a server row
 // points at a real SSH connection, so a made-up row would be a "server that
 // never connects". The user adds servers from the Servers page.
 
 // ---------------------------------------------------------------------------
-// Audit log (oldest to newest — the INSERT order must be this way, because
-// reads are sorted by id DESC)
+// Audit log
 // ---------------------------------------------------------------------------
 
-export const seedAuditLog: AuditEntry[] = [
-  { time: '00:12', actor: 'berlin-1 daemon', action: 'Daily backup', target: 'sqlite → berlin-1', level: 'write', result: 'approved' },
-  { time: '05:55', actor: 'server-monitor', action: 'Restart proposed', target: 'nyc-1 · nginx', level: 'write', result: 'pending' },
-  { time: '06:00', actor: 'ai-news-bot', action: 'Pipeline started', target: 'helsinki-1', level: 'read', result: 'OK' },
-  { time: '08:47', actor: 'skill:postgres-backup', action: 'DROP TABLE attempt blocked', target: 'db-01', level: 'dangerous', result: 'denied' },
-  { time: '09:00', actor: 'ai-news-bot', action: 'Health report sent', target: 'admin chat', level: 'read', result: 'OK' },
-  { time: '10:14', actor: 'ai-news-bot', action: 'Tavily search call', target: 'enricher', level: 'read', result: 'OK' },
-  { time: '11:31', actor: 'firdavs', action: 'Deploy request (via chat)', target: 'frankfurt-1', level: 'write', result: 'OK' },
-  { time: '11:32', actor: 'claude-code', action: 'tmux session opened', target: 'frankfurt-1', level: 'write', result: 'approved' },
-  { time: '11:50', actor: 'server-monitor', action: 'Disk usage read', target: 'helsinki-1', level: 'read', result: 'OK' },
-  { time: '11:50', actor: 'server-monitor', action: 'Alert sent', target: 'admin chat', level: 'read', result: 'OK' },
-  { time: '12:04', actor: 'firdavs', action: 'Post approved (✅)', target: 'post #4', level: 'write', result: 'OK' },
-  { time: '12:06', actor: 'ai-news-bot', action: 'Post published', target: 't.me/kanal/6', level: 'write', result: 'approved' },
-]
+// There is DELIBERATELY no audit seed either. It used to hold twelve invented
+// entries (`ai-news-bot`, `helsinki-1`, a blocked DROP TABLE) so the page would
+// not look bare — but the audit log is the one place on the platform that must
+// be trustworthy: it is append-only, protected by a SQL trigger, and it is what
+// you consult when you want to know what REALLY happened. Fiction in that table
+// is worse than an empty table.
+//
+// It fills up on its own from the first real action, because every state change
+// in the backend goes through `auditWrite(...)`.
+export const seedAuditLog: readonly never[] = []
 
 // ---------------------------------------------------------------------------
 // Installed apps
@@ -51,11 +48,6 @@ export const seedApps: readonly never[] = []
 // Applying the seed
 // ---------------------------------------------------------------------------
 
-function isEmpty(db: Database, table: string): boolean {
-  const q = db.query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM ${table}`).get()
-  return (q?.count ?? 0) === 0
-}
-
 export interface SeedResult {
   audit: number
   apps: number
@@ -64,34 +56,13 @@ export interface SeedResult {
 /**
  * Writes the seed data to the database. Every table is checked independently —
  * only empty tables are filled, which makes calling this again safe.
+ *
+ * Every count is currently 0 (see the notes above); the return shape is kept so
+ * callers and tests do not have to change when a table needs seeding again.
  */
-export function applySeed(db: Database): SeedResult {
-  const result: SeedResult = { audit: 0, apps: 0 }
-  const now = new Date().toISOString()
-
+export function applySeed(_db: Database): SeedResult {
   // There is DELIBERATELY no skill seed: a skill is tied to a real `SKILL.md`
   // on disk, so a made-up row would point nowhere. The user connects a GitHub
   // source themselves (the Skills page).
-
-  // The audit seed is written directly (not through `auditWrite`) — these are
-  // historical entries, and broadcasting them over WS as "new events" would be
-  // wrong; their time fields are past values too.
-  if (isEmpty(db, 'audit_log')) {
-    const st = db.prepare(
-      `INSERT INTO audit_log (time, actor, action, target, level, result, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    const day = now.slice(0, 10)
-    db.transaction(() => {
-      for (const a of seedAuditLog) {
-        st.run(a.time, a.actor, a.action, a.target, a.level, a.result, `${day}T${a.time}:00.000Z`)
-        result.audit++
-      }
-    })()
-  }
-
-  // No app seed — see the note above `seedApps`. `result.apps` stays 0 and is
-  // kept in the shape so callers and tests do not have to change.
-
-  return result
+  return { audit: 0, apps: 0 }
 }
