@@ -7,11 +7,11 @@
 // Only the places that need no LLM call are tested — those are pure logic.
 
 import { describe, expect, test } from 'bun:test'
-import { defaultConfig } from '@platforma/config'
+import { defaultConfig } from '@barpo/config'
 import { pickClassifierModel } from '../src/classifier.ts'
 import { ModeManager } from '../src/mode.ts'
 import { PermissionManager } from '../src/permission.ts'
-import type { ModelInfo } from '@platforma/shared'
+import type { ModelInfo } from '@barpo/shared'
 
 function model(id: string, provider = 'p'): ModelInfo {
   return {

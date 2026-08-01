@@ -1,6 +1,6 @@
 // The server side of the agent's schedule tools.
 //
-// `@platforma/ai` declares the tools and knows nothing else: it hands over a
+// `@barpo/ai` declares the tools and knows nothing else: it hands over a
 // title, a cron expression and a prompt. Everything that requires the database
 // or the clock happens here — parsing the expression, computing the first
 // firing, writing the row, telling the list.
@@ -11,8 +11,8 @@
 // expression the model invented is validated BEFORE a row is written, so a
 // schedule that can never fire is never stored.
 
-import type { ScheduleCreateResult, ScheduleDeleteResult, ScheduleSummary } from '@platforma/ai'
-import type { ChatSession, Schedule } from '@platforma/shared'
+import type { ScheduleCreateResult, ScheduleDeleteResult, ScheduleSummary } from '@barpo/ai'
+import type { ChatSession, Schedule } from '@barpo/shared'
 import { auditWrite } from '../audit.ts'
 import {
   createSchedule,

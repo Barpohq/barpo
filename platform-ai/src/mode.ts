@@ -14,7 +14,7 @@
 // "Turn back on". The reason — a mode changing on its own is confusing, and
 // the user needs to know which mode they are in.
 
-import type { PermissionMode } from '@platforma/shared'
+import type { PermissionMode } from '@barpo/shared'
 import { SessionRegistry } from './registry.ts'
 
 /** The limit on consecutive blocks */

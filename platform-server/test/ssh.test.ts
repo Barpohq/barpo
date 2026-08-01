@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Server } from '@platforma/shared'
+import type { Server } from '@barpo/shared'
 import {
   setCommandRunner,
   managedConfigPath,
@@ -32,13 +32,13 @@ const OK: CommandResult = { code: 0, stdout: '', stderr: '' }
 const DENIED: CommandResult = { code: 255, stdout: '', stderr: 'Permission denied (publickey).' }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'platforma-ssh-'))
+  dir = mkdtempSync(join(tmpdir(), 'barpo-ssh-'))
   process.env.PLATFORM_SSH = join(dir, 'ssh')
   process.env.PLATFORM_USER_SSH_CONFIG = join(dir, 'user-config')
   calls = []
   // The public key is written up front so that ssh-keygen is not invoked
   mkdirSync(join(dir, 'ssh'), { recursive: true })
-  writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 AAAATEST platforma\n')
+  writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 AAAATEST barpo\n')
 })
 
 afterEach(() => {
@@ -120,7 +120,7 @@ describe('installKey', () => {
     expect(argv).toContain('root@ex.uz')
     // The script appends the key idempotently
     expect(argv.at(-1)).toContain('authorized_keys')
-    expect(argv.at(-1)).toContain('ssh-ed25519 AAAATEST platforma')
+    expect(argv.at(-1)).toContain('ssh-ed25519 AAAATEST barpo')
   })
 
   test('when the key is refused and no password is given the error explains why', async () => {
@@ -193,7 +193,7 @@ describe('ensureKey (indirectly)', () => {
     fakeRunner((argv) => {
       if (argv[0] === 'ssh-keygen') {
         // The real keygen writes the file itself — so does the fake one
-        writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 NEW platforma\n')
+        writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 NEW barpo\n')
         return OK
       }
       return OK

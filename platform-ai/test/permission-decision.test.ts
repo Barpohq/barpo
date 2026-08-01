@@ -7,7 +7,7 @@
 // test forces an origin to be recorded for every path.
 
 import { beforeEach, describe, expect, test } from 'bun:test'
-import type { PermissionDecision } from '@platforma/shared'
+import type { PermissionDecision } from '@barpo/shared'
 import { PermissionManager } from '../src/permission.ts'
 
 function ask(pattern = 'bash:ls') {

@@ -34,7 +34,7 @@
 // `ssh` object (`app-ssh.ts`), which forces an argv array and passes the
 // secret over stdin.
 
-import type { AppAction, AppSettings } from '@platforma/shared'
+import type { AppAction, AppSettings } from '@barpo/shared'
 import { createAppSsh, type AppSshApi } from './app-ssh.ts'
 import { serverByName } from './repo.ts'
 import { validateCode } from './state-run.ts'

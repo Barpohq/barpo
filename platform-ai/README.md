@@ -1,11 +1,11 @@
-# @platforma/ai
+# @barpo/ai
 
 The platform's AI layer. Everything the server needs to run a chat that can
 actually do work — provider detection, the tool-using agent loop, and the
 security layer that decides what the agent is allowed to do.
 
 ```ts
-import { agentStream, detectModels, permissionManager, modeManager } from '@platforma/ai'
+import { agentStream, detectModels, permissionManager, modeManager } from '@barpo/ai'
 
 // 1) Which providers are ready to use on this machine
 const { models, providers, warnings } = await detectModels()
@@ -65,7 +65,7 @@ instead.
 |---|---|
 | `permission` | the `PermissionManager` for the session — files, commands and MCP calls all share it |
 | `mode` | the `ModeManager` — `confirm`/`auto`, block counters, fallback. Without it, confirm mode |
-| `config` | `@platforma/config` settings. Defaults are used if omitted |
+| `config` | `@barpo/config` settings. Defaults are used if omitted |
 | `classifierHistory` | the TEXT-ONLY history for the classifier — better supplied by the caller (two layers instead of one) |
 | `serverProvider` | ↩ the SSH servers connected to the platform → the `serverList` tool |
 | `dashboardSink` | ↩ where a published app manifest is stored → the `appPublish` tool |
@@ -409,7 +409,7 @@ instructions sit on top.
 
 ### `skill-load.ts` / `skill-file.ts` — Skills
 
-`.platforma/skills/*/SKILL.md`, in the Agent Skills format (frontmatter with
+`.barpo/skills/*/SKILL.md`, in the Agent Skills format (frontmatter with
 `name`, `description`, `license`, `allowed-tools`). Only **name + description +
 path** go into the prompt — progressive disclosure; the model fetches the full
 text itself with `read` when it decides it needs it. The full text of 20 skills
@@ -436,7 +436,7 @@ nobody.
 The problem: in every new session the agent learns the project from scratch —
 which command runs the tests, why a library was chosen, which style the user
 dislikes. Unlike `AGENTS.md`, which the user maintains by hand, **memory is
-written by the agent itself** into `.platforma/memory/`, and nobody syncs it.
+written by the agent itself** into `.barpo/memory/`, and nobody syncs it.
 
 An index (`MEMORY.md`) plus separate files, not one growing document: a single
 file would land in the context in full on every request and, at 50 stored facts,
@@ -578,8 +578,8 @@ request, so a streaming session sits at the head of the list.
 
 ## Settings
 
-Behaviour is controlled through `@platforma/config` — `~/.platforma/config.json`
-and the project's `.platforma/config.json`. Details:
+Behaviour is controlled through `@barpo/config` — `~/.barpo/config.json`
+and the project's `.barpo/config.json`. Details:
 `platform-config/README.md`.
 
 The main ones: `agent.compaction.*` (context compaction),

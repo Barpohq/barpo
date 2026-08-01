@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PermissionManager } from '../src/permission.ts'
 import { RestrictedEnv, DEFAULT_COMMAND_TIMEOUT_MS } from '../src/environment.ts'
-import type { PermissionAnswer, PermissionRequest } from '@platforma/shared'
+import type { PermissionAnswer, PermissionRequest } from '@barpo/shared'
 
 let ish: string
 let tashqi: string

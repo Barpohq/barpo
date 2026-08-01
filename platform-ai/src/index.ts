@@ -1,4 +1,4 @@
-// @platforma/ai — the platform's AI layer.
+// @barpo/ai — the platform's AI layer.
 //
 // The server uses only two things from this package:
 //   detectModels()       — which providers on this machine are ready to use

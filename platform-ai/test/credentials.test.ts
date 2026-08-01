@@ -12,7 +12,7 @@ let papka: string
 let yol: string
 
 beforeEach(() => {
-  papka = mkdtempSync(join(tmpdir(), 'platforma-kred-'))
+  papka = mkdtempSync(join(tmpdir(), 'barpo-kred-'))
   yol = join(papka, 'ai-auth.json')
 })
 

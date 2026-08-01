@@ -45,7 +45,7 @@ function write(
     kind: 'file',
     name: 'a.txt',
     originalName: 'a.txt',
-    path: '.platforma/sessiyalar/s/fayllar/a.txt',
+    path: '.barpo/sessiyalar/s/fayllar/a.txt',
     mime: 'text/plain',
     size: 10,
     ...changes,

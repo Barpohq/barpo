@@ -11,7 +11,7 @@
 // on demand rather than being unreachable behind the first hundred rows.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CHANNELS, type AuditEntry, type AuditLevel } from '@platforma/shared'
+import { CHANNELS, type AuditEntry, type AuditLevel } from '@barpo/shared'
 import { fetchAudit } from '../lib/api'
 import { LEVEL_LABEL, RESULT_LABEL } from '../lib/audit-label'
 import { auditDate } from '../lib/date'

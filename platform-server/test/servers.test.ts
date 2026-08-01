@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Database } from 'bun:sqlite'
-import type { Server, ServerMetrics } from '@platforma/shared'
+import type { Server, ServerMetrics } from '@barpo/shared'
 import { app } from '../src/app.ts'
 import { openDb, setDb } from '../src/db.ts'
 import { readServers } from '../src/repo.ts'
@@ -31,11 +31,11 @@ function fakeRunner(reply: (argv: string[]) => CommandResult = () => OK) {
 beforeEach(() => {
   db = openDb(':memory:')
   setDb(db)
-  dir = mkdtempSync(join(tmpdir(), 'platforma-srv-'))
+  dir = mkdtempSync(join(tmpdir(), 'barpo-srv-'))
   process.env.PLATFORM_SSH = join(dir, 'ssh')
   process.env.PLATFORM_USER_SSH_CONFIG = join(dir, 'user-config')
   mkdirSync(join(dir, 'ssh'), { recursive: true })
-  writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 AAAATEST platforma\n')
+  writeFileSync(join(dir, 'ssh', 'id_ed25519.pub'), 'ssh-ed25519 AAAATEST barpo\n')
   calls = []
   fakeRunner()
 })

@@ -4,7 +4,7 @@
 // one address, and in production it is one process too — so there is no CORS
 // problem and no second port to manage.
 
-import { killAllMcpProcesses, liveProcessCount } from '@platforma/ai'
+import { killAllMcpProcesses, liveProcessCount } from '@barpo/ai'
 import { app } from './app.ts'
 import { auditWrite } from './audit.ts'
 import { db } from './db.ts'

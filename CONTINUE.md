@@ -104,7 +104,7 @@ Two deliberate exceptions to the translation: the Uzbek word lists in
 `classifier.ts` still accepts the old Uzbek JSON keys as a fallback because
 small models echo them back.
 
-Storage paths moved with the rename (`~/.platforma/work`, `projects`,
+Storage paths moved with the rename (`~/.barpo/work`, `projects`,
 `sessions`, `skills-store`, `mcp-credentials.json`). No data migration was
 written for them — a pre-translation install keeps its old directories.
 Migration 014 DOES rewrite the built-in source rows, because those strings are
@@ -120,7 +120,7 @@ open it at all — so "update" meant the model rewriting the whole manifest from
 memory, and whatever it forgot to repeat (`states`, `settings`) was silently
 lost.
 
-**An app is now a directory**, `~/.platforma/apps/<id>/`:
+**An app is now a directory**, `~/.barpo/apps/<id>/`:
 
 ```
 app.json            metadata, widgets, data, and the state/action CONFIG
@@ -322,7 +322,7 @@ pass covers a closed laptop; it does not cover a machine that stays off past
 - **Audit:** only through `auditWrite(...)` — the table blocks UPDATE/DELETE with
   a SQL trigger.
 - **Skills:** the store root is relocated by `PLATFORM_SKILLS` (a temporary
-  directory in tests). The agent reads skills from `.platforma/skills/`, where
+  directory in tests). The agent reads skills from `.barpo/skills/`, where
   `syncToProject()` places the copy — do not put files there by hand, they are
   deleted on the next stream.
 - **Apps:** the root is relocated by `PLATFORM_APPS`. An app is a folder, so

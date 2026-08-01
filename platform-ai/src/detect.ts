@@ -18,7 +18,7 @@ import type {
   BillingKind,
   ModelInfo,
   ProviderInfo,
-} from '@platforma/shared'
+} from '@barpo/shared'
 import type { Api, Model, Models, MutableModels } from '@earendil-works/pi-ai'
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
 import { FileCredentialStore } from './credentials.ts'

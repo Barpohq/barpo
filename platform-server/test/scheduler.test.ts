@@ -1,6 +1,6 @@
 // The scheduler: the tick, what firing does, and the limit → resume path.
 //
-// The LLM is never called — `@platforma/ai` is mocked the same way
+// The LLM is never called — `@barpo/ai` is mocked the same way
 // `orchestrator.test.ts` does it (the mock must run before the imports, hence
 // the shape of this file).
 //
@@ -18,7 +18,7 @@ import type { Database } from 'bun:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ServerEvent } from '@platforma/shared'
+import type { ServerEvent } from '@barpo/shared'
 
 let fakeEvents: unknown[] = []
 /** Set by the fake stream so tests can see WHICH session was streamed */
@@ -29,7 +29,7 @@ let streamedSessions: string[] = []
  */
 let streamHold: Promise<void> | null = null
 
-const realAi = await import('@platforma/ai')
+const realAi = await import('@barpo/ai')
 const realPermissionManager = realAi.permissionManager
 const listenerAdded = new WeakSet<object>()
 
@@ -53,7 +53,7 @@ const fakeModels = {
   time: new Date().toISOString(),
 }
 
-mock.module('@platforma/ai', () => ({
+mock.module('@barpo/ai', () => ({
   ...realAi,
   conversationStream: async function* (_c: unknown, _m: unknown, _o: unknown) {
     for (const e of fakeEvents) yield e

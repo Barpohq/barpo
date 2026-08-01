@@ -33,7 +33,7 @@ import type {
   Skill,
   SkillScope,
   SkillSource,
-} from '@platforma/shared'
+} from '@barpo/shared'
 
 export class ApiError extends Error {
   status: number
@@ -441,7 +441,7 @@ export async function fetchProjects(): Promise<Project[]> {
 
 /**
  * New project. Only the name is sent — the server creates the folder itself
- * (`~/.platforma/projects/<slug>/`); the client cannot supply a path.
+ * (`~/.barpo/projects/<slug>/`); the client cannot supply a path.
  */
 export async function createProject(name: string): Promise<Project> {
   const response = await request<{ project: Project }>('/api/projects', {

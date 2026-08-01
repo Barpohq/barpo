@@ -25,7 +25,7 @@
 // │                                                                      │
 // │ Now the agent writes ordinary files with `write`/`edit`:             │
 // │                                                                      │
-// │     ~/.platforma/apps/<id>/app.json      metadata, widgets, data     │
+// │     ~/.barpo/apps/<id>/app.json      metadata, widgets, data     │
 // │                          view.jsx        optional custom view        │
 // │                          states/<n>.js   one file per live value     │
 // │                          settings.js     writes the form values      │
@@ -64,7 +64,7 @@
 //
 // LAYER BOUNDARY — the same inversion as in `server-tools.ts`. The publish
 // record lives in SQLite and the folders live under the server's storage
-// root, i.e. both are `platform-server`'s business. `@platforma/ai` does NOT
+// root, i.e. both are `platform-server`'s business. `@barpo/ai` does NOT
 // DEPEND on the server, so the functions are supplied from outside
 // (`DashboardSink`, `DashboardRemover`). This file knows neither the database
 // nor `repo.ts`.
@@ -230,7 +230,7 @@ export function createAppPublishTool(
       'Register an app folder as a dashboard page on this platform.',
       'The app appears in the sidebar under "Apps" and is rendered by the platform itself.',
       '',
-      'WRITE THE FILES FIRST, then call this once. The folder is ~/.platforma/apps/<id>/ :',
+      'WRITE THE FILES FIRST, then call this once. The folder is ~/.barpo/apps/<id>/ :',
       '  app.json          required — id, name, icon, widgets, data, and the state/action config',
       '  view.jsx          optional — a custom view; only when widgets cannot express the layout',
       '  states/<name>.js  optional — one file per live value, each with its own interval',
@@ -294,7 +294,7 @@ export function createAppDeleteTool(
     label: 'appDelete',
     description: [
       'Delete an app from this platform — the sidebar entry AND its entire folder',
-      '(~/.platforma/apps/<id>/, including view.jsx, states and settings).',
+      '(~/.barpo/apps/<id>/, including view.jsx, states and settings).',
       '',
       'THIS CANNOT BE UNDONE. There is no trash: the files are erased. The user is always',
       'asked to confirm, and their answer is the only thing that authorises it.',
@@ -414,7 +414,7 @@ export const DASHBOARD_PROMPT_SECTION = {
     '- appDelete: delete an app and its folder (asks the user first)',
   ],
   rules: [
-    'An app on this platform IS A FOLDER: ~/.platforma/apps/<id>/ with app.json, and',
+    'An app on this platform IS A FOLDER: ~/.barpo/apps/<id>/ with app.json, and',
     'optionally view.jsx, states/<name>.js, settings.js and actions/<name>.js.',
     'Write those files with `write`/`edit` like any other files, then call `appPublish`',
     'ONCE to register the folder.',

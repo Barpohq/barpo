@@ -17,7 +17,7 @@
 // publish the AI is still in the loop and can fix what it wrote, so errors are
 // worth far more now than when the user opens the page three days later.
 
-import type { DashboardResult } from '@platforma/ai'
+import type { DashboardResult } from '@barpo/ai'
 import type { Database } from 'bun:sqlite'
 import { readAppFolder } from './app-store.ts'
 import { appDir, isValidAppId, APP_FILES } from './apps-dir.ts'

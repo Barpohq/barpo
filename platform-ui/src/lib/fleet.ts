@@ -10,7 +10,7 @@
 // requests for the individual servers are issued together, not in a chain.
 
 import { useEffect, useState } from 'react'
-import type { ServerMetrics } from '@platforma/shared'
+import type { ServerMetrics } from '@barpo/shared'
 import { fetchServers, fetchServerMetrics } from './api'
 
 /** How often the fleet is re-read. SSH is expensive, and disk usage is slow-moving. */

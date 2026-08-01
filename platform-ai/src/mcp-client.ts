@@ -108,7 +108,7 @@ export class McpClient {
           // them falsely would have the server send us requests and wait for
           // answers.
           capabilities: {},
-          clientInfo: { name: 'platforma', version: '0.1.0' },
+          clientInfo: { name: 'barpo', version: '0.1.0' },
         },
         timeout,
         signal,

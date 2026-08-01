@@ -1,7 +1,7 @@
-// `.platforma` papkasi qidiruvdan chiqarilganini tekshiradi.
+// `.barpo` papkasi qidiruvdan chiqarilganini tekshiradi.
 //
 // NEGA MUHIM. Loyihaga ulangan suhbatlar bitta ish papkasini bo'lishadi
-// (`ish-papkasi.ts`), biriktirmalar esa `.platforma/sessiyalar/<sid>/fayllar/`
+// (`ish-papkasi.ts`), biriktirmalar esa `.barpo/sessiyalar/<sid>/fayllar/`
 // da yashaydi. Papka qidiruvdan chiqarilmasa, agent `grep` qilganda BOSHQA
 // suhbatlarning fayllaridan result chiqardi — suhbatlar orasida ma'lumot
 // sizishi.
@@ -28,10 +28,10 @@ let papka: string
 let context: { env: RestrictedEnv }
 
 /** Begona sessiyaning biriktirma papkasi */
-const BEGONA_YOL = '.platforma/sessiyalar/boshqa-sid/fayllar'
+const BEGONA_YOL = '.barpo/sessiyalar/boshqa-sid/fayllar'
 
 beforeEach(() => {
-  papka = mkdtempSync(join(tmpdir(), 'platforma-qidiruv-biriktirma-'))
+  papka = mkdtempSync(join(tmpdir(), 'barpo-qidiruv-biriktirma-'))
 
   // Oddiy code fayli — topilishi KERAK
   writeFileSync(join(papka, 'code.ts'), 'const BELGI = "code ichida"\n')
@@ -41,8 +41,8 @@ beforeEach(() => {
   writeFileSync(join(papka, BEGONA_YOL, 'begona.txt'), 'const BELGI = "begona suhbatdan"\n')
 
   // Skill va xotira ham shu papkada — ular ham chiqadi (ongli almashtirish)
-  mkdirSync(join(papka, '.platforma/memory'), { recursive: true })
-  writeFileSync(join(papka, '.platforma/memory/eslatma.md'), 'const BELGI = "xotirada"\n')
+  mkdirSync(join(papka, '.barpo/memory'), { recursive: true })
+  writeFileSync(join(papka, '.barpo/memory/eslatma.md'), 'const BELGI = "xotirada"\n')
 
   // Ruxsat so'ralishi bu testlarda KUTILMAYDI: hamma yo'l ish papkasi
   // ichida. So'rov kelsa u javobsiz qoladi va test timeout bilan yiqiladi —
@@ -78,9 +78,9 @@ async function bajar(name: string, args: unknown): Promise<string> {
     .join('\n')
 }
 
-describe('`.platforma` qidiruvdan chiqarilgan', () => {
+describe('`.barpo` qidiruvdan chiqarilgan', () => {
   test('ro\'yxatda bor — ikkala backend shu ro\'yxatdan o\'qiydi', () => {
-    expect(SKIPPED_DIRS).toContain('.platforma')
+    expect(SKIPPED_DIRS).toContain('.barpo')
   })
 
   test('grep begona sessiyaning biriktirmasini TOPMAYDI', async () => {
@@ -96,11 +96,11 @@ describe('`.platforma` qidiruvdan chiqarilgan', () => {
     expect(result).not.toContain('begona.txt')
   })
 
-  test('ls ildizda `.platforma` ni ko\'rsatmaydi', async () => {
+  test('ls ildizda `.barpo` ni ko\'rsatmaydi', async () => {
     const result = await bajar('ls', {})
 
     expect(result).toContain('code.ts')
-    expect(result).not.toContain('.platforma')
+    expect(result).not.toContain('.barpo')
   })
 
   // ONGLI YON TA'SIR: xotira va skilllar ham qidiruvdan chiqadi. Ular

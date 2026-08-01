@@ -3,14 +3,14 @@
 //
 // The tests that touch the file system work inside a temporary folder — the
 // `PLATFORM_PROJECTS` env var points there, so the real
-// `~/.platforma/loyihalar` is never touched.
+// `~/.barpo/loyihalar` is never touched.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ChatSession, Project } from '@platforma/shared'
+import type { ChatSession, Project } from '@barpo/shared'
 import { app } from '../src/app.ts'
 import { openDb, setDb } from '../src/db.ts'
 import {
@@ -40,7 +40,7 @@ beforeEach(() => {
   db = openDb(':memory:')
   setDb(db)
 
-  temp = mkdtempSync(join(tmpdir(), 'platforma-loyiha-'))
+  temp = mkdtempSync(join(tmpdir(), 'barpo-loyiha-'))
   oldProjects = process.env.PLATFORM_PROJECTS
   oldWorks = process.env.PLATFORM_WORKS
   process.env.PLATFORM_PROJECTS = join(temp, 'projects')

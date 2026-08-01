@@ -1,8 +1,8 @@
-// @platforma/config — the platform's settings layer.
+// @barpo/config — the platform's settings layer.
 //
 // Usage:
 //
-//   import { config } from '@platforma/config'
+//   import { config } from '@barpo/config'
 //   const { config: settings, warnings } = config({ workDir })
 //   settings.agent.compaction.reserveTokens   // → 16384
 //

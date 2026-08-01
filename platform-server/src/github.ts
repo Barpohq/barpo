@@ -86,7 +86,7 @@ async function request(url: string): Promise<Response> {
   const response = await fetch(url, {
     headers: {
       Accept: 'application/vnd.github+json',
-      'User-Agent': 'platforma-skills',
+      'User-Agent': 'barpo-skills',
       'X-GitHub-Api-Version': '2022-11-28',
     },
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -201,7 +201,7 @@ export async function fetchTarball(r: GithubRef, ref: string): Promise<Uint8Arra
   const response = await fetch(
     `https://codeload.github.com/${r.owner}/${r.repo}/tar.gz/${encodeURIComponent(ref)}`,
     {
-      headers: { 'User-Agent': 'platforma-skills' },
+      headers: { 'User-Agent': 'barpo-skills' },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     },
   )

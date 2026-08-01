@@ -17,7 +17,7 @@ import type { Migration } from './index.ts'
 //                     bu `skilllar` ichidagi ustun emas, alohida jadval.
 //
 // Diskdagi holat bu jadvallardan KELIB CHIQADI (haqiqat manbai — baza):
-// ombor `~/.platforma/skills-ombor/`, loyiha nusxasi esa har sessiya boshida
+// ombor `~/.barpo/skills-ombor/`, loyiha nusxasi esa har sessiya boshida
 // `skill_ornatish` ga qarab qayta quriladi.
 
 export const migration: Migration = {

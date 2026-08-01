@@ -24,7 +24,7 @@
 // package with `npx`/`uvx`. Which is why no counterpart to `builtinToStore()`
 // is needed.
 
-import type { McpCatalogEntry } from '@platforma/shared'
+import type { McpCatalogEntry } from '@barpo/shared'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { convertRegistryEntry, type RegistryServerEntry } from './mcp-registry.ts'
@@ -36,7 +36,7 @@ import { convertRegistryEntry, type RegistryServerEntry } from './mcp-registry.t
  * value MUST BE STABLE — otherwise a new source would be created on every
  * start-up.
  */
-export const BUILTIN_MCP_SOURCE = 'platforma-builtin'
+export const BUILTIN_MCP_SOURCE = 'barpo-builtin'
 
 /**
  * The directory the builtin MCP servers live in (inside the repo).

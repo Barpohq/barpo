@@ -30,8 +30,8 @@ import {
   validateManifest,
   STATE_NAME_PATTERN,
   ACTION_NAME_PATTERN,
-} from '@platforma/shared'
-import type { AppManifest, AppState, AppAction } from '@platforma/shared'
+} from '@barpo/shared'
+import type { AppManifest, AppState, AppAction } from '@barpo/shared'
 import { APP_FILES, appFilePath } from './apps-dir.ts'
 import { buildViewCached } from './view-cache.ts'
 

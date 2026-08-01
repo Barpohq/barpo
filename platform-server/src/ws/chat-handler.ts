@@ -7,7 +7,7 @@
 // This file used to repeat the model-lock check itself and the two copies were
 // free to drift apart. The rules now live in one place.
 
-import type { ClientEvent } from '@platforma/shared'
+import type { ClientEvent } from '@barpo/shared'
 import { acceptMessage } from '../chat-send.ts'
 import { streamReply, setMode, answerPermission } from '../orchestrator.ts'
 import { hub, type PlatformWS } from './hub.ts'

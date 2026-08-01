@@ -13,13 +13,13 @@ import type { Database } from 'bun:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ServerEvent } from '@platforma/shared'
+import type { ServerEvent } from '@barpo/shared'
 
 let fakeEvents: unknown[] = []
 
-const realAi = await import('@platforma/ai')
+const realAi = await import('@barpo/ai')
 
-mock.module('@platforma/ai', () => ({
+mock.module('@barpo/ai', () => ({
   ...realAi,
   conversationStream: async function* () {
     for (const e of fakeEvents) yield e

@@ -8,7 +8,7 @@
 // ones in coral.
 
 import { useState } from 'react'
-import type { PermissionOrigin, ToolCall } from '@platforma/shared'
+import type { PermissionOrigin, ToolCall } from '@barpo/shared'
 
 /** Maximum number of lines shown while collapsed */
 const SHORT_LINES = 6

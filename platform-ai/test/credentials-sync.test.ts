@@ -16,7 +16,7 @@ let home: string
 let storePath: string
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'platforma-store-'))
+  home = mkdtempSync(join(tmpdir(), 'barpo-store-'))
   storePath = join(home, 'store', 'ai-auth.json')
   mkdirSync(join(home, '.codex'), { recursive: true })
   writeFileSync(

@@ -4,7 +4,7 @@
 // environment variables, a local Ollama and the ~/.claude / ~/.codex
 // subscriptions. The detection result is cached — /models/refresh reloads it.
 
-import { detectModels } from '@platforma/ai'
+import { detectModels } from '@barpo/ai'
 import { Hono } from 'hono'
 import { auditWrite } from '../audit.ts'
 

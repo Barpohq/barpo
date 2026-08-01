@@ -14,7 +14,7 @@ import type { Migration } from './index.ts'
 // FK bo'lsa yuklash paytida "yo'q xabar" xatosi bilan yiqilardi. Sessiya
 // bo'yicha CASCADE yetarli.
 //
-// `yol` — ish papkasiga NISBATAN yo'l (`.platforma/sessiyalar/<sid>/fayllar/x.png`),
+// `yol` — ish papkasiga NISBATAN yo'l (`.barpo/sessiyalar/<sid>/fayllar/x.png`),
 // absolut emas. Ikki sabab: (1) loyiha papkasi ko'chirilsa yozuvlar
 // buzilmaydi, (2) mijozga absolut yo'l hech qachon ko'rinmaydi.
 //

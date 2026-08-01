@@ -19,13 +19,13 @@
 // │ separate mechanism into the catalog".                                │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import { parseSkillFile } from '@platforma/ai'
-import type { Skill } from '@platforma/shared'
+import { parseSkillFile } from '@barpo/ai'
+import type { Skill } from '@barpo/shared'
 import { cpSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 /** The `url` field of the catalog source — this is what the UI shows */
-export const BUILTIN_SOURCE_URL = 'platforma://builtin'
+export const BUILTIN_SOURCE_URL = 'barpo://builtin'
 
 /**
  * The `owner`/`repo` values of the source row.
@@ -34,7 +34,7 @@ export const BUILTIN_SOURCE_URL = 'platforma://builtin'
  * (`owner`+`repo`+`ref`), so they MUST BE STABLE — otherwise a new source
  * would be created on every start-up.
  */
-export const BUILTIN_OWNER = 'platforma'
+export const BUILTIN_OWNER = 'barpo'
 export const BUILTIN_REPO = 'builtin-skills'
 
 /**

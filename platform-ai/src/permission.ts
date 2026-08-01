@@ -20,7 +20,7 @@ import type {
   PermissionDecision,
   PermissionRequest,
   PermissionKind,
-} from '@platforma/shared'
+} from '@barpo/shared'
 import { assessAction, type ClassifierMessage } from './classifier.ts'
 import { SessionRegistry } from './registry.ts'
 import type { ModeManager } from './mode.ts'

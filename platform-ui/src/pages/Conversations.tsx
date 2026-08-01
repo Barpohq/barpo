@@ -10,7 +10,7 @@
 // thousands; a local filter is instant and does not depend on the network.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChatSession, Project } from '@platforma/shared'
+import type { ChatSession, Project } from '@barpo/shared'
 import StreamIndicator from '../components/StreamIndicator'
 import { ApiError, deleteSession, renameSession } from '../lib/api'
 import type { RunningMap } from '../lib/running'

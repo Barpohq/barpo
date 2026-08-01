@@ -15,7 +15,7 @@
 // two-browser-windows case.
 
 import { useState } from 'react'
-import type { AppAction } from '@platforma/shared'
+import type { AppAction } from '@barpo/shared'
 import { ApiError, runAppAction, type ActionResponse } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { Card, LevelBadge } from '../ui'

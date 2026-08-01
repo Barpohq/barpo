@@ -9,7 +9,7 @@
 // `audit.entry` event through the WS hub.
 
 import type { Database } from 'bun:sqlite'
-import type { AuditEntry, AuditLevel } from '@platforma/shared'
+import type { AuditEntry, AuditLevel } from '@barpo/shared'
 import { db as globalDb } from './db.ts'
 import { hub } from './ws/hub.ts'
 

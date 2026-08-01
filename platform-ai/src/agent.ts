@@ -21,9 +21,9 @@
 import { Agent, createBashTool, createEditTool, createReadTool, createWriteTool } from '@earendil-works/pi-agent-core'
 import type { AgentEvent as PiAgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { Api, ImageContent, Model, Models } from '@earendil-works/pi-ai'
-import type { Config } from '@platforma/config'
-import { defaultConfig } from '@platforma/config'
-import type { ModelChoice, PermissionDecision, PermissionMode, PermissionRequest } from '@platforma/shared'
+import type { Config } from '@barpo/config'
+import { defaultConfig } from '@barpo/config'
+import type { ModelChoice, PermissionDecision, PermissionMode, PermissionRequest } from '@barpo/shared'
 import { modelsCollection } from './detect.ts'
 import {
   afterChain,
@@ -299,11 +299,11 @@ export function streamError(messages: readonly unknown[]): string | undefined {
  * stronger to the model, but the order states the intent clearly — the
  * platform rules are the foundation, the project's instructions go on top.
  *
- * `skills` — the listing of `.platforma/skills/` in the working directory
+ * `skills` — the listing of `.barpo/skills/` in the working directory
  * (`skill-load.ts`). Only name+description+path goes in; the model fetches the
  * full text itself with `read`.
  *
- * `memory` — the listing of `.platforma/memory/` in the working directory
+ * `memory` — the listing of `.barpo/memory/` in the working directory
  * (`memory.ts`). The same progressive disclosure as the skills, but it is
  * included even when empty: without the writing rule the agent would not know
  * the mechanism exists.
@@ -643,12 +643,12 @@ export async function* agentStream(
       // project-context.ts).
       const projectContext = readProjectContext(options.workDir)
 
-      // The list of installed skills (`.platforma/skills/`). The server
+      // The list of installed skills (`.barpo/skills/`). The server
       // prepares the directory at the start of the session — here we only
       // read it.
       const skills = skillsToPrompt(readSkills(options.workDir))
 
-      // The project memory (`.platforma/memory/`) — the agent's own notes.
+      // The project memory (`.barpo/memory/`) — the agent's own notes.
       // Unlike the skills, nobody syncs them: the files just live there. Does
       // not go to the classifier (see `memory.ts`).
       //

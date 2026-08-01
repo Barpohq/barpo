@@ -24,7 +24,7 @@ let globalDir: string
 let workDir: string
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'platforma-config-'))
+  root = mkdtempSync(join(tmpdir(), 'barpo-config-'))
   globalDir = join(root, 'global')
   workDir = join(root, 'project')
   mkdirSync(globalDir, { recursive: true })

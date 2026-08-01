@@ -10,7 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import type { AppManifest } from '@platforma/shared'
+import type { AppManifest } from '@barpo/shared'
 import { clearLocks, setSshFactory } from '../src/action-run.ts'
 import { app } from '../src/app.ts'
 import { openDb, setDb } from '../src/db.ts'

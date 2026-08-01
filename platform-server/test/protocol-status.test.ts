@@ -13,7 +13,7 @@ import {
   eventSession,
   type StreamStatus,
   type ServerEvent,
-} from '@platforma/shared'
+} from '@barpo/shared'
 
 function status(sessionId: string, streamStatus: StreamStatus): ServerEvent {
   return { type: 'chat.status', sessionId, status: streamStatus }

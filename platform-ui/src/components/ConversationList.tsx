@@ -8,7 +8,7 @@
 // The list arrives ready-made from App (`useConversations` is called there
 // once) — so the sidebar and the Conversations page show the same source.
 
-import type { ChatSession } from '@platforma/shared'
+import type { ChatSession } from '@barpo/shared'
 import type { RunningMap } from '../lib/running'
 import StreamIndicator from './StreamIndicator'
 

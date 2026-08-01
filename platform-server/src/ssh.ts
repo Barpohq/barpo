@@ -2,11 +2,11 @@
 //
 // The model:
 //
-//   1) PLATFORM KEY — ~/.platforma/ssh/id_ed25519 (+ .pub). DELIBERATELY kept
+//   1) PLATFORM KEY — ~/.barpo/ssh/id_ed25519 (+ .pub). DELIBERATELY kept
 //      separate from the user's personal key: revoking the platform means
 //      removing this one key from the server, the personal key is untouched.
 //
-//   2) MANAGED CONFIG — ~/.platforma/ssh/config. One Host block per server
+//   2) MANAGED CONFIG — ~/.barpo/ssh/config. One Host block per server
 //      (alias, host, port, user, key). Only a SINGLE `Include` line is added
 //      to ~/.ssh/config — nothing else in the user's file is touched. That is
 //      also why `ssh <server-name>` works straight from the terminal.
@@ -23,7 +23,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Server, ServerMetrics } from '@platforma/shared'
+import type { Server, ServerMetrics } from '@barpo/shared'
 
 // ---------------------------------------------------------------------------
 // Command runner (swapped out in tests)
@@ -132,7 +132,7 @@ export function sshRun(
 export function sshRoot(): string {
   const env = process.env.PLATFORM_SSH?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'ssh')
+  return join(homedir(), '.barpo', 'ssh')
 }
 
 /** The user's ~/.ssh/config file. Relocatable via env in tests. */
@@ -174,7 +174,7 @@ export async function ensureKey(): Promise<string> {
       'ssh-keygen',
       '-t', 'ed25519',
       '-N', '',
-      '-C', 'platforma',
+      '-C', 'barpo',
       '-f', secret,
       '-q',
     ])
@@ -193,7 +193,7 @@ export async function ensureKey(): Promise<string> {
 /**
  * Rewrites the managed config IN FULL from the server list in the database.
  * The database is the source of truth — hand edits to the file are lost on
- * the next write (the same rule as `.platforma/skills/` for skills).
+ * the next write (the same rule as `.barpo/skills/` for skills).
  *
  * `UserKnownHostsFile` + `accept-new` live here: the host key is not asked
  * for on the first connection (an interactive prompt would hang the server)

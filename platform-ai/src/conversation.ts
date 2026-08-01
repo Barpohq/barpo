@@ -10,7 +10,7 @@
 // to be written into the chat history and sent to the UI over WS.
 
 import type { AssistantMessage, Context, Message } from '@earendil-works/pi-ai'
-import type { ModelChoice } from '@platforma/shared'
+import type { ModelChoice } from '@barpo/shared'
 import { modelsCollection } from './detect.ts'
 
 export interface ConversationMessage {

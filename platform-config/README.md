@@ -1,10 +1,10 @@
-# @platforma/config
+# @barpo/config
 
 The platform's settings layer. The user controls agent behaviour, tools and
 the permission system through a file.
 
 ```ts
-import { config } from '@platforma/config'
+import { config } from '@barpo/config'
 
 const { config: settings, warnings } = config({ workDir })
 settings.agent.compaction.reserveTokens   // → 16384
@@ -16,8 +16,8 @@ Two layers; the upper one overrides the lower.
 
 | Layer | Path | Purpose |
 |---|---|---|
-| global | `~/.platforma/config.json` | the user's usual settings |
-| project | `<work dir>/.platforma/config.json` | a restriction for this job |
+| global | `~/.barpo/config.json` | the user's usual settings |
+| project | `<work dir>/.barpo/config.json` | a restriction for this job |
 
 The global directory can be moved with `PLATFORM_CONFIG_DIR` (that is what
 the tests do).

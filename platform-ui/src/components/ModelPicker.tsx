@@ -8,7 +8,7 @@
 // the selected model's label is shown.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { BillingKind, ModelInfo } from '@platforma/shared'
+import type { BillingKind, ModelInfo } from '@barpo/shared'
 import { storeModel } from '../lib/model-storage'
 
 /**

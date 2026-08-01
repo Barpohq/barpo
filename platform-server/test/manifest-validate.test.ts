@@ -11,7 +11,7 @@ import {
   WIDGET_LIMIT,
   validateManifest,
   sanitiseWidget,
-} from '@platforma/shared'
+} from '@barpo/shared'
 
 /** The smallest valid manifest */
 const base = {

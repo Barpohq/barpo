@@ -17,7 +17,7 @@
 // │ sources (`mcp-github.ts`) — the conversion logic lives in one place. │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import type { McpCatalogEntry, McpSettingField } from '@platforma/shared'
+import type { McpCatalogEntry, McpSettingField } from '@barpo/shared'
 
 const REGISTRY_API = 'https://registry.modelcontextprotocol.io/v0/servers'
 const TIMEOUT_MS = 30_000

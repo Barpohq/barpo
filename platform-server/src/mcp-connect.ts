@@ -17,8 +17,8 @@
 // │ element of the argv ARRAY — no shell is involved at any point.       │
 // └──────────────────────────────────────────────────────────────────────┘
 
-import type { McpConnectableServer } from '@platforma/ai'
-import type { McpInstall, McpServer } from '@platforma/shared'
+import type { McpConnectableServer } from '@barpo/ai'
+import type { McpInstall, McpServer } from '@barpo/shared'
 import { mcpCredentialStore } from './mcp-credentials.ts'
 import { substitutePlaceholders } from './mcp-registry.ts'
 

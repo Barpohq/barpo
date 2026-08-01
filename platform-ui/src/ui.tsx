@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { AuditLevel } from '@platforma/shared'
+import type { AuditLevel } from '@barpo/shared'
 import { LEVEL_LABEL } from './lib/audit-label'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {

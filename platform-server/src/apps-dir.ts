@@ -26,7 +26,7 @@ import { join, resolve, sep } from 'node:path'
 export function appsRoot(): string {
   const env = process.env.PLATFORM_APPS?.trim()
   if (env) return env
-  return join(homedir(), '.platforma', 'apps')
+  return join(homedir(), '.barpo', 'apps')
 }
 
 /**

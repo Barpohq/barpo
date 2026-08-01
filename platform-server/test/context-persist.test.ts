@@ -11,7 +11,7 @@
 // was the part that was broken.
 
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { buildContext } from '@platforma/ai'
+import { buildContext } from '@barpo/ai'
 import { openDb, setDb } from '../src/db.ts'
 import { createSession, readMessages, writeMessage } from '../src/repo.ts'
 

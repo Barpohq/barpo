@@ -24,7 +24,7 @@
 // one is never stored at all (`ssh.ts`). The SSH key is not emitted either.
 //
 // LAYER BOUNDARY. The servers live in SQLite, that is, in `platform-server`.
-// `@platforma/ai` however DOES NOT DEPEND on the server (the dependency runs
+// `@barpo/ai` however DOES NOT DEPEND on the server (the dependency runs
 // only the other way) — so the list arrives here by INVERSION: the caller
 // supplies a `ServerProvider` function. That is why this file knows neither the
 // database nor `repo.ts`.
@@ -36,7 +36,7 @@ import type { SearchTool } from './search-tools.ts'
 /**
  * The server record the tool sees.
  *
- * The NEEDED part of the `Server` type in `@platforma/shared`. Deliberately
+ * The NEEDED part of the `Server` type in `@barpo/shared`. Deliberately
  * narrow: only the fields shown to the agent live here, so that if a more
  * sensitive field is added to `Server` in future (a token, say) it does not
  * end up in this tool's output BY ITSELF.

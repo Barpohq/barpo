@@ -10,7 +10,7 @@
 // In a separate file rather than in `ui.tsx`: that file must only export
 // components (Vite fast refresh).
 
-import type { AuditLevel } from '@platforma/shared'
+import type { AuditLevel } from '@barpo/shared'
 
 export const LEVEL_LABEL: Record<AuditLevel, string> = {
   read: 'read',

@@ -17,7 +17,7 @@
 // other conversations reaches this hook.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatSession } from '@platforma/shared'
+import type { ChatSession } from '@barpo/shared'
 import { fetchSessions } from './api'
 import { ws } from './ws'
 
