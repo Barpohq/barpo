@@ -80,7 +80,11 @@
                 "appDelete",
                 "scheduleCreate",
                 "scheduleList",
-                "scheduleDelete"
+                "scheduleDelete",
+                "processStart",
+                "processOutput",
+                "processStop",
+                "processList"
               ],
               "type": "array",
               "items": {

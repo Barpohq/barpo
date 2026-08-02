@@ -138,7 +138,19 @@ describe('the classifier model comes from the config', () => {
 describe('the default config values are sensible', () => {
   test('the tool list contains every existing tool', () => {
     const config = defaultConfig()
-    for (const name of ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls']) {
+    for (const name of [
+      'read',
+      'write',
+      'edit',
+      'bash',
+      'grep',
+      'find',
+      'ls',
+      'processStart',
+      'processOutput',
+      'processStop',
+      'processList',
+    ]) {
       expect(config.agent.tools.enabled, `${name} is missing from the default list`).toContain(name)
     }
   })
