@@ -296,6 +296,39 @@ export {
 } from './schedule-tools.ts'
 
 export {
+  detectUrls,
+  killAllBackgroundProcesses,
+  liveBackgroundProcessCount,
+  MAX_OUTPUT_CHARS,
+  MAX_PROCESSES,
+  PROCESS_KILL_GRACE_MS,
+  PROCESS_TTL_MS,
+  ProcessManager,
+  processManager,
+  closeProcessManager,
+  processManagerCount,
+  clearProcessManagers,
+  type ProcessOutput,
+  type ProcessSnapshot,
+  type ProcessStatus,
+} from './process-manager.ts'
+
+export {
+  PROCESS_PROMPT_SECTION,
+  createProcessListTool,
+  createProcessOutputTool,
+  createProcessStartTool,
+  createProcessStopTool,
+  processToolsRaw,
+  START_WAIT_DEFAULT_S,
+  START_WAIT_MAX_S,
+  type ProcessDetail,
+  type ProcessIdInput,
+  type ProcessListInput,
+  type ProcessStartInput,
+} from './process-tools.ts'
+
+export {
   SERVER_PROMPT_SECTION,
   createServerListTool,
   serversToText,

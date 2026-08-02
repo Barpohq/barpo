@@ -4,7 +4,12 @@
 // one address, and in production it is one process too — so there is no CORS
 // problem and no second port to manage.
 
-import { killAllMcpProcesses, liveProcessCount } from '@barpo/ai'
+import {
+  killAllBackgroundProcesses,
+  killAllMcpProcesses,
+  liveBackgroundProcessCount,
+  liveProcessCount,
+} from '@barpo/ai'
 import { app } from './app.ts'
 import { auditWrite } from './audit.ts'
 import { db } from './db.ts'
@@ -144,6 +149,13 @@ function stop(signal: string) {
   if (mcpCount > 0) {
     console.log(`[mcp] stopping ${mcpCount} process(es)`)
     killAllMcpProcesses()
+  }
+  // Background processes (dev servers, watchers) — the same rule: without
+  // this an orphaned dev server keeps its port and the next start fails.
+  const backgroundCount = liveBackgroundProcessCount()
+  if (backgroundCount > 0) {
+    console.log(`[process] stopping ${backgroundCount} background process(es)`)
+    killAllBackgroundProcesses()
   }
   database.close()
   process.exit(0)

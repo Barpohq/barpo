@@ -64,6 +64,8 @@ import {
   type ScheduleRemover,
   type ScheduleSink,
 } from './schedule-tools.ts'
+import { PROCESS_PROMPT_SECTION, processToolsRaw } from './process-tools.ts'
+import { processManager, type ProcessManager } from './process-manager.ts'
 import { McpManager, type McpConnectableServer } from './mcp-manager.ts'
 import { MCP_PROMPT_SECTION, isMcpTool, mcpToolsRaw } from './mcp-tools.ts'
 import type { PermissionManager } from './permission.ts'
@@ -324,6 +326,7 @@ export const AGENT_SYSTEM_PROMPT = (
   hasDashboard = false,
   hasMcp = false,
   hasSchedules = false,
+  hasProcesses = false,
 ) =>
   [
     'You are the AI assistant of this platform. You work on the user\'s project:',
@@ -401,11 +404,13 @@ export const AGENT_SYSTEM_PROMPT = (
     '- find: locate files by glob',
     '- ls: list a directory',
     '- bash: run a command',
+    ...(hasProcesses ? PROCESS_PROMPT_SECTION.list : []),
     ...(hasServers ? SERVER_PROMPT_SECTION.list : []),
     ...(hasDashboard ? DASHBOARD_PROMPT_SECTION.list : []),
     ...(hasSchedules ? SCHEDULE_PROMPT_SECTION.list : []),
     ...(hasMcp ? MCP_PROMPT_SECTION.list : []),
     '',
+    ...(hasProcesses ? [...PROCESS_PROMPT_SECTION.rules, ''] : []),
     ...(hasServers ? [...SERVER_PROMPT_SECTION.rules, ''] : []),
     ...(hasDashboard ? [...DASHBOARD_PROMPT_SECTION.rules, ''] : []),
     ...(hasSchedules ? [...SCHEDULE_PROMPT_SECTION.rules, ''] : []),
@@ -678,6 +683,11 @@ export async function* agentStream(
         options.scheduleSink,
         options.scheduleLister,
         options.scheduleRemover,
+        // The manager comes from the per-session registry, NOT from the
+        // stream: a dev server must survive the turn that started it, so
+        // `cleanup()` below deliberately never touches it (see the lifecycle
+        // note in `process-manager.ts`).
+        processManager(options.sessionId),
       )
       const hasServers = tools.some((t) => t.name === 'serverList')
       const hasDashboard = tools.some((t) => t.name === 'appPublish')
@@ -685,6 +695,9 @@ export async function* agentStream(
       // offers only `scheduleList` still needs the agent to know schedules
       // exist, otherwise it will never look.
       const hasSchedules = tools.some((t) => t.name.startsWith('schedule'))
+      // `processStart` is the anchor: the other three only make sense once
+      // starting is possible, and they are declared together.
+      const hasProcesses = tools.some((t) => t.name === 'processStart')
       // The MCP tools are dynamic — we do not know their names in advance, so
       // we check by prefix. If there is not a single one, the prompt DOES NOT
       // mention MCP.
@@ -701,6 +714,7 @@ export async function* agentStream(
             hasDashboard,
             hasMcp,
             hasSchedules,
+            hasProcesses,
           ),
           model,
           tools,
@@ -886,6 +900,7 @@ function prepareTools(
   scheduleSink?: ScheduleSink,
   scheduleLister?: ScheduleLister,
   scheduleRemover?: ScheduleRemover,
+  processes?: ProcessManager,
 ): AgentTool<never>[] {
   // pi's ready-made tools + our own search and server tools. They all take the
   // context as their last argument, so the wrapper below applies to them
@@ -900,6 +915,7 @@ function prepareTools(
     ...serverToolsRaw(serverProvider),
     ...dashboardToolsRaw(dashboardSink, dashboardRemover, permission),
     ...scheduleToolsRaw(scheduleSink, scheduleLister, scheduleRemover, permission),
+    ...processToolsRaw(processes, permission),
   ]
 
   // A tool disabled in the config is NOT DECLARED AT ALL — the agent does not
@@ -1032,7 +1048,12 @@ function compactionModel(models: Models, main: Model<Api>, config: Config): Mode
 function argsText(name: string, args: unknown): string {
   if (!args || typeof args !== 'object') return ''
   const a = args as Record<string, unknown>
-  if (name === 'bash') return typeof a.command === 'string' ? a.command : ''
+  if (name === 'bash' || name === 'processStart') {
+    return typeof a.command === 'string' ? a.command : ''
+  }
+  if (name === 'processOutput' || name === 'processStop') {
+    return typeof a.id === 'string' ? a.id : ''
+  }
   if (typeof a.path === 'string') {
     if (name === 'edit' && Array.isArray(a.edits)) return `${a.path} (${a.edits.length} changes)`
     return a.path

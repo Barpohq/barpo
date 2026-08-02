@@ -122,6 +122,15 @@ export const FIELDS = [
       'scheduleCreate',
       'scheduleList',
       'scheduleDelete',
+      // The background-process tools are on by default: `processStart` goes
+      // through the same command assessment and permission chain as `bash`,
+      // and the other three only touch processes the session itself started.
+      // Removing `processStart` from this list removes the whole capability —
+      // the companion tools are declared but have nothing to act on.
+      'processStart',
+      'processOutput',
+      'processStop',
+      'processList',
     ],
     hint: 'Tools given to the agent. A tool removed from the list is invisible — the agent does not know it exists.',
   },
