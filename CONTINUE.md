@@ -1,6 +1,6 @@
 # Where we left off — a guide to picking the work back up
 
-_Last updated: 2026-07-31. If you are continuing on another machine, start from this file._
+_Last updated: 2026-08-02. If you are continuing on another machine, start from this file._
 
 ## Current state
 
@@ -9,8 +9,9 @@ backend on Bun + TypeScript (Hono)**, with the AI layer built on top of
 `pi-agent-core` (pi — [earendil-works/pi](https://github.com/earendil-works/pi),
 a coding agent for the terminal; we adapt its ideas for the web).
 
-**Tests:** 1610/1610 green (`bun test`). All five packages are clean under
-`tsc` — zero errors.
+**Tests:** 1775 pass, 44 skip, 0 fail across 83 files (`bun test`, ~16s). The
+skips are conditional — the Ollama and `rg` tests skip themselves when the
+program is not installed. All five packages are clean under `tsc` — zero errors.
 
 **The way of working (since 2026-07-28):** the "build the whole system first,
 then polish" plan was dropped. We build the piece we need and fix whatever
@@ -33,7 +34,7 @@ one to read first — it carries the security model.
 
 ```bash
 bun install
-bun test                                     # 1610 tests
+bun test                                     # 1775 pass, 44 skip
 bun run schema                               # regenerate the config schema
 cd barpo-server && bun run src/index.ts   # backend :8787
 cd barpo-ui && bun run dev                # UI
@@ -41,8 +42,8 @@ cd barpo-ui && bun run dev                # UI
 
 ## What is built
 
-Ten stages, in order. The detail of each lives in git history; what follows is
-the decision that came out of it — the part that is expensive to rediscover.
+Thirteen stages, in order. The detail of each lives in git history; what follows
+is the decision that came out of it — the part that is expensive to rediscover.
 
 1. **Foundation** — shared types + server + dev proxy.
 2. **The AI agent layer** — tools, the permission layer, model selection.
@@ -81,6 +82,7 @@ the decision that came out of it — the part that is expensive to rediscover.
 12. **The time layer** — the platform now starts work on its own: it resumes a
     conversation after a provider limit resets, and runs recurring tasks on a
     cron timetable. See below.
+13. **The platform got its name — Barpo** (2026-08-02). See below.
 
 ### What the translation exposed (2026-07-31)
 
@@ -291,22 +293,58 @@ scheduling has already happened and this is the run. A `resume` does not get it
 pass covers a closed laptop; it does not cover a machine that stays off past
 `MAX_LATENESS_MS`. A launchd/systemd unit is the real fix and is not written.
 
+### The name — Barpo (2026-08-02)
+
+The working title was "platforma". The project is now **Barpo** (barpo.dev),
+from the Uzbek *barpo qilmoq* — to build, to bring into being. The positioning
+went with it: "the program that builds programs".
+
+What actually moved, and what deliberately did not:
+
+- **Package scope** `@platforma/*` → `@barpo/*`, and the directories with them
+  (`platform-ai/` → `barpo-ai/` and so on). Two commits: the scope first, the
+  directory names last, because the second is the one that breaks every path.
+- **User data** `~/.platforma` → `~/.barpo`. **No data migration was written** —
+  a pre-rename install keeps its old directory and simply starts fresh in the
+  new one. The same decision as the English rename: these were single-user
+  installs and the cost of a migration exceeded the cost of the loss.
+- **Migration 018** rewrites the stored built-in source identifiers. This one
+  was NOT optional, for exactly the reason 014 exists: those strings are
+  duplicate-detection keys compared by exact match, so moving the constants
+  without the rows would have created a second built-in source and shown every
+  built-in skill and MCP server twice.
+- **Historical migrations and their seeds were left untouched** — rewriting an
+  applied migration to say a newer name would make a fresh database diverge from
+  an upgraded one.
+- **`PLATFORM_*` env variables did NOT change.** This is the last place the old
+  name lives, and it survives on purpose: renaming an env var breaks every
+  existing install silently — the platform falls back to defaults and looks like
+  it lost the user's data. Documented in `docs/configuration.md`.
+
 ## Idea backlog (no required order)
 
-1. **Wire the remaining UI pages to the API** — `Audit.tsx`, `Dashboard.tsx`
-   and `Workflow.tsx` still read mock data.
-2. **Enforce `allowed-tools`** — currently only displayed. Our permission layer
-   can carry this (pi had no such layer).
-3. **A config web UI** — a form generated automatically from the JSON Schema.
-4. **Docker isolation** — reimplement `ExecutionEnv` on top of Docker exec.
-5. **Move to AgentHarness** — session trees, `steer()`, provider retry.
-6. **Integration tests + Playwright.**
-7. **Clean up the dead demo exports** in `barpo-ui/src/data/mock.ts`
-   (`buildPlans`, `cannedReplies`, `installedApps`, `agents` and friends now
-   have zero references).
-8. **Restrict `img` in `Markdown.tsx`** — an external `![](http://…)` in an LLM
+1. **Enforce `allowed-tools`** — currently parsed (`skill-file.ts`) and
+   displayed, but nothing reads it at permission time. Our permission layer can
+   carry this (pi had no such layer).
+2. **A config web UI** — a form generated automatically from the JSON Schema.
+3. **Docker isolation** — reimplement `ExecutionEnv` on top of Docker exec.
+4. **Finish the move to AgentHarness** — the tools already use the
+   `AgentHarnessTool` shape; the loop is still the lower-level `Agent`. Session
+   trees, `steer()`, provider retry.
+5. **E2E tests** — `playwright` is a dependency of `barpo-ui` but no spec has
+   been written. Integration tests do exist (`config-integration.test.ts`,
+   `mcp-client-integration.test.ts`, `dashboard-integration.test.ts`).
+6. **Restrict `img` in `Markdown.tsx`** — an external `![](http://…)` in an LLM
    reply currently renders as a raw `<img>`, so a request goes out. Only a
-   `src` starting with `/api/chat/attachment/` should be allowed.
+   `src` starting with `/api/chat/attachment/` should be allowed. Still open,
+   and it is the one live security gap on this list.
+7. **A real terminal** — `Terminal.tsx` is a scripted replay. `ssh.ts` has the
+   connection layer and `CHANNELS.terminal` exists, so this is wiring.
+8. **CI** — no workflow runs `bun test` on a PR yet.
+9. **`session.idleMinutes` is defined but never read.** The setting is validated
+   and documented; the actual cleanup runs on `REGISTRY_TTL_MS`, a hard-coded 30
+   minutes in `barpo-ai/src/registry.ts`. Either wire the setting through or
+   drop it — a setting that silently does nothing is worse than no setting.
 
 ## Notes for agents (important technical details)
 
@@ -319,8 +357,17 @@ pass covers a closed laptop; it does not cover a machine that stays off past
   `barpo-config/src/schema.ts` plus a field on the `Config` type, then
   `bun run schema`. Validation, the default value, and the JSON Schema follow
   automatically.
+- **Adding a migration:** `barpo-server/src/migrations/0NN-name.ts` plus a line
+  in `migrations/index.ts`. Never edit one that has already been applied — the
+  runner works by number, so an edited migration simply never re-runs on the
+  databases that already have it. The list currently ends at **018**; there is
+  no 008, deliberately (the reason is written out in `009-tool-calls.ts`).
 - **Audit:** only through `auditWrite(...)` — the table blocks UPDATE/DELETE with
   a SQL trigger.
+- **Schedules:** a cron expression is parsed BEFORE its row is written, on both
+  paths (`schedule-sink.ts` for the agent, `routes/schedules.ts` for the user).
+  A scheduled run needs auto mode, and auto mode needs a working classifier —
+  with none available the run is refused and the reason recorded.
 - **Skills:** the store root is relocated by `PLATFORM_SKILLS` (a temporary
   directory in tests). The agent reads skills from `.barpo/skills/`, where
   `syncToProject()` places the copy — do not put files there by hand, they are
@@ -336,7 +383,7 @@ pass covers a closed laptop; it does not cover a machine that stays off past
 - The runtime database lives in `barpo-server/data/` — not in git; migrations
   and the seed run automatically on first start.
 
-### Nine boundaries that must not be broken
+### Twelve boundaries that must not be broken
 
 | Boundary | Where | What happens if it breaks |
 |---|---|---|
@@ -353,15 +400,22 @@ pass covers a closed laptop; it does not cover a machine that stays off past
 | **Deleting a conversation never deletes a recurring schedule** | migration 017 (`schedules_keep_recurring`) | tidying up old chats silently cancels the user's daily report |
 | **A context-length error is never read as a quota error** | `limit-detect.ts` (`NOT_A_QUOTA`) | the same doomed request is retried once an hour forever |
 
-All of them are enforced by tests — fix the code rather than "fixing" the test.
+All of them are enforced by tests — `classifier-isolation`, `memory-isolation`,
+`context`, `search-parity`, `search-security`, `skill-load`, `tar`,
+`agent-prompt`, `schedule-tools`, `cron`, `schedules-api`, `limit-detect`. When
+one goes red, **fix the code rather than "fixing" the test**.
 
-The fourth boundary has a STRONGER justification than the `AGENTS.md` one: a
-project file was at least placed in the user's own directory, whereas a skill
-comes from a foreign GitHub repo that the user may never have read.
+**The skill-text boundary has a STRONGER justification** than the `AGENTS.md`
+one: a project file was at least placed in the user's own directory, whereas a
+skill comes from a foreign GitHub repo that the user may never have read.
 
 ## Wider context
 
 - `ai-news-bot/` — a separate, finished project (488 tests), unrelated to this
   work. Still in Uzbek, deliberately: it writes for an Uzbek-language channel.
-- Project documentation: `README.md`, `02-ai-platform.md`, `04-risks.md`.
-- Package documentation: a README in each of the five packages.
+- Project documentation: [`docs/`](docs/README.md) — the index, and from there
+  [architecture](docs/architecture.md) (the system view and the security model),
+  [configuration](docs/configuration.md), [getting started](docs/getting-started.md),
+  [vision](docs/vision.md) and [risks](docs/risks.md).
+- Package documentation: a README in each of the five packages, plus
+  [`skills/`](skills/README.md) and [`mcp-servers/`](mcp-servers/README.md).

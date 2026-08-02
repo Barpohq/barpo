@@ -1,7 +1,16 @@
-# Stage 2 — AI Platform
+# Vision — what Barpo is growing into
 
 > A self-hosted, open-source AI orchestration platform grown out of the bot.
 > The topmost layer above agents like OpenClaw/Hermes: every AI tool, server, and agent behind a single control point.
+
+> **This document describes the TARGET, not the present.** It was written before
+> the platform existed and is kept as the direction, not as a description of
+> what runs. Several things below are unbuilt: the Workflow Engine, the Channels
+> adapters, the agent-daemon model (servers are managed over SSH today), and the
+> tmux Claude Code integration.
+>
+> For what actually exists right now, read [CONTINUE.md](../CONTINUE.md); for how
+> the built system is put together, [architecture.md](architecture.md).
 
 ---
 

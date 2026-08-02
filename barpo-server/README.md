@@ -4,9 +4,14 @@ The server side of the "a program that builds programs" platform. The database,
 migrations, audit system, WebSocket hub and REST endpoints are all in place.
 **The chat AI layer is wired up with tools**: the agent reads, writes and edits
 files, runs commands and searches the tree (`@barpo/ai`), and through this
-server it also reaches the connected servers, the installed MCP servers and the
-dashboard-publishing path. The build flow (chat → generated project) is not
-connected yet.
+server it also reaches the connected servers, the installed MCP servers, the
+dashboard-publishing path and the scheduler. The build flow (chat → generated
+project) is not connected yet.
+
+For the system-wide picture — how the packages fit together and what the
+security model is — read [`docs/architecture.md`](../docs/architecture.md)
+first. This file is the implementation reference: routes, database, the WS
+protocol.
 
 ## Stack
 
@@ -152,13 +157,15 @@ relocates the root (tests point it at a temporary directory).
     014-builtin-source-rename.ts — renames the stored built-in source identifiers
     015-apps-as-folders.ts     — an app becomes a folder; `apps.manifest` → `apps.dir`
     016-schedules.ts           — the schedules table (recurring tasks + limit resumes)
+    017-schedule-session-trigger.ts — a recurring schedule survives its session's deletion
+    018-barpo-rename.ts        — rewrites the stored built-in source identifiers for the new name
   routes/
     health.ts  apps.ts  servers.ts  skills.ts  audit.ts  chat.ts  models.ts
     mcp.ts  projects.ts  schedules.ts
   ws/
     hub.ts          — connection registry, channel subscription, broadcast
     chat-handler.ts — WS chat.send, chat.permission.reply, chat.mode.set
-test/               — bun test
+test/               — 43 spec files plus `app-fixture.ts` (see "Extending it")
 ```
 
 **There is no migration 008 — deliberately.** On some local databases an
@@ -177,6 +184,24 @@ stored VALUES that the TypeScript layer compares by exact string
 without rewriting the rows would make the lookup miss on the next start-up and a
 SECOND built-in source would be created next to the old one — every built-in
 skill and MCP server shown twice.
+
+**017 fixes a guarantee that was described but never written.** 016 gave
+`schedules.session_id` an `ON DELETE CASCADE` and its comment explained that a
+`recurring` row would survive its old session because `scheduler.ts` cleared
+`session_id` first. It did no such thing. Deleting the conversation a scheduled
+run had produced therefore deleted THE SCHEDULE — tidying up old chats silently
+cancelled the user's daily report. 017 adds a `BEFORE DELETE` trigger that
+clears `session_id` on `recurring` rows, so by the time the cascade fires only
+`resume` rows still point at that session — and those genuinely have no meaning
+without their conversation. A trigger rather than a check inside `deleteSession`
+for the same reason `audit_log` uses one: it protects the table, not one caller.
+
+**018 is 014 again, for the platform's new name.** The stored built-in source
+identifiers carried the old working title inside them (`platforma` → `barpo`,
+`platforma://builtin` → `barpo://builtin`, `platforma-builtin` →
+`barpo-builtin`). Same duplicate-detection keys, same consequence had the
+constants moved without the rows: two built-in sources, every skill and MCP
+server listed twice.
 
 ## The chat AI flow
 
@@ -200,14 +225,17 @@ A `chat.send` arriving over WS takes exactly the same path
 ### Tools
 
 The file and shell tools (`read`, `write`, `edit`, `bash`) and the search tools
-(`grep`, `find`, `ls`) come from `@barpo/ai`. Three more are supplied BY
-THIS SERVER, through callbacks handed to `agentStream()` (`orchestrator.ts`):
+(`grep`, `find`, `ls`) come from `@barpo/ai`. The rest are supplied BY THIS
+SERVER, through callbacks handed to `agentStream()` (`orchestrator.ts`):
 
 | Tool | Supplied via | What it reaches |
 |---|---|---|
 | `serverList` | `serverProvider` | the server rows, re-read from the database on every call |
 | `appPublish` | `dashboardSink` | read the folder → validate → compile the JSX → record the publish (`dashboard-save.ts`) |
 | `appDelete` | `dashboardRemover` | asks the user, then deletes the row and the folder (`app-delete.ts`) |
+| `scheduleCreate` | `scheduleSink` | parses the cron, then writes the row (`schedule/schedule-sink.ts`) |
+| `scheduleList` | `scheduleLister` | the schedules this platform holds |
+| `scheduleDelete` | `scheduleRemover` | removes one, through the permission layer |
 | MCP tools | `mcpProvider` | the installed MCP servers, credentials merged in (`mcp-connect.ts`) |
 
 `appDelete` is supplied SEPARATELY from `appPublish` because erasing an app is
@@ -215,6 +243,10 @@ a different capability from creating one, and it is declared only alongside the
 permission manager. It is also the one tool in the system that refuses an
 automated answer: `requireUser` skips auto mode and any stored "always", so an
 app disappears only when a human said so — every time.
+
+The schedule tools ask permission too, but deliberately WITHOUT `requireUser`: a
+schedule is reversible and destroys nothing, so demanding a human answer even in
+auto mode would be permission fatigue.
 
 This is an **inversion**, and it is the point: `barpo-ai` knows nothing about
 the database. It declares the tool and calls a function; where the data comes
@@ -289,7 +321,7 @@ All of them sit under the `/api` prefix and respond with JSON.
 | GET | `/api/chat/running` | `{running: [{sessionId, title, …}]}` | the streams alive right now — the "background agents" view |
 | GET | `/api/chat/sessions/:id` | `{session}` | restoring from a `#chat/<uuid>` URL; 404 |
 | PATCH | `/api/chat/sessions/:id` | `{session}` | renaming; `title` only, max 200 chars |
-| DELETE | `/api/chat/sessions/:id` | `{deleted, streamStopped}` | stops a running stream, then CASCADE + the session's files |
+| DELETE | `/api/chat/sessions/:id` | `{deleted, streamStopped}` | stops a running stream, then CASCADE + the session's files. A `recurring` schedule that ran here SURVIVES (migration 017) |
 | GET | `/api/chat/sessions/:id/messages` | `{messages: ChatMessage[]}` | 404 when not found |
 
 The model and the project are **locked once the conversation starts**, which is
@@ -448,6 +480,41 @@ value, they only write a new one. An empty secret on `PUT` therefore means "I di
 not change it" and is skipped, rather than wiping the stored token. Only the
 setting KEYS reach the audit log, never the values.
 
+### Schedules
+
+The user's half of the machinery the agent reaches through its `schedule*`
+tools. Both halves write the same table and go through the same cron parse.
+
+| Method | Path | Response | Note |
+|---|---|---|---|
+| GET | `/api/schedules` | `{schedules: Schedule[]}` | |
+| GET | `/api/schedules/:id` | `{schedule}` | 404 when not found |
+| POST | `/api/schedules` | `{schedule}` · 201 | body `{title, cron, prompt, projectId?, provider?, model?}`; 400 / 409 |
+| PATCH | `/api/schedules/:id` | `{schedule}` | body `{status}` — `active` or `paused` only; 400 / 404 |
+| DELETE | `/api/schedules/:id` | `{ok}` | 404 / 500 |
+
+**A `resume` cannot be created here.** Those exist only because a provider limit
+was hit, and the platform is the only thing that knows that happened; a
+hand-made one would point at a conversation that is not waiting. `POST`
+therefore always creates a `recurring`.
+
+**There is no route for editing a prompt** — by decision, not omission. Changing
+what a schedule does without seeing its history invites "why did today's report
+look different?" with no answer anywhere. Delete and recreate, and the list
+shows both.
+
+`PATCH` accepts only `active` and `paused`. `done` and `failed` are OUTCOMES the
+scheduler writes after a run; letting a client set them would turn the history
+into a claim rather than a record. Switching `paused` → `active` **re-arms
+first** (`rearm()`): a schedule paused last week has a `runAt` in the past, so
+activating it as-is would fire on the very next tick — and "resume this" means
+"carry on from the next scheduled time", not "run now and catch up".
+
+The cron expression is parsed BEFORE the row is written (400 when it will not
+read, 400 when it has no run inside five years). A stored schedule that can
+never fire would sit in the list looking active — failure disguised as success.
+`MAX_SCHEDULES` is enforced with a 409.
+
 ### Audit and models
 
 | Method | Path | Response | Note |
@@ -473,8 +540,10 @@ As soon as the connection opens the server sends `hello`. After that the client
 **must subscribe to channels** — without a subscription no event is delivered:
 
 ```js
-ws.send(JSON.stringify({ type: 'sub', channels: ['chat', 'build', 'audit'] }))
+ws.send(JSON.stringify({ type: 'sub', channels: ['chat', 'audit', 'schedules'] }))
 ```
+
+The channels are `chat`, `build`, `apps`, `audit`, `terminal` and `schedules`.
 
 **Client → server:** `chat.send`, `chat.choice`, `chat.permission.reply`, `chat.mode.set`, `sub`
 
@@ -485,28 +554,38 @@ ws.send(JSON.stringify({ type: 'sub', channels: ['chat', 'build', 'audit'] }))
 | `hello` | — (everyone) | on connect |
 | `chat.delta` · `chat.tool` · `chat.permission` · `chat.classifier` · `chat.mode` · `chat.done` · `chat.error` | `chat` | during a reply stream |
 | `chat.status` | `chat` | the stream's status changed — `running` / `awaiting-permission` / `done` / `error`. This is what drives the live indicator and the running-agents list; `GET /api/chat/running` is its poll-able counterpart for a page that opened mid-stream |
+| `chat.scheduled` | `chat` | a provider limit interrupted the reply and a `resume` was booked. Sent INSTEAD of `chat.error`, because nothing is left for the user to do — the UI says "paused until 14:35" |
 | `chat.toolcard` | `chat` | a tool card from the old demo build flow — kept for the manifest-driven pages, not emitted by the agent stream |
 | `build.step` / `build.choice` / `build.done` / `build.failed` | `build` | during a build |
 | `app.installed` / `app.updated` | `apps` | a manifest was registered |
+| `app.removed` | `apps` | an app was deleted — the folder went with it |
 | `audit.entry` | `audit` | on every `auditWrite` call |
+| `schedule.changed` / `schedule.removed` | `schedules` | a schedule was created, paused, resumed or deleted — from either the REST routes or the agent's tools |
 | `terminal.line` | `terminal` | tmux session output |
+
+`chat.scheduled` sits on the `chat` channel rather than `schedules` on purpose:
+it is part of the reply stream, not a change to the schedule list, and the page
+waiting for it is the conversation.
 
 ## The database schema
 
 The `schema_version` table tracks which migrations have been applied; each
 migration runs in its own transaction — there is no half-applied state.
 
-Tables: `servers`, `skills`, `skill_sources`, `skill_installs`, `mcp_sources`,
-`mcp_servers`, `mcp_installs`, `audit_log`, `apps`, `projects`, `chat_sessions`,
-`chat_messages`, `chat_attachments`, `tool_calls`, `build_sessions`.
+Tables: `schema_version`, `servers`, `skills`, `skill_sources`, `skill_installs`,
+`mcp_sources`, `mcp_servers`, `mcp_installs`, `audit_log`, `apps`, `projects`,
+`chat_sessions`, `chat_messages`, `chat_attachments`, `tool_calls`, `schedules`,
+`build_sessions`.
 
 `audit_log` is **append-only**: `UPDATE` and `DELETE` are blocked by triggers
 (`RAISE(ABORT)`), so the guarantee holds at the SQL level and not even a bug in
 the code can break it.
 
-Manifests are stored as complete JSON in the `apps.manifest` column — the
-server-driven UI model: adding a new app does not require rebuilding the
-frontend.
+`apps` holds no manifest — only `dir`, the folder a publish registered (see
+migration 015 above). Every read goes to disk, which is what makes editing a
+file the whole update. The server-driven UI model still holds: the manifest the
+UI renders is assembled from that folder, so a new app never requires rebuilding
+the frontend.
 
 ## Extending it (for the agents that come next)
 
@@ -517,15 +596,21 @@ frontend.
 **A new WS event:**
 1. Write the interface in `barpo-shared/src/protocol.ts` (`type` — a unique literal)
 2. Add it to the `ClientEvent` or `ServerEvent` union
-3. If it belongs to the server, add a case to the `eventChannel()` switch
-   (otherwise TypeScript errors — that is deliberate, so it cannot be forgotten)
+3. If it belongs to the server, add a case to the `eventChannel()` switch — and
+   to `eventSession()` if the event belongs to one conversation (otherwise
+   TypeScript errors, which is deliberate: neither can be forgotten)
 4. Send it with `hub.broadcast(...)`
 
 **A new migration:**
-Create `src/migrations/00N-name.ts` and add it to the list in
+Create `src/migrations/0NN-name.ts` and add it to the list in
 `migrations/index.ts`. Never edit a migration that has already been applied —
 write a new one.
 
 **The audit rule:** every action that changes state or reads secret data must
 call `auditWrite(...)`. Writing to the table directly means no WS event is sent
 and the feed in the UI stays silent.
+
+**In tests:** `openDb(':memory:')` + `setDb(db)`, and `clearRunningStreams()` in
+`beforeEach` — the stream registry is module-level state shared by every test
+file in the process. For apps use `test/app-fixture.ts` (`useTempApps()`,
+`publishTestApp()`, `cleanupApps()`) rather than writing folders by hand.

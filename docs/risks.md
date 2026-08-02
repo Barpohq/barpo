@@ -3,6 +3,12 @@
 > The strongest arguments against this project, and the answers to them, written down before starting.
 > The goal: avoid blind optimism.
 
+> **Written before the work began**, and kept as it was. Several of the
+> mitigations below are now built rather than planned — the permission layer,
+> the classifier, the append-only audit log and the cost of prompt injection are
+> described as they actually work in [architecture.md](architecture.md). Read
+> this document for the reasoning; read that one for the implementation.
+
 ---
 
 ## Risks eliminated by the change in the project's direction
