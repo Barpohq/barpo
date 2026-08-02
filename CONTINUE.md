@@ -9,7 +9,7 @@ backend on Bun + TypeScript (Hono)**, with the AI layer built on top of
 `pi-agent-core` (pi — [earendil-works/pi](https://github.com/earendil-works/pi),
 a coding agent for the terminal; we adapt its ideas for the web).
 
-**Tests:** 1775 pass, 44 skip, 0 fail across 83 files (`bun test`, ~16s). The
+**Tests:** 1858 pass, 44 skip, 0 fail across 87 files (`bun test`, ~23s). The
 skips are conditional — the Ollama and `rg` tests skip themselves when the
 program is not installed. All five packages are clean under `tsc` — zero errors.
 
@@ -34,7 +34,7 @@ one to read first — it carries the security model.
 
 ```bash
 bun install
-bun test                                     # 1775 pass, 44 skip
+bun test                                     # 1858 pass, 44 skip
 bun run schema                               # regenerate the config schema
 cd barpo-server && bun run src/index.ts   # backend :8787
 cd barpo-ui && bun run dev                # UI
@@ -42,7 +42,7 @@ cd barpo-ui && bun run dev                # UI
 
 ## What is built
 
-Thirteen stages, in order. The detail of each lives in git history; what follows
+Fourteen stages, in order. The detail of each lives in git history; what follows
 is the decision that came out of it — the part that is expensive to rediscover.
 
 1. **Foundation** — shared types + server + dev proxy.
@@ -321,6 +321,35 @@ What actually moved, and what deliberately did not:
   existing install silently — the platform falls back to defaults and looks like
   it lost the user's data. Documented in `docs/configuration.md`.
 
+### Git and presence (2026-08-02, issue #17)
+
+The agent had no git guidance at all, and the chats of one project — which all
+share a single work directory — did not know about each other. Two decisions,
+both of which will otherwise be relitigated:
+
+- **No git tool. Bash is enough.** What was missing was not a tool but the
+  *situation*: `git-state.ts` reads the work directory's git state (from
+  `.git`'s own files — never by spawning git; the reasons are boxed in that
+  file) and the prompt gets the rules for exactly that case. Not a repo →
+  init only if something real is being built. Repo without a remote → local
+  commits at meaningful points. Repo with a remote → branch + PR, never
+  straight onto the trunk, and pushing is the user's decision. Git is offered,
+  never forced — every obligation in the text is conditional. `git init`
+  joined `SAFE_GIT` (the prompt tells the agent to init; gating it would make
+  the agent's own instructions fire a permission prompt); `merge`, `pull`,
+  `checkout`, `clone`, `push` stay gated, and the reasons sit in the comment
+  above `SAFE_GIT`.
+- **Presence, not isolation.** One directory, and the agents are told about
+  each other: the server gathers the sibling sessions and who is streaming
+  (`presence.ts`, `repo.ts: siblingSessions`), `presence-prompt.ts` formats
+  the list plus the shared-directory rules. A session with no project hears
+  nothing.
+
+**Known limit, not a bug:** presence is advisory. Two agents can still write
+the same file; the `edit` tool's exact-string match makes the second one fail
+loudly rather than corrupt, but the error will read as confusing. Worktree
+isolation per session is the real fix and is deliberately a later iteration.
+
 ## Idea backlog (no required order)
 
 1. **Enforce `allowed-tools`** — currently parsed (`skill-file.ts`) and
@@ -383,7 +412,7 @@ What actually moved, and what deliberately did not:
 - The runtime database lives in `barpo-server/data/` — not in git; migrations
   and the seed run automatically on first start.
 
-### Twelve boundaries that must not be broken
+### Thirteen boundaries that must not be broken
 
 | Boundary | Where | What happens if it breaks |
 |---|---|---|
@@ -399,10 +428,12 @@ What actually moved, and what deliberately did not:
 | **A cron expression is parsed before its row is written** | `schedule-sink.ts`, `routes/schedules.ts` | a schedule that can never fire sits in the list looking active — failure disguised as success |
 | **Deleting a conversation never deletes a recurring schedule** | migration 017 (`schedules_keep_recurring`) | tidying up old chats silently cancels the user's daily report |
 | **A context-length error is never read as a quota error** | `limit-detect.ts` (`NOT_A_QUOTA`) | the same doomed request is retried once an hour forever |
+| **The git remote URL and session titles never reach the classifier** | `git-state.ts`, `presence-prompt.ts`, `orchestrator.ts` | a cloned repo's `.git/config` or a crafted chat title influences a permission decision |
 
 All of them are enforced by tests — `classifier-isolation`, `memory-isolation`,
 `context`, `search-parity`, `search-security`, `skill-load`, `tar`,
-`agent-prompt`, `schedule-tools`, `cron`, `schedules-api`, `limit-detect`. When
+`agent-prompt`, `schedule-tools`, `cron`, `schedules-api`, `limit-detect`,
+`git-state`, `presence-prompt`. When
 one goes red, **fix the code rather than "fixing" the test**.
 
 **The skill-text boundary has a STRONGER justification** than the `AGENTS.md`

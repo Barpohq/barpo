@@ -212,19 +212,35 @@ describe('outside the working directory', () => {
 })
 
 describe('git — decided by the subcommand', () => {
-  test.each(['git status', 'git log --oneline', 'git diff HEAD', 'git add .', 'git commit -m "x"', 'git fetch'])(
+  test.each(['git status', 'git log --oneline', 'git diff HEAD', 'git add .', 'git commit -m "x"', 'git fetch', 'git init'])(
     '%s → safe',
     (command) => {
       expect(assess(command).category).toBe('safe')
     },
   )
 
-  test.each(['git push', 'git push origin main', 'git remote add x y', 'git clean -fd', 'git reset --hard'])(
+  test.each(['git push', 'git push origin main', 'git remote add x y', 'git clean -fd', 'git reset --hard', 'git merge feature', 'git pull', 'git checkout -- .', 'git clone https://github.com/x/y'])(
     '%s → dangerous (goes to the classifier)',
     (command) => {
       expect(assess(command).category).toBe('dangerous')
     },
   )
+
+  test('git init pointing OUTSIDE the working directory still asks', () => {
+    // `init` is on the safe list, but the outside-path check runs BEFORE the
+    // git branch — the subcommand cannot smuggle a foreign path through.
+    const result = assess('git init /tmp/elsewhere')
+    expect(result.category).toBe('dangerous')
+    expect(result.reason).toContain('outside')
+  })
+
+  test('the safe halves of checkout stay permission-free', () => {
+    // `checkout` itself is gated (`git checkout -- .` discards work), but its
+    // split-out verbs are the sanctioned path — this pins the asymmetry.
+    expect(assess('git switch main').category).toBe('safe')
+    expect(assess('git restore file.ts').category).toBe('safe')
+    expect(assess('git switch -c feature-x').category).toBe('safe')
+  })
 
   test('git push is not on the whitelist so the push constraint can be caught', () => {
     // If the user says "don't push", the classifier has to see it — for that,

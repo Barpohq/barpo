@@ -24,6 +24,7 @@ import {
   modeManager,
   permissionManager,
   pickClassifierModel,
+  readGitState,
   type AgentEvent,
   type ConversationEvent,
   type ConversationMessage,
@@ -42,6 +43,7 @@ import type {
   ToolCall,
 } from '@barpo/shared'
 import { auditWrite } from './audit.ts'
+import { sessionPresence } from './presence.ts'
 import { publishDashboard } from './dashboard-save.ts'
 import { deleteApp } from './app-delete.ts'
 import { connectableServers } from './mcp-connect.ts'
@@ -410,6 +412,21 @@ export async function streamReply(
           toolObserver: (name: string, args: unknown) => {
             auditWrite('agent', `tool: ${name}`, toolTarget(name, args), toolLevel(name), 'OK')
           },
+          // The git situation of the work directory — read from `.git`'s own
+          // files, never by spawning git (see `git-state.ts`). It decides
+          // which git rules the prompt carries: init-if-real, local commits,
+          // or branch-and-PR.
+          gitState: readGitState(dir),
+          // The OTHER conversations sharing this project's directory, marked
+          // with who is streaming right now. Computed ONCE, here, at the
+          // start of the turn — the prompt says the list may be stale. The
+          // current session is already in `running` (set above), which is why
+          // `siblingSessions` excludes it in SQL. Empty (any session with no
+          // project) means the prompt says nothing at all.
+          presence: sessionPresence(
+            sessionId,
+            new Set(runningSessions().map((s) => s.sessionId)),
+          ),
         })) as AsyncIterable<ConversationEvent | AgentEvent>
 
     for await (const event of stream) {

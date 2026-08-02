@@ -992,6 +992,36 @@ export function readSession(id: string, database?: Database): ChatSession | null
 }
 
 /**
+ * The OTHER sessions attached to the same project as `sessionId`.
+ *
+ * For presence: every chat of a project works in ONE directory, and the
+ * agent is told who else is in there (`presence.ts`). The session itself is
+ * excluded — the caller adds itself to the running registry before asking.
+ *
+ * `me.project_id IS NOT NULL` does the no-project case for free: a session
+ * in its own directory shares it with nobody and gets an empty list.
+ *
+ * `LIMIT 20`: every row becomes a system-prompt line on every request — a
+ * project with hundreds of old chats must not flood the prompt. The cap is
+ * in the query so the rows are never even materialised; ordering by
+ * `updated_at` keeps the ones that matter (it is bumped on every message).
+ */
+export function siblingSessions(sessionId: string, database?: Database): ChatSession[] {
+  const d = database ?? globalDb()
+  return d
+    .query<SessionRow, [string, string]>(
+      `SELECT o.*
+         FROM chat_sessions o
+         JOIN chat_sessions me ON me.project_id = o.project_id
+        WHERE me.id = ? AND o.id != ? AND me.project_id IS NOT NULL
+        ORDER BY o.updated_at DESC
+        LIMIT 20`,
+    )
+    .all(sessionId, sessionId)
+    .map(sessionFromRow)
+}
+
+/**
  * A new session. When `projectId` is given the session is attached to that
  * project — the agent's tools then run in the project's folder.
  *

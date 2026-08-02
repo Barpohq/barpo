@@ -90,6 +90,8 @@ mcp-manager.ts  · mcp-tools.ts     — the MCP client (see below)
 project-context.ts  — AGENTS.md / CLAUDE.md
 skill-load.ts · skill-file.ts — skills and their frontmatter
 memory.ts           — the agent's own notes
+git-state.ts        — the working directory's git situation, read from files
+presence-prompt.ts  — the other conversations sharing a project directory
 ```
 
 ## What the caller supplies
@@ -114,6 +116,8 @@ instead.
 | `mcpProvider` | ↩ which MCP servers to connect for this session → the `mcp__*` tools |
 | `toolObserver` | called before every tool call, for the audit log. Does not block |
 | `hooks` | extra hooks, appended to the ones from the config |
+| `gitState` | the work directory's git situation → the situational git rules in the prompt. The ONE option with a fallback: derivable from the directory, so if omitted it is read here |
+| `presence` | ↩ the other conversations sharing the project directory → the presence section in the prompt. Empty or omitted = not a word about it |
 
 **A provider that is not given means the tool is not declared at all** — and the
 system prompt does not mention it either. The prompt flags are derived from the
@@ -499,8 +503,10 @@ swallowed — cleanup has to run to the end in every case.
 
 ## What the agent knows about the project
 
-Three sources feed the system prompt, all read from the working directory at the
-start of every stream. **None of them reaches the classifier** (see above).
+Five sources feed the system prompt at the start of every stream. Four are read
+from the working directory; presence is the first that is not — it comes from
+the server (the session table lives there). **None of them reaches the
+classifier** (see above).
 
 ### `project-context.ts` — AGENTS.md / CLAUDE.md
 
@@ -555,6 +561,45 @@ accumulates naturally while skills are installed selectively. Memories are typed
 
 The memory section is included **even when it is empty**: without the writing
 rule in the prompt, the agent would not know the mechanism exists.
+
+### `git-state.ts` — the git situation
+
+There is no git tool and none is planned — `bash` runs git perfectly well. What
+bash cannot give the agent is the situation *before its first command*, and the
+situation decides the workflow: not a repo → init only if something real is
+being built; a repo with no remote → commit locally at meaningful points; a
+repo with a remote → branch, commit there, offer a PR, never straight onto the
+trunk, and pushing is the user's decision. `readGitState` reads the state once
+per stream and `gitToPrompt` turns it into one factual line plus the rules for
+exactly that case. The section sits **inside** the prompt after the `bash`
+paragraph, not at the tail — it is a behavioural rule, not reference material.
+
+The state is read from `.git`'s own files (`HEAD`, `config`, the worktree
+`gitdir:`/`commondir` indirections), **never by spawning git**. Two reasons:
+the prompt is assembled synchronously and a subprocess would stall the server
+per stream; and spawning git here would be a second, unaudited path to
+executing a binary outside `RestrictedEnv` — a cloned repo's `.git/config` can
+point git at hooks of its choosing. The price is no dirty-state and no nice
+name for a detached HEAD; the agent has `bash` and `git status` is free the
+moment it cares. *Any* `[remote "…"]` counts as "has a remote", not just
+`origin` — an upstream-only repo must not read as local, that would hand it
+the less cautious rules. The remote URL is a stranger's text: control
+characters are stripped and the length capped before it enters the prompt.
+
+### `presence-prompt.ts` — the other conversations
+
+Every chat attached to a project shares **one working directory**, and until
+now each agent worked as if it were alone in it. Presence tells the agent who
+else is there: the server gathers the sibling sessions (`presence.ts` +
+`repo.ts: siblingSessions`, capped at 20 in SQL) and marks who has a stream in
+flight right now; this module formats the list plus the shared-directory rules
+(read again if a file surprises you, do not "tidy up" work you did not do, keep
+away from files a live conversation is touching). Computed once at stream
+start — the text itself says the list may be stale. It is **presence, not
+isolation**: nothing prevents a collision, the agent is only made aware. An
+empty list (any session with no project, or the only chat of a project) means
+the prompt says nothing at all. Session titles are user- or model-written text:
+control characters are stripped and length capped, same as skill descriptions.
 
 ## Context: tool results and compaction
 

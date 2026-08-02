@@ -285,11 +285,30 @@ const DANGEROUS_COMMANDS = new Map<string, string>([
  * outward or cannot be undone. They ask for permission, or in auto mode they
  * go to the classifier — the user's "don't push" constraint takes effect at
  * exactly this point.
+ *
+ * `init` is on the list: it creates `.git/` and touches nothing else —
+ * strictly milder than `commit` or `restore`, and the prompt's git rules
+ * tell the agent to init when it builds something real, so gating it would
+ * make the agent's own instructions fire a permission prompt. `git init
+ * <path>` pointing OUTSIDE the working directory still asks: the path
+ * arguments are checked independently of the subcommand, and `RestrictedEnv`
+ * forces the cwd regardless — do not "harden" this by removing `init`.
+ *
+ * `merge` is NOT on the list even though it is local: it rewrites the whole
+ * working tree, and with several conversations sharing one project directory
+ * (see presence) a merge one agent starts is an event for all of them —
+ * `reset --hard`'s family, not `commit`'s. `checkout` is also absent on
+ * purpose: `git checkout -- .` silently discards every uncommitted change,
+ * and its safe halves already have their own verbs here (`switch`,
+ * `restore`). `gh` (PR creation) is likewise deliberately NOT in
+ * SAFE_COMMANDS: opening a PR is an outward-facing act on the user's GitHub
+ * account, and the permission prompt is exactly the "shall I?" question the
+ * prompt tells the agent to ask.
  */
 const SAFE_GIT = new Set([
   'status', 'log', 'diff', 'show', 'branch', 'blame', 'shortlog',
   'ls-files', 'rev-parse', 'describe', 'tag', 'config',
-  'add', 'commit', 'stash', 'switch', 'restore', 'fetch',
+  'add', 'commit', 'stash', 'switch', 'restore', 'fetch', 'init',
 ])
 
 /** `VAR=value` prefixes and `env` wrappers in front of the command are skipped */

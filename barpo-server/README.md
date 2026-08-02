@@ -58,6 +58,7 @@ src/
   orchestrator.ts   — the chat reply stream: @barpo/ai → WS events → DB
   chat-send.ts      — the shared send logic REST and WS both go through
   work-dir.ts       — the agent work directory: per session or per project
+  presence.ts       — who else is in this project's directory (data for the prompt)
   attachment.ts     — an attachment's kind, decided from its CONTENT (magic bytes)
   seed.ts           — initial data (idempotent)
 ```

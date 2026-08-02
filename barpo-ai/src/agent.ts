@@ -45,6 +45,8 @@ import {
   type MessageAttachment,
 } from './context.ts'
 import { contextToPrompt, readProjectContext } from './project-context.ts'
+import { gitToPrompt, readGitState, type GitState } from './git-state.ts'
+import { presenceToPrompt, type Sibling } from './presence-prompt.ts'
 import { readSkills, skillsToPrompt } from './skill-load.ts'
 import { readMemoryIndex, readMemories, memoriesToPrompt } from './memory.ts'
 import { RestrictedEnv } from './environment.ts'
@@ -199,6 +201,24 @@ export interface AgentOptions {
   toolObserver?: (name: string, args: unknown) => void
   /** Extra hooks — appended to the ones from the config */
   hooks?: ToolHook[]
+  /**
+   * The git state of the working directory (`git-state.ts`).
+   *
+   * If it is not given it is READ HERE from `workDir` — unlike the other
+   * options this one has a fallback, because the state is derivable from the
+   * directory alone and a caller (or a test) that forgets it should still
+   * get situational git rules rather than none.
+   */
+  gitState?: GitState
+  /**
+   * The OTHER conversations sharing this project's working directory.
+   *
+   * The same inversion as `serverProvider`: the session table and the
+   * running-stream registry live in `barpo-server`. NO fallback — this
+   * package has nothing to read the list from. Not given, or empty, means
+   * the prompt says not a word about other conversations.
+   */
+  presence?: Sibling[]
 }
 
 /**
@@ -316,6 +336,17 @@ export function streamError(messages: readonly unknown[]): string | undefined {
  * `hasServers` — whether the `serverList` tool was declared. UNLIKE the three
  * above this is not text but a flag: mentioning the tool when it does not
  * exist would push the model towards a capability it does not have.
+ *
+ * `git` — the situational git section (`git-state.ts`). It goes INSIDE the
+ * prompt, right after the `bash` paragraph, not at the tail: it is a
+ * behavioural rule like SCOPE/HONESTY, not reference material.
+ *
+ * `presence` — the other conversations sharing the working directory
+ * (`presence-prompt.ts`). Appended at the tail with the other listings.
+ *
+ * APPEND ONLY: new parameters go at the END of this list. It is positional
+ * with several adjacent booleans — inserting one in the middle shifts the
+ * flags silently and TypeScript cannot catch a boolean landing on a boolean.
  */
 export const AGENT_SYSTEM_PROMPT = (
   workDir: string,
@@ -327,6 +358,8 @@ export const AGENT_SYSTEM_PROMPT = (
   hasMcp = false,
   hasSchedules = false,
   hasProcesses = false,
+  git?: string,
+  presence?: string,
 ) =>
   [
     'You are the AI assistant of this platform. You work on the user\'s project:',
@@ -427,6 +460,7 @@ export const AGENT_SYSTEM_PROMPT = (
     'it, and never run an irreversible one (deleting files, `git reset --hard`,',
     'force push) unless the user explicitly asked for it.',
     '',
+    ...(git ? [git, ''] : []),
     `Your working directory: ${workDir}`,
     'Relative paths resolve against it. Normally, work inside this directory.',
     '',
@@ -440,6 +474,7 @@ export const AGENT_SYSTEM_PROMPT = (
     'successfully, the change was written.',
     ...(skills ? [skills] : []),
     ...(memory ? [memory] : []),
+    ...(presence ? [presence] : []),
     ...(projectContext ? [projectContext] : []),
   ].join('\n')
 
@@ -667,6 +702,16 @@ export async function* agentStream(
         readMemoryIndex(options.workDir),
       )
 
+      // The git situation of the working directory. The caller normally
+      // supplies it (the server reads it once per stream); the fallback keeps
+      // a direct caller correct — the state is derivable from the directory
+      // alone. Does not go to the classifier (see git-state.ts).
+      const git = gitToPrompt(options.gitState ?? readGitState(options.workDir))
+
+      // The other conversations sharing this directory. Only the server can
+      // know this, so no fallback: not given means not mentioned.
+      const presence = options.presence ? presenceToPrompt(options.presence) : null
+
       // The tool list is built once and the prompt flags are DERIVED FROM IT:
       // `serverList` may well be turned off in the config, and in that case
       // the prompt must not mention it. If we computed the two separately they
@@ -715,6 +760,8 @@ export async function* agentStream(
             hasMcp,
             hasSchedules,
             hasProcesses,
+            git,
+            presence ?? undefined,
           ),
           model,
           tools,

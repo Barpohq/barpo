@@ -187,3 +187,23 @@ describe('attachments do not reach the classifier', () => {
     expect(text).not.toContain('files/x.sh')
   })
 })
+
+// The git remote URL and the session titles are the same class of input as
+// the attachment name: untrusted text that lands in the AGENT'S prompt
+// (`git-state.ts`, `presence-prompt.ts`) and must never influence a
+// permission decision. Structurally they have no path in — `requestToText`
+// builds from the conversation + the action only — and this test keeps it
+// that way.
+describe('git state and presence do not reach the classifier', () => {
+  test('a crafted remote URL and session title are absent from the classifier prompt', () => {
+    const text = requestToText({
+      conversation: [{ role: 'user', text: 'commit my changes' }],
+      action: { kind: 'command', target: 'git push', tool: 'bash' },
+      workDir: '/home/ms/work',
+    })
+
+    // The classifier prompt never mentions the mechanisms at all
+    expect(text).not.toContain('--- Git ---')
+    expect(text).not.toContain('Other conversations in this project')
+  })
+})

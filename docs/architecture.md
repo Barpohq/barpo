@@ -67,6 +67,8 @@ package declares a tool and calls a **function the caller supplied**:
 | `scheduleSink` / `scheduleLister` / `scheduleRemover` | `scheduleCreate` / `scheduleList` / `scheduleDelete` |
 | `mcpProvider` | `mcp__<server>__<tool>` |
 | `permission` / `mode` | the permission layer for this session |
+| `presence` | the prompt section about the other conversations sharing the project directory (no tool — prompt text only) |
+| `gitState` | the situational git rules in the prompt (no tool; the one option with a fallback — derivable from the directory itself) |
 
 Two consequences fall out of this and both matter:
 
@@ -189,7 +191,7 @@ model a different question — "did the action go beyond what was asked?"
 > This is an architectural defence, not an instruction. An instruction can be
 > talked around; a missing code path cannot.
 
-The boundary covers four sources, each untrusted for its own reason:
+The boundary covers six sources, each untrusted for its own reason:
 
 | Source | Why |
 |---|---|
@@ -197,6 +199,8 @@ The boundary covers four sources, each untrusted for its own reason:
 | `AGENTS.md` / `CLAUDE.md` | may have arrived with a cloned repo |
 | skill descriptions | come from a foreign GitHub repo — purely untrusted input |
 | memory files | **time-delayed injection**: a foreign file says "write this to memory", the agent copies it, and it returns through the prompt in a later session |
+| the git remote URL | read out of `.git/config`, i.e. written by whoever the repo was cloned from |
+| session titles | user-supplied or model-generated text, injected via presence into *other* sessions' prompts |
 
 Attachment file names take the same care: the note listing them is appended to
 the *prompt*, never to `chat_messages.text`, because that column is exactly what
@@ -220,8 +224,8 @@ provider** — a rule learned from a real failure, told in full in
 > otherwise. What the design buys is that a successful injection still has to
 > pass a human or a classifier before it can act.
 
-The twelve invariants these layers rest on are listed in
-[CONTINUE.md](../CONTINUE.md#twelve-boundaries-that-must-not-be-broken), each
+The thirteen invariants these layers rest on are listed in
+[CONTINUE.md](../CONTINUE.md#thirteen-boundaries-that-must-not-be-broken), each
 with the test that enforces it and what breaks if it goes.
 
 ## Storage
