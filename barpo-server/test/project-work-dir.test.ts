@@ -9,12 +9,17 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import type { Database } from 'bun:sqlite'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /** The options the stream function was last called with */
-let lastOptions: { workDir?: string; sessionId?: string } | null = null
+let lastOptions: {
+  workDir?: string
+  sessionId?: string
+  gitState?: { repo: boolean; branch?: string; hasRemote: boolean }
+  presence?: { title: string; streaming: boolean }[]
+} | null = null
 
 // CAREFUL: mock.module replaces the whole module — we keep the real exports
 // and only write over the ones we need (see the comment in
@@ -35,7 +40,7 @@ function denyingPermissionManager(sessionId: string) {
 mock.module('@barpo/ai', () => ({
   ...realAi,
   agentStream: async function* (_choice: unknown, _messages: unknown, options: unknown) {
-    lastOptions = options as { workDir?: string; sessionId?: string }
+    lastOptions = options as typeof lastOptions
     yield { kind: 'done', text: 'ok', usage: { input: 0, output: 0, cost: 0 } }
   },
   permissionManager: denyingPermissionManager,
@@ -131,5 +136,57 @@ describe('streamReply — the project directory', () => {
 
     expect(lastOptions?.workDir).toBe(dir)
     expect(existsSync(dir)).toBe(true)
+  })
+})
+
+describe('streamReply — git state and presence reach the agent', () => {
+  test('a project directory that is a git repo arrives as one', async () => {
+    const dir = createProjectDir('repo')
+    mkdirSync(join(dir, '.git'), { recursive: true })
+    writeFileSync(join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8')
+    const project = createProject('repo', dir, db)
+    const session = createSession('chat', db, project.id)
+
+    await streamReply(session.id, 'g1', choice)
+
+    expect(lastOptions?.gitState?.repo).toBe(true)
+    expect(lastOptions?.gitState?.branch).toBe('main')
+    expect(lastOptions?.gitState?.hasRemote).toBe(false)
+  })
+
+  test('a plain directory arrives as "not a repo"', async () => {
+    const session = createSession('plain', db)
+    await streamReply(session.id, 'g2', choice)
+    expect(lastOptions?.gitState?.repo).toBe(false)
+  })
+
+  test('the second session of a project sees the first in presence', async () => {
+    const dir = createProjectDir('together')
+    const project = createProject('together', dir, db)
+    const first = createSession('first chat', db, project.id)
+    const second = createSession('second chat', db, project.id)
+
+    await streamReply(second.id, 'g3', choice)
+
+    expect(lastOptions?.presence?.map((s) => s.title)).toEqual(['first chat'])
+    // `first` has no stream in flight — presence must say so
+    expect(lastOptions?.presence?.[0]?.streaming).toBe(false)
+    void first
+  })
+
+  test('a session with no project gets an empty presence list', async () => {
+    const session = createSession('alone', db)
+    await streamReply(session.id, 'g4', choice)
+    expect(lastOptions?.presence).toEqual([])
+  })
+
+  test('a session never appears in its OWN presence list', async () => {
+    const dir = createProjectDir('solo-project')
+    const project = createProject('solo-project', dir, db)
+    const only = createSession('the only chat', db, project.id)
+
+    await streamReply(only.id, 'g5', choice)
+
+    expect(lastOptions?.presence).toEqual([])
   })
 })

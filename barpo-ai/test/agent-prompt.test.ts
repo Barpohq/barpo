@@ -13,7 +13,9 @@
 // message was SILENTLY lost.
 
 import { describe, expect, test } from 'bun:test'
-import { attachmentNote, nonTextBlocks, lastUserIndex } from '../src/agent.ts'
+import { AGENT_SYSTEM_PROMPT, attachmentNote, nonTextBlocks, lastUserIndex } from '../src/agent.ts'
+import { gitToPrompt } from '../src/git-state.ts'
+import { presenceToPrompt } from '../src/presence-prompt.ts'
 import type { MessageAttachment } from '../src/context.ts'
 import type { ConversationMessage } from '../src/conversation.ts'
 
@@ -184,5 +186,58 @@ describe('nonTextBlocks', () => {
 
     expect(blocks).toHaveLength(1)
     expect(blocks[0]!.type).toBe('image')
+  })
+})
+
+// The git section and the presence section are OPTIONAL, positional
+// parameters at the END of the list (see the APPEND ONLY note on the
+// signature) — these tests pin their placement inside the prompt.
+describe('AGENT_SYSTEM_PROMPT — git and presence sections', () => {
+  const git = gitToPrompt({ repo: true, branch: 'main', hasRemote: false })
+  const presence = presenceToPrompt(
+    [{ title: 'Fix the CI', streaming: true, updatedAt: '2026-08-01T00:00:00Z' }],
+    Date.parse('2026-08-01T00:05:00Z'),
+  )!
+
+  test('without the parameters neither section appears', () => {
+    const prompt = AGENT_SYSTEM_PROMPT('/work/dir')
+    expect(prompt).not.toContain('--- Git ---')
+    expect(prompt).not.toContain('Other conversations in this project')
+  })
+
+  test('the git section sits INSIDE the rules, before the working directory line', () => {
+    const prompt = AGENT_SYSTEM_PROMPT(
+      '/work/dir', undefined, undefined, undefined,
+      false, false, false, false, false,
+      git,
+    )
+    expect(prompt).toContain('--- Git ---')
+    // After the bash paragraph, before "Your working directory" — a
+    // behavioural rule, not tail reference material.
+    expect(prompt.indexOf('most dangerous tool')).toBeLessThan(prompt.indexOf('--- Git ---'))
+    expect(prompt.indexOf('--- Git ---')).toBeLessThan(prompt.indexOf('Your working directory'))
+  })
+
+  test('the presence section lands at the tail, after the platform rules', () => {
+    const prompt = AGENT_SYSTEM_PROMPT(
+      '/work/dir', undefined, undefined, undefined,
+      false, false, false, false, false,
+      undefined, presence,
+    )
+    expect(prompt).toContain('"Fix the CI" — working right now')
+    expect(prompt.indexOf('work around the permission system')).toBeLessThan(
+      prompt.indexOf('Other conversations in this project'),
+    )
+  })
+
+  test('project context still comes after presence — it stays last', () => {
+    const prompt = AGENT_SYSTEM_PROMPT(
+      '/work/dir', 'PROJECT-CONTEXT-TEXT', undefined, undefined,
+      false, false, false, false, false,
+      git, presence,
+    )
+    expect(prompt.indexOf('Other conversations in this project')).toBeLessThan(
+      prompt.indexOf('PROJECT-CONTEXT-TEXT'),
+    )
   })
 })

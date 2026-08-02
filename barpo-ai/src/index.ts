@@ -85,6 +85,19 @@ export {
   type ProjectContext,
 } from './project-context.ts'
 
+// --- Git state: the working directory's git situation, read from files ---
+
+export {
+  GIT_CONFIG_LIMIT,
+  gitToPrompt,
+  readGitState,
+  type GitState,
+} from './git-state.ts'
+
+// --- Presence: the other conversations sharing a project directory ---
+
+export { presenceToPrompt, type Sibling } from './presence-prompt.ts'
+
 // --- Skills: parsing SKILL.md and wiring it into the prompt ---
 
 export {
